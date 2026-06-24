@@ -1,0 +1,20 @@
+# Rust build artifacts
+/target
+**/target
+Cargo.lock.orig
+
+# Vendored upstream reference snapshots — read-only, not part of the build.
+# Frozen copies of hackmd/ and md-tui/ kept for porting reference (see reference/README.md).
+/reference/
+
+# Env / secrets
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/settings.json
