@@ -1,7 +1,10 @@
 //! Synchronous event loop: draw → read event → dispatch → repeat.
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use bella_engine::body_pos;
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::app::App;
@@ -30,6 +33,17 @@ pub enum Action {
     // History navigation (Task 6)
     HistoryBack,
     HistoryForward,
+    // Mouse actions (Task 3)
+    /// Mouse pointer moved over a content position — update `hovered_link`.
+    HoverAt {
+        content_row: usize,
+        col: u16,
+    },
+    /// Left-click at a content position — follow link or toggle checkbox.
+    ClickAt {
+        content_row: usize,
+        col: u16,
+    },
     Quit,
     None,
 }
@@ -87,11 +101,51 @@ pub fn map_search_key(key: KeyEvent) -> Action {
 /// Pure mouse→action mapper (unit-testable without a live terminal).
 ///
 /// Only scroll-wheel kinds are mapped for now; button/drag/move kinds return
-/// `Action::None` and will be filled in by later tasks.
-pub fn map_mouse(mouse: MouseEvent, _app: &App) -> Action {
+/// `Action::None` for unhandled kinds (drag/up will be filled in by later tasks).
+pub fn map_mouse(mouse: MouseEvent, app: &App) -> Action {
     match mouse.kind {
         MouseEventKind::ScrollDown => Action::ScrollDown(3),
         MouseEventKind::ScrollUp => Action::ScrollUp(3),
+        MouseEventKind::Moved => {
+            // Convert screen coordinates to content (row, col) using the body
+            // viewport stored after the last draw.
+            if let Some((content_row, local_col)) = body_pos(
+                app.body_area,
+                false,
+                app.lines.len(),
+                app.scroll as usize,
+                mouse.column,
+                mouse.row,
+            ) {
+                Action::HoverAt {
+                    content_row,
+                    col: local_col,
+                }
+            } else {
+                // Pointer outside the body — clear any hover.
+                Action::HoverAt {
+                    content_row: usize::MAX,
+                    col: 0,
+                }
+            }
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            if let Some((content_row, local_col)) = body_pos(
+                app.body_area,
+                false,
+                app.lines.len(),
+                app.scroll as usize,
+                mouse.column,
+                mouse.row,
+            ) {
+                Action::ClickAt {
+                    content_row,
+                    col: local_col,
+                }
+            } else {
+                Action::None
+            }
+        }
         _ => Action::None,
     }
 }
@@ -127,6 +181,24 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         // History navigation
         Action::HistoryBack => app.go_back(),
         Action::HistoryForward => app.go_forward(),
+        // Mouse actions
+        Action::HoverAt { content_row, col } => {
+            // usize::MAX is the sentinel for "pointer left the body area".
+            if content_row == usize::MAX {
+                app.hovered_link = None;
+            } else {
+                app.hover_at(content_row, col);
+            }
+        }
+        Action::ClickAt { content_row, col } => {
+            // Mirror the keyboard Follow path: record history when a file
+            // navigation occurs.
+            if let Some((prev_path, prev_scroll)) = app.click_at(content_row, col) {
+                app.history.push(HistoryEntry::new(prev_path, prev_scroll));
+                app.history
+                    .push(HistoryEntry::new(app.file.clone(), app.scroll));
+            }
+        }
         // Search actions
         Action::SearchStart => app.start_search(),
         Action::SearchChar(ch) => app.push_search_char(ch),
@@ -600,7 +672,170 @@ mod tests {
     #[test]
     fn map_mouse_unmapped_kind_produces_none() {
         let app = make_app();
-        let ev = mouse_event(crossterm::event::MouseEventKind::Moved);
+        // Up(Left) is not yet handled in Task 3 — must return None.
+        let ev = mouse_event(crossterm::event::MouseEventKind::Up(
+            crossterm::event::MouseButton::Left,
+        ));
         assert_eq!(super::map_mouse(ev, &app), Action::None);
+    }
+
+    // --- Task 3 (Block D) tests: map_mouse Moved/Down + apply HoverAt/ClickAt ---
+
+    fn mouse_event_at(
+        kind: crossterm::event::MouseEventKind,
+        column: u16,
+        row: u16,
+    ) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+        }
+    }
+
+    #[test]
+    fn map_mouse_moved_inside_body_produces_hover_at() {
+        let mut app = make_app();
+        // Simulate the body_area being set to cover the full terminal area (as if
+        // draw_reader just ran). TestBackend-style: x=0, y=0, width=80, height=10.
+        use ratatui::layout::Rect;
+        app.body_area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 10,
+        };
+
+        let ev = mouse_event_at(crossterm::event::MouseEventKind::Moved, 5, 2);
+        let action = super::map_mouse(ev, &app);
+        // Should produce a HoverAt with a valid content_row (not usize::MAX).
+        match action {
+            super::Action::HoverAt { content_row, .. } => {
+                assert_ne!(
+                    content_row,
+                    usize::MAX,
+                    "Moved inside body must produce HoverAt with valid content_row"
+                );
+            }
+            other => panic!("expected HoverAt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_mouse_moved_outside_body_produces_hover_at_sentinel() {
+        let mut app = make_app();
+        use ratatui::layout::Rect;
+        // Body occupies rows 0..10, col 0..80.
+        app.body_area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 10,
+        };
+
+        // Row 15 is outside the body.
+        let ev = mouse_event_at(crossterm::event::MouseEventKind::Moved, 5, 15);
+        let action = super::map_mouse(ev, &app);
+        match action {
+            super::Action::HoverAt { content_row, .. } => {
+                assert_eq!(
+                    content_row,
+                    usize::MAX,
+                    "Moved outside body must produce HoverAt sentinel (usize::MAX)"
+                );
+            }
+            other => panic!("expected HoverAt sentinel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_mouse_down_left_inside_body_produces_click_at() {
+        let mut app = make_app();
+        use ratatui::layout::Rect;
+        app.body_area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 10,
+        };
+
+        let ev = mouse_event_at(
+            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            5,
+            2,
+        );
+        let action = super::map_mouse(ev, &app);
+        assert!(
+            matches!(action, super::Action::ClickAt { .. }),
+            "Down(Left) inside body must produce ClickAt; got {action:?}"
+        );
+    }
+
+    #[test]
+    fn apply_hover_at_sets_hovered_link() {
+        let src = "[alpha](a.md)\n\nOther text.".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+
+        let link = app.link_map.links[0].clone();
+        super::apply(
+            super::Action::HoverAt {
+                content_row: link.line,
+                col: link.col_start as u16,
+            },
+            &mut app,
+        );
+        assert_eq!(
+            app.hovered_link,
+            Some(0),
+            "apply HoverAt on a link must set hovered_link"
+        );
+    }
+
+    #[test]
+    fn apply_hover_at_sentinel_clears_hovered_link() {
+        let src = "[alpha](a.md)".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.hovered_link = Some(0);
+
+        super::apply(
+            super::Action::HoverAt {
+                content_row: usize::MAX,
+                col: 0,
+            },
+            &mut app,
+        );
+        assert_eq!(
+            app.hovered_link, None,
+            "apply HoverAt with sentinel must clear hovered_link"
+        );
+    }
+
+    #[test]
+    fn apply_click_at_on_checkbox_toggles_it() {
+        let src = "- [ ] Task one\n\n- [x] Task two".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        if app.checkbox_map.items.is_empty() {
+            // Engine did not produce a checkbox — skip.
+            return;
+        }
+        let cb = app.checkbox_map.items[0].clone();
+        assert!(
+            !app.toggled_checkboxes.contains(&0),
+            "precondition: not toggled"
+        );
+
+        super::apply(
+            super::Action::ClickAt {
+                content_row: cb.line,
+                col: cb.col_start as u16,
+            },
+            &mut app,
+        );
+        assert!(
+            app.toggled_checkboxes.contains(&0),
+            "apply ClickAt on a checkbox must toggle it"
+        );
     }
 }
