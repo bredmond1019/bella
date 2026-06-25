@@ -10,6 +10,16 @@ description: Chronological log of work completed for Bella.
 
 ---
 
+## 2026-06-25 — Close-out: Block 0.B gating checks + doc patch
+
+Completed `/close-out` for Block 0.B. All four gating checks passed (cargo fmt, cargo clippy, cargo test, cargo build --release) and emoji gate cleared. Coverage verified: 59 tests total (21 bella + 37 engine + 1 integration), all inline #[cfg(test)] blocks across all 4 source files in the bella binary crate (main.rs, app.rs, ui.rs, events.rs). Updated README.md via `/update-docs --patch` to add the `crates/bella/` entry to the directory map. Wrote `planning/handoff.md` marking Phase 0 Block C (keyboard navigation: link focus/follow, `/` search, history) as the next focus. Block B is now fully shipped.
+
+```diff
+README.md           |  3 +-
+ planning/handoff.md | 96 ++++++++++++++++++++++++++++++++------------------------
+ 2 files changed, 55 insertions(+), 44 deletions(-)
+```
+
 ## 2026-06-25 — Phase 0 Block B complete: bella binary skeleton renders a file
 
 Created the `bella` binary crate (4 source modules: `main.rs`, `app.rs`, `ui.rs`, `events.rs`). The clap CLI accepts a required file path; terminal lifecycle uses raw mode, alternate screen, and a panic hook that restores the terminal before re-raising. The `App` struct holds rendered lines and a clamped scroll offset; `draw_reader` splits the frame into a body + 1-row statusline and pushes the body height back to `App` on every draw. The pure `map_key` function maps `j/k`, `g/G`, arrows, PageDown/PageUp, Ctrl-d/u, and `q/Ctrl-C` to actions with no terminal dependency. All 7 acceptance criteria were met on the first review attempt (PASS). 21 new tests pass (scroll clamping, key mapping, TestBackend draw assertions); total suite is 59 tests across both crates. All four gating checks exit 0. Next: Phase 0 Block C — keyboard navigation (link focus/follow, `/` search, history).
