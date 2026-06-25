@@ -9,3 +9,8 @@ Validated: gating checks (fast tripwire)
 What: Enable mouse capture in terminal setup/teardown/panic-hook and add map_mouse dispatcher (scroll wheel → ScrollDown/ScrollUp, all other kinds → None) with Event::Mouse arm in run_loop, plus 3 unit tests.
 Decisions: map_mouse takes &App (not &mut App) to keep it a pure mapper matching the map_key pattern; later tasks will need &mut App or direct app calls so the signature can evolve; ScrollDown/ScrollUp maps to 3 lines per tick (a common TUI convention for smooth scrolling) rather than 1
 Validated: gating checks (fast tripwire)
+
+## Task 3 — PASSED (1 attempt)
+What: Add click-to-follow links, hover highlight, and checkbox visual toggle with full coordinate conversion via body_pos
+Decisions: Stored body_area Rect in App (set during draw_reader) so map_mouse can call body_pos without needing an extra parameter thread; Used usize::MAX as a sentinel in HoverAt to mean 'pointer left the body area' — avoids a separate ClearHover action variant; Added HoverAt/ClickAt Action variants (rather than handling mouse events inline in run_loop) to keep map_mouse unit-testable and consistent with the existing key→Action→apply pipeline
+Validated: gating checks (fast tripwire)
