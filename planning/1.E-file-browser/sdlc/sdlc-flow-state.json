@@ -2,10 +2,10 @@
   "spec_slug": "1.E-file-browser",
   "branch": "1.E-file-browser-flow-4",
   "started_at": "2026-06-25T12:54:09Z",
-  "updated_at": "2026-06-25T13:01:01Z",
+  "updated_at": "2026-06-25T13:07:01Z",
   "worktree_path": "/Users/brandon/Dev/agentic-portfolio/bella/trees/1.E-file-browser-flow-4",
   "status": "running",
-  "current_task": 2,
+  "current_task": 3,
   "tasks": {
     "1": {
       "status": "passed",
@@ -41,6 +41,24 @@
       "files_changed": [
         "crates/bella/src/app.rs",
         "crates/bella/src/main.rs"
+      ],
+      "commit": "",
+      "validated": "gating checks (fast tripwire)"
+    },
+    "3": {
+      "status": "passed",
+      "attempts": 1,
+      "summary": "Implemented draw_browser in ui.rs (bordered pane with dir title, selection prefix, bold-cyan Dir/ParentDir vs plain Markdown styling, browser_area stored for Task 4 mouse hit-testing) and added browser_area: Rect field to App.",
+      "issues": [],
+      "fixes": [],
+      "decisions": [
+        "Added #[allow(dead_code)] to browser_area field and draw_browser function since they are wired into the event loop in Task 4, following the same pattern used for mode/browser/browser_origin fields.",
+        "Dir and ParentDir entries share the same bold cyan style since both are directory-like navigation targets.",
+        "Test for selected vs unselected row difference compares the full terminal row string rather than styles, since the prefix ▶ vs spaces is a content difference; the Dir vs Markdown test compares style starting from column 2 (after the prefix) to isolate the entry kind styling."
+      ],
+      "files_changed": [
+        "crates/bella/src/app.rs",
+        "crates/bella/src/ui.rs"
       ],
       "commit": "",
       "validated": "gating checks (fast tripwire)"

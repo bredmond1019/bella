@@ -9,3 +9,8 @@ Validated: gating checks (fast tripwire)
 What: Task 2: Added Mode enum + browser state to App, new_browser constructor, open_from_browser/back_to_browser/enter_dir/ascend methods, changed Cli.file to Option<PathBuf> with no-arg/dir/file dispatch in run()
 Decisions: Added #[allow(dead_code)] to new fields and methods since events.rs/ui.rs wiring comes in Tasks 3-4 — keeps clippy -D warnings green without touching future-task files; Used let-chains (if let Some(b) = ... && b.entries.len() > 1) for clippy collapsible_if compliance; new_browser stores dir as app.file to keep the status line coherent in browser mode until a file is opened
 Validated: gating checks (fast tripwire)
+
+## Task 3 — PASSED (1 attempt)
+What: Implemented draw_browser in ui.rs (bordered pane with dir title, selection prefix, bold-cyan Dir/ParentDir vs plain Markdown styling, browser_area stored for Task 4 mouse hit-testing) and added browser_area: Rect field to App.
+Decisions: Added #[allow(dead_code)] to browser_area field and draw_browser function since they are wired into the event loop in Task 4, following the same pattern used for mode/browser/browser_origin fields.; Dir and ParentDir entries share the same bold cyan style since both are directory-like navigation targets.; Test for selected vs unselected row difference compares the full terminal row string rather than styles, since the prefix ▶ vs spaces is a content difference; the Dir vs Markdown test compares style starting from column 2 (after the prefix) to isolate the entry kind styling.
+Validated: gating checks (fast tripwire)
