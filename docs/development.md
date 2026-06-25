@@ -1,0 +1,147 @@
+---
+type: Guide
+title: Development Guide
+description: Prerequisites, build steps, test layers, and the SDLC pipeline for Bella contributors.
+---
+
+# Development Guide
+
+## Prerequisites
+
+- Rust stable toolchain — install via [rustup](https://rustup.rs/)
+- `cargo` in your `PATH`
+- A terminal with mouse support (most modern emulators: iTerm2, WezTerm, kitty, Alacritty, Ghostty)
+
+No other runtime dependencies. All crates are pure Rust; `syntect` bundles its syntax definitions; `arboard` links to the system clipboard provider.
+
+## Build
+
+```bash
+# Debug build (fastest iteration)
+cargo build
+
+# Release build (optimised — what you'd actually run daily)
+cargo build --release
+
+# Run directly from source
+cargo run -p bella -- README.md
+cargo run -p bella -- .          # open current dir in browser
+cargo run -p bella               # same — no arg defaults to CWD
+```
+
+## Testing
+
+```bash
+# Full suite (authoritative)
+cargo test
+
+# Watch mode (requires cargo-watch)
+cargo watch -x test
+
+# Single crate
+cargo test -p bella-engine
+cargo test -p bella
+
+# Single test by name
+cargo test -p bella -- test_scroll_clamp
+```
+
+### Test Layers
+
+| Layer | Where | What it covers |
+|---|---|---|
+| Engine unit tests | `crates/bella-engine/src/*.rs` (`#[cfg(test)]` blocks) | Word-wrap, link resolution, slug generation, geometry coordinate math, checkbox detection |
+| Engine integration | `crates/bella-engine/tests/render.rs` | Full render pipeline: source → `Rendered`; checks line count, link extraction, checkbox spans |
+| App unit tests | `crates/bella/src/*.rs` (`#[cfg(test)]` blocks) | Scroll clamping, key mapping, history push/back/forward, selection normalisation, double-click timing, browser cursor wrap, browser entry ordering |
+| App draw tests | `crates/bella/src/ui.rs` (`#[cfg(test)]`) | `ratatui::backend::TestBackend` assertions on rendered cell content |
+
+All mappers (`map_key`, `map_browser_key`, `map_search_key`, `map_mouse`, `map_browser_mouse`) are pure functions with no terminal dependency — they are exercised directly in unit tests without any mocking.
+
+## Lint / Format
+
+```bash
+# Lint gate (CI-equivalent)
+cargo clippy --all-targets -- -D warnings
+
+# Format check
+cargo fmt --check
+
+# Auto-format
+cargo fmt
+```
+
+Both must pass clean before any PR merges. The SDLC validation suite in `planning/harness.json` runs these as gating checks.
+
+## Running the Viewer
+
+```bash
+# Open a file in reader mode
+cargo run -p bella -- path/to/file.md
+
+# Open a directory in browser mode
+cargo run -p bella -- path/to/dir
+
+# No arg: browser mode in CWD
+cargo run -p bella
+
+# Release binary (after cargo build --release)
+./target/release/bella README.md
+```
+
+## Adding a New Keybinding
+
+A keybinding touches four places:
+
+1. **`events.rs` mapper** — add a match arm to `map_key` (reader), `map_browser_key` (browser), or `map_search_key` (search). Return an `Action` variant.
+2. **`events.rs` Action enum** — if you need a new action, add a variant to `Action`.
+3. **`events.rs::apply`** — add a match arm to dispatch the action to an `App` method.
+4. **`app.rs`** — add or extend the App method the action calls.
+5. **Tests** — add a unit test in the mapper's `#[cfg(test)]` block asserting the key produces the expected `Action`.
+6. **`README.md`** — add a row to the keybinding table in the appropriate mode section.
+
+## SDLC Pipeline
+
+Structured block work follows: `/generate-tasks → /implement → /test → /review-task → /document → /log-work`.
+
+The pipeline reads its validation commands from `planning/harness.json`. The current profile runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and `cargo build --release` as gating checks. Do not edit the workflow engine scripts (`.claude/workflows/*.js`) for stack reasons — only `harness.json`.
+
+To start a new block:
+
+```
+/generate-tasks <spec-slug>   # decompose the block spec into tasks.md
+/sdlc-flow <spec-slug>        # run the full pipeline in an isolated worktree
+```
+
+See `.claude/commands/README.md` for the full command reference.
+
+## Project Layout Quick Reference
+
+```
+bella/
+├── Cargo.toml                  ← workspace (members: bella-engine, bella)
+├── crates/
+│   ├── bella-engine/
+│   │   ├── Cargo.toml
+│   │   ├── ATTRIBUTION.md      ← required MIT attribution
+│   │   └── src/
+│   │       ├── lib.rs          ← public re-exports
+│   │       ├── geometry.rs     ← coordinate conversion
+│   │       ├── links.rs        ← link/checkbox/table hit-testing
+│   │       ├── markdown.rs     ← render pipeline
+│   │       ├── md_config.rs    ← ~/.config/md/config.toml loader
+│   │       ├── palette.rs      ← color-depth detection + RGB downgrade
+│   │       ├── syntax.rs       ← syntect highlighting
+│   │       └── theme.rs        ← Catppuccin themes
+│   └── bella/
+│       ├── Cargo.toml
+│       └── src/
+│           ├── main.rs         ← CLI + terminal lifecycle
+│           ├── app.rs          ← App state + all navigation logic
+│           ├── browser.rs      ← directory listing model
+│           ├── events.rs       ← event loop + mappers + Action dispatcher
+│           ├── history.rs      ← back/forward stack
+│           ├── selection.rs    ← text selection + clipboard
+│           └── ui.rs           ← ratatui draw functions
+├── planning/                   ← context, status, master-plan, specs, decisions
+└── reference/                  ← upstream zemse/hackmd source (read-only, not in workspace)
+```

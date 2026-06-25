@@ -109,6 +109,17 @@ bella/
 
 ## Documentation
 
+### Technical docs
+
+| Doc | Contents |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | Two-crate design, render pipeline, event loop, coordinate system, Mode model |
+| [docs/modules.md](docs/modules.md) | Per-module reference: purpose, key types, public functions |
+| [docs/development.md](docs/development.md) | Prerequisites, build/test/lint steps, adding keybindings, SDLC pipeline |
+| [docs/features.md](docs/features.md) | All keybindings and mouse gestures with internal descriptions |
+
+### Planning docs
+
 | Doc | Contents |
 |---|---|
 | [planning/context.md](planning/context.md) | Orientation + governing principles |
