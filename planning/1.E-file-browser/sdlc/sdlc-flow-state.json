@@ -2,10 +2,10 @@
   "spec_slug": "1.E-file-browser",
   "branch": "1.E-file-browser-flow-4",
   "started_at": "2026-06-25T12:54:09Z",
-  "updated_at": "2026-06-25T12:54:09Z",
+  "updated_at": "2026-06-25T13:01:01Z",
   "worktree_path": "/Users/brandon/Dev/agentic-portfolio/bella/trees/1.E-file-browser-flow-4",
   "status": "running",
-  "current_task": 1,
+  "current_task": 2,
   "tasks": {
     "1": {
       "status": "passed",
@@ -23,6 +23,24 @@
         "crates/bella/Cargo.toml",
         "crates/bella/src/main.rs",
         "Cargo.lock"
+      ],
+      "commit": "",
+      "validated": "gating checks (fast tripwire)"
+    },
+    "2": {
+      "status": "passed",
+      "attempts": 1,
+      "summary": "Task 2: Added Mode enum + browser state to App, new_browser constructor, open_from_browser/back_to_browser/enter_dir/ascend methods, changed Cli.file to Option<PathBuf> with no-arg/dir/file dispatch in run()",
+      "issues": [],
+      "fixes": [],
+      "decisions": [
+        "Added #[allow(dead_code)] to new fields and methods since events.rs/ui.rs wiring comes in Tasks 3-4 — keeps clippy -D warnings green without touching future-task files",
+        "Used let-chains (if let Some(b) = ... && b.entries.len() > 1) for clippy collapsible_if compliance",
+        "new_browser stores dir as app.file to keep the status line coherent in browser mode until a file is opened"
+      ],
+      "files_changed": [
+        "crates/bella/src/app.rs",
+        "crates/bella/src/main.rs"
       ],
       "commit": "",
       "validated": "gating checks (fast tripwire)"
