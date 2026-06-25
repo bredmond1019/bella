@@ -14,3 +14,8 @@ Validated: gating checks (fast tripwire)
 What: Tab/Shift-Tab/Esc link focus ring with REVERSED highlight overlay in the body renderer
 Decisions: Used `if let ... && let ...` chained pattern (let-chains) in draw_body to satisfy clippy collapsible_if lint; apply_span_highlight splits existing ratatui Span vec at col_start/col_end boundaries so only the link text gets the REVERSED modifier while surrounding text keeps its original style; apply() made pub(crate) so test modules in events.rs can call it directly without re-exporting
 Validated: gating checks (fast tripwire)
+
+## Task 4 — PASSED (1 attempt)
+What: Task 4: link follow (Enter) — App::load_file + follow_focused dispatch on LocalFile/Url/Anchor/FileAnchor, Action::Follow mapped to Enter, status_message shown in status line for non-fatal file errors.
+Decisions: Added `width: u16` field to App so load_file can re-render at the current terminal width without requiring the caller to pass width through.; follow_focused returns Option<(PathBuf, u16)> (prev file+scroll) so Task 6 can record history without having to intercept load_file — the return value is the clean hook the spec requested.; Anchor scroll clamped to max_scroll; test asserts expected = anchor_line.min(max_scroll) rather than the raw anchor line, which is the correct behavior when the anchor is on or near the last line.; open::that result is intentionally ignored (let _ = ...) — no browser in CI is non-fatal.
+Validated: gating checks (fast tripwire)
