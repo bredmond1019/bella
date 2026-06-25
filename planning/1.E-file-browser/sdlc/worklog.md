@@ -19,3 +19,7 @@ Validated: gating checks (fast tripwire)
 What: Wired browser key/mouse handlers and run_loop dispatch: map_browser_key, map_browser_mouse, browser Action variants, apply handlers, and mode-aware run_loop
 Decisions: Used let-chain syntax (&&) to collapse nested if-let for clippy compliance; BrowserClickAt selects the row and immediately descends/opens (single-click = select+activate); Backspace in reader mode maps to BrowserBack (back-to-browser round-trip); Mouse scroll in browser scrolls the viewport offset directly without moving the selection cursor; Removed #![allow(dead_code)] from browser.rs and all #[allow(dead_code)] guards from App browser fields/methods since they are now wired
 Validated: gating checks (fast tripwire)
+
+## Task 5 — PASSED (1 attempt)
+What: Validation task: all four checks pass — fmt, clippy, 237 tests (199+37+1), and release build
+Validated: gating checks (fast tripwire)
