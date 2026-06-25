@@ -24,3 +24,8 @@ Validated: gating checks (fast tripwire)
 What: Double-click word-select (450 ms window): App.last_click field, double_click_word_select method, DoubleClickAt Action, detection in map_mouse, apply routing — all with unit tests.
 Decisions: Stored last_click as (Instant, content_row, col) using content coordinates for position comparison, and passed screen coordinates via DoubleClickAt action to select_word_at — this correctly handles scrolling (same screen spot after scroll is a different word).; last_click is reset to None inside double_click_word_select so a third click always starts a fresh single-click cycle without requiring special handling in apply.; Duration import lives only in events.rs top-level (used in map_mouse); in app.rs tests it is re-imported inside the test module only — no unused-import warnings.
 Validated: gating checks (fast tripwire)
+
+## Task 6 — PASSED (1 attempt)
+What: Validation task: all four validation commands pass — fmt, clippy, 195 tests (157 bella + 37 bella-engine + 1 integration), release build
+Decisions: Task 6 is purely a validation gate with no source changes — nothing to commit; the working tree was already clean from Tasks 1-5
+Validated: gating checks (fast tripwire)
