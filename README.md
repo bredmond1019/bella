@@ -10,33 +10,50 @@ A beautiful terminal markdown viewer and editor with full mouse support — loca
 
 ## Prerequisites
 
-<!-- What must be installed (runtime, package manager, services). -->
+- Rust toolchain (stable, edition 2024) — install via [rustup](https://rustup.rs/)
 
 ## Setup
 
 ```bash
-# Numbered steps from zero to running.
+# 1. Clone the repo
+git clone <repo-url> bella && cd bella
+
+# 2. Build all crates
+cargo build
 ```
 
 ## Running locally
 
 ```bash
-# The exact commands from CLAUDE.md.
+# Release build
+cargo build --release
+
+# Run the viewer (Block B and later)
+cargo run -p bella -- <file|dir>
 ```
 
 ## Tests
 
 ```bash
-# One-liner to run the test suite.
+cargo test
+```
+
+## Lint / format
+
+```bash
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
 ```
 
 ## Directory map
 
 ```
 bella/
-├── .claude/        ← Claude Code commands + SDLC workflow engines
-├── planning/       ← context, status, master-plan, harness.json, decisions/, <concept>/
-└── <source dirs>
+├── .claude/                  ← Claude Code commands + SDLC workflow engines
+├── crates/
+│   └── bella-engine/         ← render/layout library (palette, syntax, theme, links, markdown, geometry)
+├── planning/                 ← context, status, master-plan, harness.json, decisions/, specs/
+└── reference/                ← upstream zemse/hackmd source (excluded from workspace)
 ```
 
 ## Documentation
