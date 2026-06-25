@@ -1386,7 +1386,10 @@ mod tests {
             &mut app,
         );
         // After DoubleClickAt: drag_origin is None; selection may be Some (if word found).
-        assert!(app.drag_origin.is_none(), "precondition: DoubleClickAt cleared drag_origin");
+        assert!(
+            app.drag_origin.is_none(),
+            "precondition: DoubleClickAt cleared drag_origin"
+        );
 
         // Record status message state right after double-click.
         let msg_after_double_click = app.status_message.clone();
