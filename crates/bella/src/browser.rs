@@ -4,10 +4,6 @@
 //! [`BrowserEntry`] items, a cursor (`selected`), and a scroll offset.  All
 //! methods are pure state mutations; no I/O happens after construction.
 //!
-//! Items here are wired into [`crate::app`] and [`crate::events`] in subsequent
-//! tasks; the dead_code lint is suppressed until that integration is in place.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 
 /// Distinguishes the three kinds of entry shown in the browser listing.

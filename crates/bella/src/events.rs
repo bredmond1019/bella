@@ -8,7 +8,8 @@ use crossterm::event::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::time::{Duration, Instant};
 
-use crate::app::App;
+use crate::app::{App, Mode};
+use crate::browser::BrowserEntryKind;
 use crate::history::HistoryEntry;
 use crate::ui;
 
@@ -70,9 +71,42 @@ pub enum Action {
     },
     Quit,
     None,
+    // Browser actions (Block E, Task 4)
+    /// Move browser cursor up by one entry.
+    BrowserUp,
+    /// Move browser cursor down by one entry.
+    BrowserDown,
+    /// Descend into the selected directory, or open the selected markdown file.
+    BrowserDescend,
+    /// Ascend to the parent directory (Backspace key in browser mode).
+    BrowserAscend,
+    /// Left-click on a browser row: `row` is the row index relative to the inner listing area.
+    BrowserClickAt {
+        row: u16,
+    },
+    /// Mouse-wheel scroll of the browser listing.  Positive = scroll down, negative = scroll up.
+    BrowserScroll(i32),
+    /// Return from the reader to the browser (Backspace in reader mode).
+    BrowserBack,
 }
 
-/// Pure key→action mapper (unit-testable without a live terminal).
+/// Pure browser key→action mapper (unit-testable without a live terminal).
+///
+/// Handles directional movement, descend/open, ascend, and quit.  All other
+/// keys return [`Action::None`].
+pub fn map_browser_key(key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Action::BrowserDown,
+        KeyCode::Char('k') | KeyCode::Up => Action::BrowserUp,
+        KeyCode::Enter => Action::BrowserDescend,
+        KeyCode::Backspace => Action::BrowserAscend,
+        KeyCode::Char('q') => Action::Quit,
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
+        _ => Action::None,
+    }
+}
+
+/// Pure reader key→action mapper (unit-testable without a live terminal).
 pub fn map_key(key: KeyEvent, viewport_height: u16) -> Action {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => Action::ScrollDown(1),
@@ -101,6 +135,8 @@ pub fn map_key(key: KeyEvent, viewport_height: u16) -> Action {
         // History navigation
         KeyCode::Char('[') => Action::HistoryBack,
         KeyCode::Char(']') => Action::HistoryForward,
+        // Return to browser (when the reader was entered via the browser).
+        KeyCode::Backspace => Action::BrowserBack,
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
         _ => Action::None,
@@ -233,6 +269,34 @@ pub fn map_mouse(mouse: MouseEvent, app: &App) -> Action {
     }
 }
 
+/// Pure mouse→action mapper for browser mode (unit-testable without a live terminal).
+///
+/// Scroll-wheel moves the viewport; `Down(Left)` on a listing row produces
+/// [`Action::BrowserClickAt`] which selects the row and immediately descends/opens it.
+pub fn map_browser_mouse(mouse: MouseEvent, app: &App) -> Action {
+    match mouse.kind {
+        MouseEventKind::ScrollDown => Action::BrowserScroll(3),
+        MouseEventKind::ScrollUp => Action::BrowserScroll(-3),
+        MouseEventKind::Down(MouseButton::Left) => {
+            let area = app.browser_area;
+            if area.width == 0 || area.height == 0 {
+                return Action::None;
+            }
+            if mouse.row >= area.y
+                && mouse.row < area.y + area.height
+                && mouse.column >= area.x
+                && mouse.column < area.x + area.width
+            {
+                let row = mouse.row - area.y;
+                Action::BrowserClickAt { row }
+            } else {
+                Action::None
+            }
+        }
+        _ => Action::None,
+    }
+}
+
 /// Apply an `Action` to `app`.
 pub(crate) fn apply(action: Action, app: &mut App) {
     match action {
@@ -328,6 +392,80 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         Action::SearchCancel => app.cancel_search(),
         Action::Quit => app.quit(),
         Action::None => {}
+        // Browser actions (Block E, Task 4)
+        Action::BrowserUp => {
+            if let Some(b) = app.browser.as_mut() {
+                b.move_cursor(-1, app.viewport_height);
+            }
+        }
+        Action::BrowserDown => {
+            if let Some(b) = app.browser.as_mut() {
+                b.move_cursor(1, app.viewport_height);
+            }
+        }
+        Action::BrowserAscend => {
+            app.ascend();
+        }
+        Action::BrowserDescend => {
+            // Collect what to do before taking a mutable borrow.
+            let descend_dir = app.browser.as_ref().and_then(|b| b.descend());
+            let open_file = app.browser.as_ref().and_then(|b| {
+                b.selected_entry().and_then(|e| {
+                    if matches!(e.kind, BrowserEntryKind::Markdown) {
+                        Some(e.path.clone())
+                    } else {
+                        None
+                    }
+                })
+            });
+            if let Some(dir) = descend_dir {
+                app.enter_dir(dir);
+            } else if let Some(file) = open_file
+                && let Err(msg) = app.open_from_browser(file)
+            {
+                app.status_message = Some(msg);
+            }
+        }
+        Action::BrowserClickAt { row } => {
+            // Select the clicked row.
+            if let Some(b) = app.browser.as_mut() {
+                let target_idx = b.scroll as usize + row as usize;
+                if target_idx < b.entries.len() {
+                    b.selected = target_idx;
+                }
+            }
+            // Then descend/open the now-selected entry.
+            let descend_dir = app.browser.as_ref().and_then(|b| b.descend());
+            let open_file = app.browser.as_ref().and_then(|b| {
+                b.selected_entry().and_then(|e| {
+                    if matches!(e.kind, BrowserEntryKind::Markdown) {
+                        Some(e.path.clone())
+                    } else {
+                        None
+                    }
+                })
+            });
+            if let Some(dir) = descend_dir {
+                app.enter_dir(dir);
+            } else if let Some(file) = open_file
+                && let Err(msg) = app.open_from_browser(file)
+            {
+                app.status_message = Some(msg);
+            }
+        }
+        Action::BrowserScroll(delta) => {
+            if let Some(b) = app.browser.as_mut() {
+                if delta > 0 {
+                    let max_scroll = (b.entries.len() as u16).saturating_sub(app.viewport_height);
+                    b.scroll = b.scroll.saturating_add(delta as u16).min(max_scroll);
+                } else {
+                    b.scroll = b.scroll.saturating_sub((-delta) as u16);
+                }
+            }
+        }
+        Action::BrowserBack => {
+            app.back_to_browser();
+        }
     }
 }
 
@@ -337,9 +475,19 @@ pub fn run_loop(
     mut app: App,
 ) -> Result<()> {
     loop {
-        terminal.draw(|f| {
-            ui::draw_reader(f, f.area(), &mut app);
-        })?;
+        // Draw the appropriate screen based on the current mode.
+        match app.mode {
+            Mode::Browser => {
+                terminal.draw(|f| {
+                    ui::draw_browser(f, f.area(), &mut app);
+                })?;
+            }
+            Mode::Reader => {
+                terminal.draw(|f| {
+                    ui::draw_reader(f, f.area(), &mut app);
+                })?;
+            }
+        }
 
         if app.should_quit {
             break;
@@ -347,22 +495,33 @@ pub fn run_loop(
 
         match event::read()? {
             Event::Key(key) => {
-                // In search input mode, character keys feed into the query instead of
-                // the normal key bindings.
-                let in_search_input = app.search.as_ref().map(|s| s.input_mode).unwrap_or(false);
-                let action = if in_search_input {
-                    map_search_key(key)
-                } else {
-                    map_key(key, app.viewport_height)
+                let action = match app.mode {
+                    Mode::Browser => map_browser_key(key),
+                    Mode::Reader => {
+                        // In search input mode, character keys feed into the query instead of
+                        // the normal key bindings.
+                        let in_search_input =
+                            app.search.as_ref().map(|s| s.input_mode).unwrap_or(false);
+                        if in_search_input {
+                            map_search_key(key)
+                        } else {
+                            map_key(key, app.viewport_height)
+                        }
+                    }
                 };
                 apply(action, &mut app);
             }
             Event::Resize(width, height) => {
                 app.set_viewport_height(height.saturating_sub(1));
-                app.render(width);
+                if app.mode == Mode::Reader {
+                    app.render(width);
+                }
             }
             Event::Mouse(mouse) => {
-                let action = map_mouse(mouse, &app);
+                let action = match app.mode {
+                    Mode::Browser => map_browser_mouse(mouse, &app),
+                    Mode::Reader => map_mouse(mouse, &app),
+                };
                 apply(action, &mut app);
             }
             _ => {}
@@ -385,9 +544,9 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use crate::app::App;
+    use crate::app::{App, Mode};
 
-    use super::{Action, map_key};
+    use super::{Action, map_browser_key, map_key};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::empty())
@@ -1408,5 +1567,296 @@ mod tests {
             app.status_message, msg_after_double_click,
             "DragEnd after DoubleClickAt must not trigger a second selection_finish"
         );
+    }
+
+    // --- Task 4 (Block E) tests: browser key/mouse handlers ---
+
+    fn make_browser_app(label: &str) -> App {
+        let dir = std::env::temp_dir().join(format!("bella_events_browser_{label}"));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        App::new_browser(dir, 80, 25)
+    }
+
+    fn make_browser_app_with_md(label: &str) -> (App, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("bella_events_browser_{label}"));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let md_path = dir.join("hello.md");
+        std::fs::write(&md_path, "# Hello\n\nContent.").expect("write md");
+        let app = App::new_browser(dir.clone(), 80, 25);
+        (app, md_path)
+    }
+
+    #[test]
+    fn map_browser_key_j_produces_browser_down() {
+        let k = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty());
+        assert_eq!(map_browser_key(k), Action::BrowserDown);
+    }
+
+    #[test]
+    fn map_browser_key_down_arrow_produces_browser_down() {
+        let k = KeyEvent::new(KeyCode::Down, KeyModifiers::empty());
+        assert_eq!(map_browser_key(k), Action::BrowserDown);
+    }
+
+    #[test]
+    fn map_browser_key_k_produces_browser_up() {
+        let k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty());
+        assert_eq!(map_browser_key(k), Action::BrowserUp);
+    }
+
+    #[test]
+    fn map_browser_key_up_arrow_produces_browser_up() {
+        let k = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
+        assert_eq!(map_browser_key(k), Action::BrowserUp);
+    }
+
+    #[test]
+    fn map_browser_key_enter_produces_browser_descend() {
+        let k = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
+        assert_eq!(map_browser_key(k), Action::BrowserDescend);
+    }
+
+    #[test]
+    fn map_browser_key_backspace_produces_browser_ascend() {
+        let k = KeyEvent::new(KeyCode::Backspace, KeyModifiers::empty());
+        assert_eq!(map_browser_key(k), Action::BrowserAscend);
+    }
+
+    #[test]
+    fn map_browser_key_q_produces_quit() {
+        let k = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty());
+        assert_eq!(map_browser_key(k), Action::Quit);
+    }
+
+    #[test]
+    fn map_browser_key_ctrl_c_produces_quit() {
+        let k = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(map_browser_key(k), Action::Quit);
+    }
+
+    #[test]
+    fn map_browser_key_unmapped_produces_none() {
+        let k = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::empty());
+        assert_eq!(map_browser_key(k), Action::None);
+    }
+
+    #[test]
+    fn reader_backspace_produces_browser_back() {
+        // In reader mode, Backspace maps to BrowserBack.
+        let k = KeyEvent::new(KeyCode::Backspace, KeyModifiers::empty());
+        assert_eq!(map_key(k, 10), Action::BrowserBack);
+    }
+
+    #[test]
+    fn apply_browser_down_advances_cursor() {
+        let mut app = make_browser_app("down_cursor");
+        // Add a couple of entries manually so we have something to navigate.
+        if app.browser.as_ref().map(|b| b.entries.len()).unwrap_or(0) < 2 {
+            // Create a subdirectory so the browser has at least one entry.
+            let dir = app.browser.as_ref().unwrap().dir.clone();
+            let _ = std::fs::create_dir_all(dir.join("subdir_for_test"));
+            app = App::new_browser(dir, 80, 25);
+        }
+        let before = app.browser.as_ref().unwrap().selected;
+        if app.browser.as_ref().unwrap().entries.len() > 1 {
+            super::apply(Action::BrowserDown, &mut app);
+            let after = app.browser.as_ref().unwrap().selected;
+            assert_ne!(before, after, "BrowserDown must advance the cursor");
+        }
+    }
+
+    #[test]
+    fn apply_browser_asc_and_desc_round_trip() {
+        // Create a parent dir with a child dir.
+        let parent = std::env::temp_dir().join("bella_events_browser_ascend_desc_parent");
+        let child = parent.join("child_dir");
+        std::fs::create_dir_all(&child).expect("create dirs");
+
+        let mut app = App::new_browser(child.clone(), 80, 25);
+        assert_eq!(
+            app.browser.as_ref().unwrap().dir,
+            child,
+            "precondition: rooted at child"
+        );
+
+        // Ascend to parent.
+        super::apply(Action::BrowserAscend, &mut app);
+        assert_eq!(
+            app.browser.as_ref().unwrap().dir,
+            parent,
+            "BrowserAscend must re-root browser at parent"
+        );
+        assert_eq!(
+            app.mode,
+            Mode::Browser,
+            "mode must stay Browser after ascend"
+        );
+    }
+
+    #[test]
+    fn apply_browser_descend_on_dir_re_roots_browser() {
+        let parent = std::env::temp_dir().join("bella_events_browser_descend_dir");
+        let child = parent.join("nested");
+        std::fs::create_dir_all(&child).expect("create dirs");
+
+        let mut app = App::new_browser(parent.clone(), 80, 25);
+        // Find the Dir entry for "nested" and select it.
+        let idx = app
+            .browser
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .position(|e| e.display == "nested")
+            .expect("nested dir must appear in listing");
+        app.browser.as_mut().unwrap().selected = idx;
+
+        super::apply(Action::BrowserDescend, &mut app);
+
+        assert_eq!(
+            app.browser.as_ref().unwrap().dir,
+            child,
+            "BrowserDescend on a Dir entry must re-root browser at the subdirectory"
+        );
+        assert_eq!(
+            app.mode,
+            Mode::Browser,
+            "mode must stay Browser after descend into dir"
+        );
+    }
+
+    #[test]
+    fn apply_browser_descend_on_markdown_switches_to_reader() {
+        let (mut app, md_path) = make_browser_app_with_md("descend_md");
+        // Find the Markdown entry and select it.
+        let idx = app
+            .browser
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .position(|e| e.path == md_path)
+            .expect("hello.md must appear in listing");
+        app.browser.as_mut().unwrap().selected = idx;
+
+        super::apply(Action::BrowserDescend, &mut app);
+
+        assert_eq!(
+            app.mode,
+            Mode::Reader,
+            "BrowserDescend on a Markdown entry must switch to Reader"
+        );
+        assert_eq!(app.file, md_path, "file must be the opened markdown");
+    }
+
+    #[test]
+    fn apply_browser_back_after_open_returns_to_browser() {
+        let (mut app, md_path) = make_browser_app_with_md("back_after_open");
+        let original_dir = app.browser.as_ref().unwrap().dir.clone();
+
+        // Open the markdown file from the browser.
+        app.open_from_browser(md_path).expect("open_from_browser");
+        assert_eq!(app.mode, Mode::Reader, "precondition: now in Reader");
+
+        // Apply BrowserBack — should return to Browser at the saved cursor.
+        super::apply(Action::BrowserBack, &mut app);
+        assert_eq!(
+            app.mode,
+            Mode::Browser,
+            "BrowserBack must switch back to Browser"
+        );
+        assert_eq!(
+            app.browser.as_ref().unwrap().dir,
+            original_dir,
+            "browser dir must be restored after BrowserBack"
+        );
+    }
+
+    #[test]
+    fn apply_browser_back_noop_when_no_origin() {
+        // Reader opened directly with a file arg — back must be a no-op.
+        let src = "# Hello".to_string();
+        let mut app = App::new(src, PathBuf::from("doc.md"), 80, 25);
+        assert_eq!(app.mode, Mode::Reader, "precondition: Reader mode");
+
+        super::apply(Action::BrowserBack, &mut app);
+        assert_eq!(
+            app.mode,
+            Mode::Reader,
+            "BrowserBack must be a no-op when there is no browser origin"
+        );
+    }
+
+    #[test]
+    fn apply_browser_click_at_on_dir_descends_into_it() {
+        // Create a parent dir containing one subdir.
+        let parent = std::env::temp_dir().join("bella_events_browser_click_sel");
+        let child = parent.join("click_child_dir");
+        std::fs::create_dir_all(&child).expect("create child dir");
+
+        let mut app = App::new_browser(parent.clone(), 80, 25);
+        // Find the entry index for "click_child_dir".
+        let idx = app
+            .browser
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .position(|e| e.display == "click_child_dir")
+            .expect("click_child_dir must appear in listing");
+
+        // BrowserClickAt maps a screen row to scroll+row. scroll is 0, so row == idx.
+        use ratatui::layout::Rect;
+        app.browser_area = Rect {
+            x: 0,
+            y: 1,
+            width: 78,
+            height: 20,
+        };
+
+        super::apply(Action::BrowserClickAt { row: idx as u16 }, &mut app);
+
+        // After clicking on a Dir entry, browser should be re-rooted at the child.
+        assert_eq!(
+            app.browser.as_ref().unwrap().dir,
+            child,
+            "BrowserClickAt on a Dir entry must descend into it"
+        );
+        assert_eq!(
+            app.mode,
+            Mode::Browser,
+            "mode must stay Browser after click-descend"
+        );
+    }
+
+    #[test]
+    fn apply_browser_click_at_on_markdown_opens_reader() {
+        let (mut app, md_path) = make_browser_app_with_md("click_md_open");
+        // Find the markdown entry index.
+        let idx = app
+            .browser
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .position(|e| e.path == md_path)
+            .expect("hello.md must appear in listing");
+
+        use ratatui::layout::Rect;
+        app.browser_area = Rect {
+            x: 0,
+            y: 1,
+            width: 78,
+            height: 20,
+        };
+
+        super::apply(Action::BrowserClickAt { row: idx as u16 }, &mut app);
+
+        assert_eq!(
+            app.mode,
+            Mode::Reader,
+            "BrowserClickAt on a Markdown entry must switch to Reader"
+        );
+        assert_eq!(app.file, md_path, "file must be the clicked markdown");
     }
 }
