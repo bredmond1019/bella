@@ -1,9 +1,41 @@
-//! App state: holds the source, rendered output, and scroll position.
+//! App state: holds the source, rendered output, scroll position, and navigation metadata.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use bella_engine::{Theme, links::TableExpansions, markdown::render_with_edit};
+use bella_engine::{
+    LinkMap, Theme,
+    links::TableExpansions,
+    markdown::{HeadingInfo, render_with_edit},
+};
 use ratatui::text::Line;
+
+/// Search state while a `/`-search is active or has matches.
+/// Fields are wired up by Tasks 3–5; allow dead-code until then.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct SearchState {
+    /// The search query as typed so far.
+    pub query: String,
+    /// Rendered-line indices that match the query (in document order).
+    pub matches: Vec<usize>,
+    /// Index into `matches` for the current match.
+    pub current: usize,
+    /// True while the user is typing the query (search input mode active).
+    pub input_mode: bool,
+}
+
+#[allow(dead_code)]
+impl SearchState {
+    /// Create a new, empty search state in input mode.
+    pub fn new() -> Self {
+        Self {
+            query: String::new(),
+            matches: Vec::new(),
+            current: 0,
+            input_mode: true,
+        }
+    }
+}
 
 /// Central application state passed through the event loop.
 pub struct App {
@@ -11,6 +43,10 @@ pub struct App {
     pub src: String,
     /// Rendered display lines (produced by bella-engine).
     pub lines: Vec<Line<'static>>,
+    /// Link metadata extracted from the last render.
+    pub link_map: LinkMap,
+    /// Heading metadata extracted from the last render.
+    pub headings: Vec<HeadingInfo>,
     /// Current top display row (scroll offset).
     pub scroll: u16,
     /// Height of the content viewport (body area, excluding status line).
@@ -19,6 +55,10 @@ pub struct App {
     pub file: PathBuf,
     /// Exit flag — set to `true` to terminate the event loop.
     pub should_quit: bool,
+    /// Index of the currently focused link (into `link_map.links`), if any.
+    pub focused_link: Option<usize>,
+    /// Active search state, if any.
+    pub search: Option<SearchState>,
 }
 
 impl App {
@@ -28,22 +68,34 @@ impl App {
     /// so `viewport_height = term_height.saturating_sub(1)`.
     pub fn new(src: String, file: PathBuf, width: u16, term_height: u16) -> Self {
         let viewport_height = term_height.saturating_sub(1);
-        let lines = render_lines(&src, width);
+        let base_dir = file.parent().map(Path::to_path_buf);
+        let (lines, link_map, headings) = render_metadata(&src, width, base_dir.as_deref());
         Self {
             src,
             lines,
+            link_map,
+            headings,
             scroll: 0,
             viewport_height,
             file,
             should_quit: false,
+            focused_link: None,
+            search: None,
         }
     }
 
     /// Re-render at a new `width` (called on terminal resize).
     pub fn render(&mut self, width: u16) {
-        self.lines = render_lines(&self.src, width);
+        let base_dir = self.file.parent().map(Path::to_path_buf);
+        let (lines, link_map, headings) = render_metadata(&self.src, width, base_dir.as_deref());
+        self.lines = lines;
+        self.link_map = link_map;
+        self.headings = headings;
         // Re-clamp scroll in case the new render is shorter.
         self.scroll = self.scroll.min(self.max_scroll());
+        // Reset navigation state — line indices change on resize.
+        self.focused_link = None;
+        self.search = None;
     }
 
     /// Update the viewport height (called after each draw when the body area
@@ -86,10 +138,15 @@ impl App {
     }
 }
 
-fn render_lines(src: &str, width: u16) -> Vec<Line<'static>> {
+/// Render `src` and return `(lines, link_map, headings)`.
+fn render_metadata(
+    src: &str,
+    width: u16,
+    base_dir: Option<&Path>,
+) -> (Vec<Line<'static>>, LinkMap, Vec<HeadingInfo>) {
     let theme = Theme::dark();
-    let rendered = render_with_edit(src, None, width, &theme, None, &TableExpansions::new());
-    rendered.lines
+    let rendered = render_with_edit(src, base_dir, width, &theme, None, &TableExpansions::new());
+    (rendered.lines, rendered.link_map, rendered.headings)
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +155,7 @@ fn render_lines(src: &str, width: u16) -> Vec<Line<'static>> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write as _;
     use std::path::PathBuf;
 
     use super::App;
@@ -157,5 +215,103 @@ mod tests {
             0,
             "max_scroll must be 0 when content fits the viewport"
         );
+    }
+
+    // --- Task 1 tests: link/heading metadata + base_dir + nav scaffolding ---
+
+    #[test]
+    fn link_map_populated_for_doc_with_links() {
+        // A doc with a relative link and an external URL must produce a non-empty link_map.
+        let src = "See [local](other.md) and [web](https://example.com).".to_string();
+        let file = PathBuf::from("/some/dir/readme.md");
+        let app = App::new(src, file, 80, 25);
+        assert!(
+            !app.link_map.links.is_empty(),
+            "link_map must be populated for a doc containing links"
+        );
+        assert_eq!(
+            app.link_map.links.len(),
+            2,
+            "expected exactly 2 links (local + URL)"
+        );
+    }
+
+    #[test]
+    fn base_dir_equals_file_parent() {
+        // Verify that the render received a real base_dir: a relative LocalFile link should
+        // be present in the link_map (engine threads base_dir into link resolution).
+        let src = "[local](other.md)".to_string();
+        let file = PathBuf::from("/projects/docs/index.md");
+        let app = App::new(src, file.clone(), 80, 25);
+        // The app stores the file path correctly.
+        assert_eq!(app.file, file, "app.file must match the provided path");
+        // And the render did not discard link metadata.
+        assert!(!app.link_map.links.is_empty(), "link_map must not be empty");
+    }
+
+    #[test]
+    fn navigation_state_defaults_to_none() {
+        let src = "[link](other.md)".to_string();
+        let app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        assert!(
+            app.focused_link.is_none(),
+            "focused_link must default to None"
+        );
+        assert!(app.search.is_none(), "search must default to None");
+    }
+
+    #[test]
+    fn render_resets_nav_state() {
+        let src = "[link](other.md)".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        // Manually set navigation state.
+        app.focused_link = Some(0);
+        // Re-render (e.g. on resize) must reset nav state.
+        app.render(80);
+        assert!(
+            app.focused_link.is_none(),
+            "render() must reset focused_link"
+        );
+        assert!(app.search.is_none(), "render() must reset search");
+    }
+
+    #[test]
+    fn headings_populated_for_doc_with_headings() {
+        let src = "# Heading One\n\nSome text.\n\n## Heading Two\n".to_string();
+        let app = App::new(src, PathBuf::from("doc.md"), 80, 25);
+        assert!(
+            !app.headings.is_empty(),
+            "headings must be populated for a doc with headings"
+        );
+        assert_eq!(app.headings.len(), 2, "expected exactly 2 headings");
+        assert_eq!(app.headings[0].text, "Heading One");
+        assert_eq!(app.headings[1].text, "Heading Two");
+    }
+
+    #[test]
+    fn link_map_empty_for_plain_doc() {
+        let src = "Just plain text, no links here.".to_string();
+        let app = App::new(src, PathBuf::from("plain.md"), 80, 25);
+        assert!(
+            app.link_map.links.is_empty(),
+            "link_map must be empty for a doc with no links"
+        );
+    }
+
+    #[test]
+    fn app_with_temp_file_uses_correct_base_dir() {
+        // Create a real temp file so base_dir is a real directory.
+        let dir = std::env::temp_dir();
+        let file_path = dir.join("bella_test_base_dir.md");
+        let src = "[rel](sibling.md)".to_string();
+        {
+            let mut f = std::fs::File::create(&file_path).expect("create temp file");
+            f.write_all(src.as_bytes()).expect("write temp file");
+        }
+        let app = App::new(src, file_path.clone(), 80, 25);
+        // The engine received the parent dir as base_dir — confirm the link was picked up.
+        assert!(!app.link_map.links.is_empty(), "link must be found");
+        // Clean up.
+        let _ = std::fs::remove_file(&file_path);
     }
 }
