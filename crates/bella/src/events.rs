@@ -18,6 +18,14 @@ pub enum Action {
     FocusPrev,
     ClearFocus,
     Follow,
+    // Search actions (Task 5)
+    SearchStart,
+    SearchChar(char),
+    SearchBackspace,
+    SearchCommit,
+    SearchNext,
+    SearchPrev,
+    SearchCancel,
     Quit,
     None,
 }
@@ -44,8 +52,27 @@ pub fn map_key(key: KeyEvent, viewport_height: u16) -> Action {
         KeyCode::Esc => Action::ClearFocus,
         // Follow focused link
         KeyCode::Enter => Action::Follow,
+        // In-document search
+        KeyCode::Char('/') => Action::SearchStart,
+        KeyCode::Char('n') => Action::SearchNext,
+        KeyCode::Char('N') => Action::SearchPrev,
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
+        _ => Action::None,
+    }
+}
+
+/// Key mapper for search-input mode.
+///
+/// While the user is typing a search query, character keys append to the query,
+/// `Backspace` removes the last char, `Enter` commits, and `Esc` cancels.
+/// All other keys are ignored (return `Action::None`).
+pub fn map_search_key(key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Char(ch) => Action::SearchChar(ch),
+        KeyCode::Backspace => Action::SearchBackspace,
+        KeyCode::Enter => Action::SearchCommit,
+        KeyCode::Esc => Action::SearchCancel,
         _ => Action::None,
     }
 }
@@ -59,11 +86,26 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         Action::ToBottom => app.jump_bottom(),
         Action::FocusNext => app.focus_next(),
         Action::FocusPrev => app.focus_prev(),
-        Action::ClearFocus => app.clear_focus(),
+        Action::ClearFocus => {
+            // If search is active, cancel it first; otherwise clear link focus.
+            if app.search.is_some() {
+                app.cancel_search();
+            } else {
+                app.clear_focus();
+            }
+        }
         Action::Follow => {
             // Result is ignored here; Task 6 will intercept it to push history.
             let _ = app.follow_focused();
         }
+        // Search actions
+        Action::SearchStart => app.start_search(),
+        Action::SearchChar(ch) => app.push_search_char(ch),
+        Action::SearchBackspace => app.pop_search_char(),
+        Action::SearchCommit => app.commit_search(),
+        Action::SearchNext => app.search_next(),
+        Action::SearchPrev => app.search_prev(),
+        Action::SearchCancel => app.cancel_search(),
         Action::Quit => app.quit(),
         Action::None => {}
     }
@@ -85,7 +127,14 @@ pub fn run_loop(
 
         match event::read()? {
             Event::Key(key) => {
-                let action = map_key(key, app.viewport_height);
+                // In search input mode, character keys feed into the query instead of
+                // the normal key bindings.
+                let in_search_input = app.search.as_ref().map(|s| s.input_mode).unwrap_or(false);
+                let action = if in_search_input {
+                    map_search_key(key)
+                } else {
+                    map_key(key, app.viewport_height)
+                };
                 apply(action, &mut app);
             }
             Event::Resize(width, height) => {
@@ -305,5 +354,113 @@ mod tests {
         // Cleanup.
         let _ = std::fs::remove_file(&target);
         let _ = std::fs::remove_file(&main_path);
+    }
+
+    // --- Task 5 tests: search key mappings and routing ---
+
+    #[test]
+    fn slash_produces_search_start() {
+        assert_eq!(map_key(key(KeyCode::Char('/')), 10), Action::SearchStart);
+    }
+
+    #[test]
+    fn n_produces_search_next() {
+        assert_eq!(map_key(key(KeyCode::Char('n')), 10), Action::SearchNext);
+    }
+
+    #[test]
+    fn big_n_produces_search_prev() {
+        assert_eq!(map_key(key(KeyCode::Char('N')), 10), Action::SearchPrev);
+    }
+
+    #[test]
+    fn map_search_key_char_produces_search_char() {
+        let k = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::empty());
+        assert_eq!(super::map_search_key(k), Action::SearchChar('h'));
+    }
+
+    #[test]
+    fn map_search_key_backspace_produces_search_backspace() {
+        let k = KeyEvent::new(KeyCode::Backspace, KeyModifiers::empty());
+        assert_eq!(super::map_search_key(k), Action::SearchBackspace);
+    }
+
+    #[test]
+    fn map_search_key_enter_produces_search_commit() {
+        let k = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
+        assert_eq!(super::map_search_key(k), Action::SearchCommit);
+    }
+
+    #[test]
+    fn map_search_key_esc_produces_search_cancel() {
+        let k = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
+        assert_eq!(super::map_search_key(k), Action::SearchCancel);
+    }
+
+    #[test]
+    fn apply_search_start_enters_search_mode() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        super::apply(Action::SearchStart, &mut app);
+        assert!(
+            app.search.is_some(),
+            "SearchStart must put app into search mode"
+        );
+        assert!(
+            app.search.as_ref().unwrap().input_mode,
+            "search must be in input mode after SearchStart"
+        );
+    }
+
+    #[test]
+    fn apply_search_char_appends_to_query() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        super::apply(Action::SearchStart, &mut app);
+        super::apply(Action::SearchChar('h'), &mut app);
+        super::apply(Action::SearchChar('i'), &mut app);
+        assert_eq!(app.search.as_ref().unwrap().query, "hi");
+    }
+
+    #[test]
+    fn apply_search_cancel_clears_search() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        super::apply(Action::SearchStart, &mut app);
+        super::apply(Action::SearchChar('h'), &mut app);
+        super::apply(Action::SearchCancel, &mut app);
+        assert!(app.search.is_none(), "SearchCancel must clear search state");
+    }
+
+    #[test]
+    fn apply_search_commit_leaves_input_mode() {
+        let src = "hello world\n\nanother line".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        super::apply(Action::SearchStart, &mut app);
+        super::apply(Action::SearchChar('h'), &mut app);
+        super::apply(Action::SearchCommit, &mut app);
+        let s = app
+            .search
+            .as_ref()
+            .expect("search must be Some after commit");
+        assert!(!s.input_mode, "input_mode must be false after SearchCommit");
+    }
+
+    #[test]
+    fn esc_in_normal_mode_cancels_active_search() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        // Put the app in a post-commit search state (input_mode = false).
+        super::apply(Action::SearchStart, &mut app);
+        super::apply(Action::SearchChar('h'), &mut app);
+        super::apply(Action::SearchCommit, &mut app);
+        assert!(app.search.is_some(), "precondition: search active");
+        // In normal mode (not input mode), Esc maps to ClearFocus,
+        // which should cancel an active search.
+        super::apply(Action::ClearFocus, &mut app);
+        assert!(
+            app.search.is_none(),
+            "ClearFocus must cancel an active search"
+        );
     }
 }

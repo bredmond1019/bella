@@ -41,6 +41,31 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
     let end = (start + area.height as usize).min(app.lines.len());
     let mut visible: Vec<Line<'static>> = app.lines[start..end].to_vec();
 
+    // Overlay search-match highlights (applied before the link-focus highlight so
+    // the focused-link style wins if they overlap).
+    if let Some(s) = &app.search
+        && !s.input_mode
+        && !s.query.is_empty()
+    {
+        let current_line = s.matches.get(s.current).copied();
+        let match_style = Style::default().fg(Color::Black).bg(Color::Yellow);
+        let current_style = Style::default().fg(Color::Black).bg(Color::Cyan);
+        for &doc_line in &s.matches {
+            if doc_line >= start && doc_line < end {
+                let row = doc_line - start;
+                let style = if Some(doc_line) == current_line {
+                    current_style
+                } else {
+                    match_style
+                };
+                if let Some((col_start, col_end)) = find_query_col(&visible[row], &s.query) {
+                    visible[row] =
+                        apply_span_highlight(visible[row].clone(), col_start, col_end, style);
+                }
+            }
+        }
+    }
+
     // Overlay focused-link highlight if a link is focused and on a visible row.
     if let Some(focused_idx) = app.focused_link
         && let Some(span) = app.link_map.links.get(focused_idx)
@@ -60,6 +85,23 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
 
     let paragraph = Paragraph::new(visible).block(Block::default());
     frame.render_widget(paragraph, area);
+}
+
+/// Find the first case-insensitive occurrence of `query` in a rendered `Line`.
+///
+/// Returns `(col_start, col_end)` as character-column positions, or `None` if
+/// the query is empty or not found.
+fn find_query_col(line: &Line, query: &str) -> Option<(usize, usize)> {
+    if query.is_empty() {
+        return None;
+    }
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let text_lower = text.to_lowercase();
+    let query_lower = query.to_lowercase();
+    let byte_pos = text_lower.find(&query_lower)?;
+    let col_start = text[..byte_pos].chars().count();
+    let col_end = col_start + query.chars().count();
+    Some((col_start, col_end))
 }
 
 /// Apply `highlight` style to columns `[col_start, col_end)` within `line`,
@@ -110,7 +152,16 @@ fn apply_span_highlight(
 }
 
 fn draw_statusline(frame: &mut Frame, area: Rect, app: &App) {
-    let text = if let Some(msg) = &app.status_message {
+    let text = if let Some(s) = &app.search {
+        // Search mode: show the prompt with the live query and (after commit) match count.
+        if s.input_mode {
+            format!("/{}_", s.query)
+        } else if s.matches.is_empty() {
+            format!("/{} [no matches]", s.query)
+        } else {
+            format!("/{} [{}/{}]", s.query, s.current + 1, s.matches.len())
+        }
+    } else if let Some(msg) = &app.status_message {
         // Show the non-fatal status message (e.g. file-not-found) instead of
         // the normal scroll position.  It stays visible until the next action
         // that clears or replaces it.
@@ -279,6 +330,97 @@ mod tests {
         assert_ne!(
             row0_before, row0_after,
             "first body row should change after scrolling"
+        );
+    }
+
+    // --- Task 5 tests: search prompt and highlighting ---
+
+    #[test]
+    fn search_prompt_shows_query_in_status_row() {
+        let src = "# Hello World\n\nSome text.";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_app(src, width, height);
+        // Enter search input mode with a query.
+        app.start_search();
+        app.push_search_char('h');
+        app.push_search_char('e');
+        app.push_search_char('l');
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        // The status row is the last row (height - 1).
+        let status_row = height - 1;
+        let buf = terminal.backend().buffer().clone();
+        let row_text: String = (0..width)
+            .map(|x| buf.cell((x, status_row)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+
+        assert!(
+            row_text.contains("hel"),
+            "status row must show the search query 'hel'; got: {row_text:?}"
+        );
+        // The prompt should start with `/`.
+        assert!(
+            row_text.trim_start().starts_with('/'),
+            "status row must start with '/' in search mode; got: {row_text:?}"
+        );
+    }
+
+    #[test]
+    fn search_match_highlight_differs_from_unhighlighted() {
+        let src = "hello world\n\nanother line without the word";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Draw without search.
+        let mut app_plain = make_app(src, width, height);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_plain);
+            })
+            .unwrap();
+        let buf_plain = terminal.backend().buffer().clone();
+
+        // Draw with search committed on "hello".
+        let mut app_search = make_app(src, width, height);
+        app_search.start_search();
+        app_search.push_search_char('h');
+        app_search.push_search_char('e');
+        app_search.push_search_char('l');
+        app_search.push_search_char('l');
+        app_search.push_search_char('o');
+        app_search.commit_search();
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_search);
+            })
+            .unwrap();
+        let buf_search = terminal.backend().buffer().clone();
+
+        // Row 0 has "hello world" — some cells in that row must differ.
+        let any_diff = (0..width).any(|x| {
+            buf_plain
+                .cell((x, 0))
+                .zip(buf_search.cell((x, 0)))
+                .map(|(p, s)| p.style() != s.style())
+                .unwrap_or(false)
+        });
+        assert!(
+            any_diff,
+            "at least one cell in the matched row must have a different style when search is active"
         );
     }
 }
