@@ -5,6 +5,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::app::App;
+use crate::history::HistoryEntry;
 use crate::ui;
 
 /// Action produced by the key mapper.
@@ -26,6 +27,9 @@ pub enum Action {
     SearchNext,
     SearchPrev,
     SearchCancel,
+    // History navigation (Task 6)
+    HistoryBack,
+    HistoryForward,
     Quit,
     None,
 }
@@ -56,6 +60,9 @@ pub fn map_key(key: KeyEvent, viewport_height: u16) -> Action {
         KeyCode::Char('/') => Action::SearchStart,
         KeyCode::Char('n') => Action::SearchNext,
         KeyCode::Char('N') => Action::SearchPrev,
+        // History navigation
+        KeyCode::Char('[') => Action::HistoryBack,
+        KeyCode::Char(']') => Action::HistoryForward,
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
         _ => Action::None,
@@ -95,9 +102,21 @@ pub(crate) fn apply(action: Action, app: &mut App) {
             }
         }
         Action::Follow => {
-            // Result is ignored here; Task 6 will intercept it to push history.
-            let _ = app.follow_focused();
+            // follow_focused() returns Some((prev_file, prev_scroll)) when a file
+            // navigation occurred.  The History cursor model requires that BOTH the
+            // previous and the new positions are in the stack (cursor at the new one),
+            // so `back()` can return the previous entry.
+            if let Some((prev_path, prev_scroll)) = app.follow_focused() {
+                // Push the previous position (where we were before navigating).
+                app.history.push(HistoryEntry::new(prev_path, prev_scroll));
+                // Push the new current position (already loaded into app).
+                app.history
+                    .push(HistoryEntry::new(app.file.clone(), app.scroll));
+            }
         }
+        // History navigation
+        Action::HistoryBack => app.go_back(),
+        Action::HistoryForward => app.go_forward(),
         // Search actions
         Action::SearchStart => app.start_search(),
         Action::SearchChar(ch) => app.push_search_char(ch),
@@ -462,5 +481,80 @@ mod tests {
             app.search.is_none(),
             "ClearFocus must cancel an active search"
         );
+    }
+
+    // --- Task 6 tests: history key mappings ---
+
+    #[test]
+    fn left_bracket_produces_history_back() {
+        assert_eq!(map_key(key(KeyCode::Char('[')), 10), Action::HistoryBack);
+    }
+
+    #[test]
+    fn right_bracket_produces_history_forward() {
+        assert_eq!(map_key(key(KeyCode::Char(']')), 10), Action::HistoryForward);
+    }
+
+    #[test]
+    fn apply_history_back_noop_at_start() {
+        let mut app = make_app();
+        let file_before = app.file.clone();
+        super::apply(Action::HistoryBack, &mut app);
+        assert_eq!(
+            app.file, file_before,
+            "HistoryBack at start must be a no-op"
+        );
+    }
+
+    #[test]
+    fn apply_history_forward_noop_at_end() {
+        let mut app = make_app();
+        let file_before = app.file.clone();
+        super::apply(Action::HistoryForward, &mut app);
+        assert_eq!(
+            app.file, file_before,
+            "HistoryForward at end must be a no-op"
+        );
+    }
+
+    #[test]
+    fn apply_follow_pushes_history_entry() {
+        // Write a real target file so load_file can succeed.
+        let dir = std::env::temp_dir();
+        let target = dir.join("bella_events_task6_target.md");
+        std::fs::write(&target, "# Target\n\nContent.").expect("write target");
+
+        let main_path = dir.join("bella_events_task6_main.md");
+        let src = "[go](bella_events_task6_target.md)".to_string();
+        std::fs::write(&main_path, &src).expect("write main");
+
+        let mut app = App::new(src, main_path.clone(), 80, 11);
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+        app.focused_link = Some(0);
+
+        // Before follow — history must be empty (no back entry).
+        assert!(
+            !app.history.can_back(),
+            "history must have no back entry before following a link"
+        );
+
+        super::apply(Action::Follow, &mut app);
+
+        // After following a LocalFile link, apply pushes both prev AND new position.
+        // The cursor is on the new entry, so can_back() is true (prev is behind it).
+        assert!(
+            app.history.can_back(),
+            "history must have a back entry after following a local-file link"
+        );
+        // Going back should restore the main file.
+        app.go_back();
+        assert_eq!(
+            app.file, main_path,
+            "go_back after follow must restore the main file"
+        );
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_file(&main_path);
     }
 }
