@@ -110,10 +110,17 @@ fn apply_span_highlight(
 }
 
 fn draw_statusline(frame: &mut Frame, area: Rect, app: &App) {
-    let file_name = app.file.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-    let total = app.lines.len();
-    let current = (app.scroll as usize + app.viewport_height as usize).min(total);
-    let text = format!(" bella · {file_name} · {current}/{total}");
+    let text = if let Some(msg) = &app.status_message {
+        // Show the non-fatal status message (e.g. file-not-found) instead of
+        // the normal scroll position.  It stays visible until the next action
+        // that clears or replaces it.
+        format!(" bella · {msg}")
+    } else {
+        let file_name = app.file.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+        let total = app.lines.len();
+        let current = (app.scroll as usize + app.viewport_height as usize).min(total);
+        format!(" bella · {file_name} · {current}/{total}")
+    };
     let line = Line::from(vec![Span::styled(
         text,
         Style::default().fg(Color::Black).bg(Color::White),

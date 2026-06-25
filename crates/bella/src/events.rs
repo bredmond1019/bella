@@ -17,6 +17,7 @@ pub enum Action {
     FocusNext,
     FocusPrev,
     ClearFocus,
+    Follow,
     Quit,
     None,
 }
@@ -41,6 +42,8 @@ pub fn map_key(key: KeyEvent, viewport_height: u16) -> Action {
         KeyCode::Tab => Action::FocusNext,
         KeyCode::BackTab => Action::FocusPrev,
         KeyCode::Esc => Action::ClearFocus,
+        // Follow focused link
+        KeyCode::Enter => Action::Follow,
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
         _ => Action::None,
@@ -57,6 +60,10 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         Action::FocusNext => app.focus_next(),
         Action::FocusPrev => app.focus_prev(),
         Action::ClearFocus => app.clear_focus(),
+        Action::Follow => {
+            // Result is ignored here; Task 6 will intercept it to push history.
+            let _ = app.follow_focused();
+        }
         Action::Quit => app.quit(),
         Action::None => {}
     }
@@ -239,5 +246,64 @@ mod tests {
         app.focused_link = Some(0);
         super::apply(Action::ClearFocus, &mut app);
         assert_eq!(app.focused_link, None, "ClearFocus must clear focused_link");
+    }
+
+    // --- Task 4 tests: Enter → Follow ---
+
+    #[test]
+    fn enter_produces_follow() {
+        assert_eq!(map_key(key(KeyCode::Enter), 10), Action::Follow);
+    }
+
+    #[test]
+    fn apply_follow_with_no_focused_link_is_noop() {
+        let src = "[A](a.md)".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        // No focused link — Follow should be a no-op (no panic, no change).
+        let file_before = app.file.clone();
+        super::apply(Action::Follow, &mut app);
+        assert_eq!(
+            app.file, file_before,
+            "file must not change when no link is focused"
+        );
+    }
+
+    #[test]
+    fn apply_follow_url_does_not_change_file() {
+        let src = "[web](https://example.com)".to_string();
+        let file = std::path::PathBuf::from("test.md");
+        let mut app = App::new(src, file.clone(), 80, 11);
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+        app.focused_link = Some(0);
+        super::apply(Action::Follow, &mut app);
+        assert_eq!(app.file, file, "file must not change when following a URL");
+    }
+
+    #[test]
+    fn apply_follow_local_file_changes_file() {
+        // Write a real target file so load_file can succeed.
+        let dir = std::env::temp_dir();
+        let target = dir.join("bella_events_follow_target.md");
+        std::fs::write(&target, "# Target\n\nContent.").expect("write target");
+
+        // The engine resolves relative links against base_dir.  Use the temp dir
+        // as the parent so the resolved path matches `target`.
+        let main_path = dir.join("bella_events_follow_main.md");
+        let src = "[go](bella_events_follow_target.md)".to_string();
+        std::fs::write(&main_path, &src).expect("write main");
+
+        let mut app = App::new(src, main_path.clone(), 80, 11);
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+        app.focused_link = Some(0);
+
+        super::apply(Action::Follow, &mut app);
+
+        assert_eq!(
+            app.file, target,
+            "app.file must be the followed target path"
+        );
+        // Cleanup.
+        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_file(&main_path);
     }
 }
