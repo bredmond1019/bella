@@ -6,7 +6,7 @@ description: Decomposed task spec for Bella Block E — a hackmd-style directory
 
 # Task Spec — Phase 1, Block E (File browser)
 
-**Status:** Not started · **Last run:** never
+**Status:** Done · **Last run:** 2026-06-25
 
 ## Goal
 `bella` with no arg (or a dir arg) opens a hackmd-style directory navigator that lists subdirectories and `.md`/`.mdx` files, descends/ascends with `Enter`/`..`/Backspace, moves the cursor with `j/k` and the mouse, and round-trips into the reader and back with the cursor preserved.
