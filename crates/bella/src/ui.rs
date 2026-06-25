@@ -99,8 +99,10 @@ fn find_query_col(line: &Line, query: &str) -> Option<(usize, usize)> {
     let text_lower = text.to_lowercase();
     let query_lower = query.to_lowercase();
     let byte_pos = text_lower.find(&query_lower)?;
-    let col_start = text[..byte_pos].chars().count();
-    let col_end = col_start + query.chars().count();
+    // Slice text_lower (not text) — byte_pos is a valid boundary in text_lower,
+    // but lowercasing can change UTF-8 byte lengths, making it invalid in text.
+    let col_start = text_lower[..byte_pos].chars().count();
+    let col_end = col_start + query_lower.chars().count();
     Some((col_start, col_end))
 }
 
