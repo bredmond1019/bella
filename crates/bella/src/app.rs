@@ -276,7 +276,11 @@ impl App {
             }
             LinkTarget::Url(url) => {
                 // Open in the system browser; ignore errors (no browser available is non-fatal).
+                // Suppressed in test builds to avoid spawning real browser tabs.
+                #[cfg(not(test))]
                 let _ = open::that(url);
+                #[cfg(test)]
+                let _ = url;
                 None
             }
             LinkTarget::Anchor(slug) => {
