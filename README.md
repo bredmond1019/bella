@@ -28,7 +28,7 @@ cargo build
 # Release build
 cargo build --release
 
-# Run the viewer (Block B and later)
+# Run the viewer
 cargo run -p bella -- <file|dir>
 ```
 
@@ -56,6 +56,25 @@ bella/
 ├── planning/                 ← context, status, master-plan, harness.json, decisions/, specs/
 └── reference/                ← upstream zemse/hackmd source (excluded from workspace)
 ```
+
+## Keybindings
+
+| Key | Action |
+|---|---|
+| `j` / `↓` | Scroll down |
+| `k` / `↑` | Scroll up |
+| `g` | Go to top |
+| `G` | Go to bottom |
+| `Tab` | Focus next link |
+| `Shift-Tab` | Focus previous link |
+| `Enter` | Follow focused link (local file or browser URL) |
+| `[` | History back |
+| `]` | History forward |
+| `/` | Start search |
+| `n` | Next search match |
+| `N` | Previous search match |
+| `Esc` | Clear focus / cancel search |
+| `q` / `Ctrl-C` | Quit |
 
 ## Documentation
 
