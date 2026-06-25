@@ -122,6 +122,25 @@ impl History {
     pub fn current(&self) -> Option<&HistoryEntry> {
         self.cursor.map(|idx| &self.entries[idx])
     }
+
+    /// Peek at the previous entry without moving the cursor.
+    pub fn peek_back(&self) -> Option<&HistoryEntry> {
+        let idx = self.cursor?;
+        if idx == 0 {
+            return None;
+        }
+        Some(&self.entries[idx - 1])
+    }
+
+    /// Peek at the next entry without moving the cursor.
+    pub fn peek_forward(&self) -> Option<&HistoryEntry> {
+        let idx = self.cursor?;
+        let next = idx + 1;
+        if next >= self.entries.len() {
+            return None;
+        }
+        Some(&self.entries[next])
+    }
 }
 
 // ---------------------------------------------------------------------------

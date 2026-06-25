@@ -308,15 +308,18 @@ impl App {
     /// No-op when there is no back history.  Does NOT push a new entry —
     /// the history cursor moves without adding to the stack.
     pub fn go_back(&mut self) {
-        let entry = self.history.back().cloned();
-        if let Some(HistoryEntry { path, scroll }) = entry {
-            // Load the file; errors are non-fatal (surfaced as a status message).
-            if let Err(msg) = self.load_file(path) {
-                self.status_message = Some(msg);
-            } else {
-                // load_file resets scroll to 0 — override with the saved value.
-                self.scroll = scroll.min(self.max_scroll());
-            }
+        // Peek first so the cursor only moves if the file loads successfully.
+        // If we moved the cursor unconditionally (via history.back()) and
+        // load_file then failed, the cursor would be permanently out of sync
+        // with the displayed file.
+        let Some(HistoryEntry { path, scroll }) = self.history.peek_back().cloned() else {
+            return;
+        };
+        if let Err(msg) = self.load_file(path) {
+            self.status_message = Some(msg);
+        } else {
+            self.history.back();
+            self.scroll = scroll.min(self.max_scroll());
         }
     }
 
@@ -325,13 +328,14 @@ impl App {
     /// Restores the next file and its recorded scroll position.
     /// No-op when there is no forward history.  Does NOT push a new entry.
     pub fn go_forward(&mut self) {
-        let entry = self.history.forward().cloned();
-        if let Some(HistoryEntry { path, scroll }) = entry {
-            if let Err(msg) = self.load_file(path) {
-                self.status_message = Some(msg);
-            } else {
-                self.scroll = scroll.min(self.max_scroll());
-            }
+        let Some(HistoryEntry { path, scroll }) = self.history.peek_forward().cloned() else {
+            return;
+        };
+        if let Err(msg) = self.load_file(path) {
+            self.status_message = Some(msg);
+        } else {
+            self.history.forward();
+            self.scroll = scroll.min(self.max_scroll());
         }
     }
 

@@ -94,12 +94,10 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         Action::FocusNext => app.focus_next(),
         Action::FocusPrev => app.focus_prev(),
         Action::ClearFocus => {
-            // If search is active, cancel it first; otherwise clear link focus.
-            if app.search.is_some() {
-                app.cancel_search();
-            } else {
-                app.clear_focus();
-            }
+            // Clear all overlay state in one Esc press — search and link focus
+            // can be simultaneously active, so cancel both unconditionally.
+            app.cancel_search();
+            app.clear_focus();
         }
         Action::Follow => {
             // follow_focused() returns Some((prev_file, prev_scroll)) when a file
