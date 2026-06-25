@@ -23,3 +23,6 @@ Validated: gating checks (fast tripwire)
 ## Task 5 — PASSED (1 attempt)
 What: Validation task: all four checks pass — fmt, clippy, 237 tests (199+37+1), and release build
 Validated: gating checks (fast tripwire)
+
+## Docs
+Patched: /Users/brandon/Dev/agentic-portfolio/bella/trees/1.E-file-browser-flow-4/planning/status.md, /Users/brandon/Dev/agentic-portfolio/bella/trees/1.E-file-browser-flow-4/README.md
