@@ -17,6 +17,8 @@ Block E (file browser / directory navigator) for Phase 1 was just implemented vi
 - Docs patched in worktree: `planning/status.md` and `README.md`
 - PR #3 opened (non-draft): https://github.com/bredmond1019/bella/pull/3
 - Branch: `1.E-file-browser-flow-4`, worktree: `trees/1.E-file-browser-flow-4`
+- Ran `/close-out`: all 4 gating checks + emoji gate PASS on main (196 tests); docs audit clean — no blocking gaps; no patches needed (sole STALE item is README `<file|dir>` which self-corrects on merge of PR #3)
+- `main` is now 3 commits ahead of `origin/main`
 
 ## Remaining work
 
@@ -34,7 +36,7 @@ Block E (file browser / directory navigator) for Phase 1 was just implemented vi
 ## Context the next agent needs
 
 - The sdlc-flow ran in an isolated worktree (`trees/1.E-file-browser-flow-4`), not on `main`. The spec state file is at `planning/1.E-file-browser/sdlc/sdlc-flow-state.json` and worklog at `planning/1.E-file-browser/sdlc/worklog.md` — these will land on main when the PR merges.
-- `main` is currently 1 commit ahead of `origin/main` (`chore: add spec for 1.E-file-browser`) — push this before or after merging PR #3.
+- `main` is currently 3 commits ahead of `origin/main` — push (`git push`) before or after merging PR #3.
 - After merge, `planning/status.md` on main still shows Block E as `Not started` — the updated version lives in the PR branch.
 
 ## First command after `/prime`
