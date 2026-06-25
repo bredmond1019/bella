@@ -14,6 +14,9 @@ pub enum Action {
     ScrollUp(u16),
     ToTop,
     ToBottom,
+    FocusNext,
+    FocusPrev,
+    ClearFocus,
     Quit,
     None,
 }
@@ -34,6 +37,10 @@ pub fn map_key(key: KeyEvent, viewport_height: u16) -> Action {
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             Action::ScrollUp(viewport_height / 2)
         }
+        // Link focus ring
+        KeyCode::Tab => Action::FocusNext,
+        KeyCode::BackTab => Action::FocusPrev,
+        KeyCode::Esc => Action::ClearFocus,
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
         _ => Action::None,
@@ -41,12 +48,15 @@ pub fn map_key(key: KeyEvent, viewport_height: u16) -> Action {
 }
 
 /// Apply an `Action` to `app`.
-fn apply(action: Action, app: &mut App) {
+pub(crate) fn apply(action: Action, app: &mut App) {
     match action {
         Action::ScrollDown(n) => app.scroll_down(n),
         Action::ScrollUp(n) => app.scroll_up(n),
         Action::ToTop => app.jump_top(),
         Action::ToBottom => app.jump_bottom(),
+        Action::FocusNext => app.focus_next(),
+        Action::FocusPrev => app.focus_prev(),
+        Action::ClearFocus => app.clear_focus(),
         Action::Quit => app.quit(),
         Action::None => {}
     }
@@ -176,5 +186,58 @@ mod tests {
         let action = map_key(key(KeyCode::Char('q')), app.viewport_height);
         super::apply(action, &mut app);
         assert!(app.should_quit);
+    }
+
+    // --- Task 3 tests: focus key mappings ---
+
+    #[test]
+    fn tab_produces_focus_next() {
+        assert_eq!(map_key(key(KeyCode::Tab), 10), Action::FocusNext);
+    }
+
+    #[test]
+    fn backtab_produces_focus_prev() {
+        assert_eq!(map_key(key(KeyCode::BackTab), 10), Action::FocusPrev);
+    }
+
+    #[test]
+    fn esc_produces_clear_focus() {
+        assert_eq!(map_key(key(KeyCode::Esc), 10), Action::ClearFocus);
+    }
+
+    #[test]
+    fn apply_focus_next_advances_link_focus() {
+        // Build an app with links.
+        let src = "[A](a.md)\n\n[B](b.md)".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        assert!(!app.link_map.links.is_empty(), "precondition: links exist");
+        super::apply(Action::FocusNext, &mut app);
+        assert_eq!(
+            app.focused_link,
+            Some(0),
+            "FocusNext must select first link"
+        );
+    }
+
+    #[test]
+    fn apply_focus_prev_wraps_backward() {
+        let src = "[A](a.md)\n\n[B](b.md)".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        let n = app.link_map.links.len();
+        super::apply(Action::FocusPrev, &mut app);
+        assert_eq!(
+            app.focused_link,
+            Some(n - 1),
+            "FocusPrev from None must wrap to the last link"
+        );
+    }
+
+    #[test]
+    fn apply_clear_focus_removes_focus() {
+        let src = "[A](a.md)".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        app.focused_link = Some(0);
+        super::apply(Action::ClearFocus, &mut app);
+        assert_eq!(app.focused_link, None, "ClearFocus must clear focused_link");
     }
 }
