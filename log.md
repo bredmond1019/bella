@@ -10,6 +10,28 @@ description: Chronological log of work completed for Bella.
 
 ---
 
+## 2026-06-25 — Phase 0 Block C complete: keyboard navigation (7 tasks, 136 tests, PASS)
+
+Completed `/sdlc-flow` for Block 0.C — keyboard navigation. All 7 tasks implemented and passed on first attempt: (1) retained link/heading metadata + real base_dir in App, (2) back/forward history stack, (3) link focus ring + Tab/Shift-Tab highlight, (4) link follow via Enter (URLs, local files, anchors), (5) in-document search with `/`, `n`/`N` cycling, (6) history navigation wiring via `[`/`]`, (7) validation. PASS review verdict on all acceptance criteria. Test suite grew to 136 tests total (21 + 37 engine + 78 new); all four gating checks (cargo fmt, clippy, test, build --release) exit 0. PR #1 opened to main. Close-out also patched `CLAUDE.md` (added keybindings section + directory map), and `README.md` (keybindings → Link focus with Tab/Shift-Tab, Enter to follow, `/` search, `[`/`]` history). Block C is now fully shipped; next focus is Phase 0 Block D — Mouse support (scroll/hover/click).
+
+```diff
+ CLAUDE.md                                          |    5 +-
+ Cargo.lock                                         |   37 +
+ README.md                                          |   21 +-
+ crates/bella/Cargo.toml                            |    1 +
+ crates/bella/src/app.rs                            | 1185 +++++++++++++++++++-
+ crates/bella/src/events.rs                         |  384 ++++++-
+ crates/bella/src/history.rs                        |  303 +++++
+ crates/bella/src/main.rs                           |    1 +
+ crates/bella/src/ui.rs                             |  285 ++++-
+ log.md                                             |   16 +
+ .../sdlc/sdlc-flow-state.json                      |  152 +++
+ planning/0.C-keyboard-navigation/sdlc/worklog.md   |   45 +
+ planning/0.C-keyboard-navigation/tasks.md          |    6 +-
+ planning/status.md                                 |    6 +-
+ 14 files changed, 2424 insertions(+), 23 deletions(-)
+```
+
 ## 2026-06-25 — Close-out: Block 0.B gating checks + doc patch
 
 Completed `/close-out` for Block 0.B. All four gating checks passed (cargo fmt, cargo clippy, cargo test, cargo build --release) and emoji gate cleared. Coverage verified: 59 tests total (21 bella + 37 engine + 1 integration), all inline #[cfg(test)] blocks across all 4 source files in the bella binary crate (main.rs, app.rs, ui.rs, events.rs). Updated README.md via `/update-docs --patch` to add the `crates/bella/` entry to the directory map. Wrote `planning/handoff.md` marking Phase 0 Block C (keyboard navigation: link focus/follow, `/` search, history) as the next focus. Block B is now fully shipped.
