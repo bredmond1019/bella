@@ -14,3 +14,8 @@ Validated: gating checks (fast tripwire)
 What: Add click-to-follow links, hover highlight, and checkbox visual toggle with full coordinate conversion via body_pos
 Decisions: Stored body_area Rect in App (set during draw_reader) so map_mouse can call body_pos without needing an extra parameter thread; Used usize::MAX as a sentinel in HoverAt to mean 'pointer left the body area' — avoids a separate ClearHover action variant; Added HoverAt/ClickAt Action variants (rather than handling mouse events inline in run_loop) to keep map_mouse unit-testable and consistent with the existing key→Action→apply pipeline
 Validated: gating checks (fast tripwire)
+
+## Task 4 — PASSED (1 attempt)
+What: Implements drag-select: DragStart/DragUpdate/DragEnd actions route mouse events, selection model in App tracks anchor/cursor, selection_finish extracts text and copies to clipboard, ui.rs overlays LightBlue highlight on selected rows, plain click (Down+Up no drag) still follows links.
+Decisions: Removed the now-dead ClickAt action variant from the Action enum rather than leaving it as dead code; the test that used it was updated to use DragStart+DragEnd (plain click) instead.; Selection is NOT created on DragStart — only on the first DragUpdate event. This cleanly separates plain clicks (no drag) from selections so click-to-follow links works without conflict.; Used usize::MAX as a sentinel in DragEnd content_row to mean 'released outside body area' so selection_finish still runs but click_at is not triggered.; Selection highlight (LightBlue bg) is applied last in the draw pipeline so it wins over search/hover/focus overlays.
+Validated: gating checks (fast tripwire)

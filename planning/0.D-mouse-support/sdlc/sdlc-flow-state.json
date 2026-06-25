@@ -2,10 +2,10 @@
   "spec_slug": "0.D-mouse-support",
   "branch": "0.D-mouse-support-flow",
   "started_at": "2026-06-25T10:38:34Z",
-  "updated_at": "2026-06-25T10:50:38Z",
+  "updated_at": "2026-06-25T11:03:19Z",
   "worktree_path": "/Users/brandon/Dev/agentic-portfolio/bella/trees/0.D-mouse-support-flow",
   "status": "running",
-  "current_task": 3,
+  "current_task": 4,
   "tasks": {
     "1": {
       "status": "passed",
@@ -56,6 +56,27 @@
       "files_changed": [
         "crates/bella/src/app.rs",
         "crates/bella/src/events.rs",
+        "crates/bella/src/ui.rs"
+      ],
+      "commit": "",
+      "validated": "gating checks (fast tripwire)"
+    },
+    "4": {
+      "status": "passed",
+      "attempts": 1,
+      "summary": "Implements drag-select: DragStart/DragUpdate/DragEnd actions route mouse events, selection model in App tracks anchor/cursor, selection_finish extracts text and copies to clipboard, ui.rs overlays LightBlue highlight on selected rows, plain click (Down+Up no drag) still follows links.",
+      "issues": [],
+      "fixes": [],
+      "decisions": [
+        "Removed the now-dead ClickAt action variant from the Action enum rather than leaving it as dead code; the test that used it was updated to use DragStart+DragEnd (plain click) instead.",
+        "Selection is NOT created on DragStart — only on the first DragUpdate event. This cleanly separates plain clicks (no drag) from selections so click-to-follow links works without conflict.",
+        "Used usize::MAX as a sentinel in DragEnd content_row to mean 'released outside body area' so selection_finish still runs but click_at is not triggered.",
+        "Selection highlight (LightBlue bg) is applied last in the draw pipeline so it wins over search/hover/focus overlays."
+      ],
+      "files_changed": [
+        "crates/bella/src/app.rs",
+        "crates/bella/src/events.rs",
+        "crates/bella/src/selection.rs",
         "crates/bella/src/ui.rs"
       ],
       "commit": "",
