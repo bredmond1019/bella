@@ -32,6 +32,9 @@ Completed `/sdlc-flow` for Block 0.C — keyboard navigation. All 7 tasks implem
  14 files changed, 2424 insertions(+), 23 deletions(-)
 ```
 
+---
+
+
 ## 2026-06-25 — Close-out: Block 0.B gating checks + doc patch
 
 Completed `/close-out` for Block 0.B. All four gating checks passed (cargo fmt, cargo clippy, cargo test, cargo build --release) and emoji gate cleared. Coverage verified: 59 tests total (21 bella + 37 engine + 1 integration), all inline #[cfg(test)] blocks across all 4 source files in the bella binary crate (main.rs, app.rs, ui.rs, events.rs). Updated README.md via `/update-docs --patch` to add the `crates/bella/` entry to the directory map. Wrote `planning/handoff.md` marking Phase 0 Block C (keyboard navigation: link focus/follow, `/` search, history) as the next focus. Block B is now fully shipped.
