@@ -10,6 +10,18 @@ description: Chronological log of work completed for Bella.
 
 ---
 
+## 2026-06-24 — Phase 0 Block A complete: workspace + bella-engine extraction
+
+Created the Cargo workspace and ported the render/layout subgraph from `zemse/hackmd @ 7650cdc` (MIT) into the new `bella-engine` crate. Six modules were ported (`markdown.rs`, `links.rs`, `syntax.rs`, `theme.rs`, `palette.rs`, `md_config.rs`) with all App/cloud dependencies removed and edit-sync types preserved dormant. A new `geometry.rs` lifted `body_pos` and `select_word_at` as pure functions with explicit parameters replacing the upstream `&App` reads. All eight acceptance criteria passed on the first review attempt (PASS verdict). 38 tests pass (37 unit + 1 integration); all four gating checks (fmt, clippy, test, build --release) exit 0. Next: Phase 0 Block B — `bella` binary skeleton that renders a file without mouse support.
+
+```
+8ee949b docs: update docs for 0.A-workspace-engine-extraction
+184005a feat: implement 0.A-workspace-engine-extraction
+d87e9eb chore: sharpen Task 3 (geometry lift) in 0.A spec — exact pure signatures, deferred side-effects
+cd8de1f chore: add spec for 0.A-workspace-engine-extraction
+10feb3b docs(planning): Bella master plan — phases 0–3, blocks A–J
+```
+
 ## 2026-06-24 — Harness pull from base-template (b8ebbf7)
 
 Pulled the current `base-template` harness (commit `b8ebbf71c20445de65195037aa24bfe00bbf080b`) into
