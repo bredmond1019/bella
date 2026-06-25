@@ -6,8 +6,8 @@ description: Current state and progress tracker for Bella.
 
 # STATUS — Current State & Progress
 
-**Last updated:** 2026-06-24 — Project scaffolded; architecture decided (D2)
-**Current focus:** Phase 0, Block A — Workspace + engine extraction
+**Last updated:** 2026-06-24 — Block A complete; `bella-engine` crate live with 38 passing tests
+**Current focus:** Phase 0, Block B — Binary skeleton renders a file (no mouse)
 
 ---
 
@@ -24,7 +24,7 @@ description: Current state and progress tracker for Bella.
 ### Phase 0 — Foundation
 | Block | What | Status | Notes |
 |---|---|---|---|
-| Block A | Workspace + engine extraction | Not started | Port hackmd cloud-free subgraph → `bella-engine`; compiles + render unit test |
+| Block A | Workspace + engine extraction | Done | `bella-engine` crate: 6 ported modules + `geometry.rs`; 38 tests pass; public surface complete |
 | Block B | Binary skeleton renders a file (no mouse) | Not started | `bella file.md` → engine render + scroll |
 
 ### Phase 1 — Core viewer (v0.1)
