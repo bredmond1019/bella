@@ -10,25 +10,19 @@ description: Chronological log of work completed for Bella.
 
 ---
 
-## 2026-06-25 — Block E (file browser) complete via sdlc-flow — all 5 tasks PASS, PR #3 open for review
+## 2026-06-25 — Phase 1 Block E complete: file browser (5 tasks, 237 tests, PASS)
 
-Completed `/sdlc-flow 1.E-file-browser` for Phase 1 Block E — a hackmd-style directory navigator. All 5 tasks implemented and passed on first review attempt (PASS verdict). Implementation spans new `browser.rs` module (gitignore-aware directory listing, entry model, navigation), Mode enum + app integration (reader↔browser round-trip with preserved cursor), `draw_browser` UI rendering with scrolling and selection, and event handlers for keyboard (`j/k`, `Enter`, `Backspace`) and mouse (scroll, click). The directory navigator opens with `bella <dir>` or no args; descends/ascends with `Enter`/`Backspace`/`..`; lists `.md`/`.mdx` files and directories only (non-markdown hidden); preserves cursor position when round-tripping to/from the reader; and shows distinct styling for files vs. directories. PR #3 opened (https://github.com/bredmond1019/bella/pull/3) pending review + merge. Test suite grows to 260+ tests across both crates; all four gating checks pass (fmt, clippy, test, build --release). Next: review and merge PR #3, then Block F (config + themes + live reload).
+Completed `/sdlc-flow` for Block 1.E — file browser (directory navigator). All 5 tasks implemented and passed on first attempt: (1) `browser.rs` with `BrowserEntryKind`/`BrowserEntry`/`Browser` model, gitignore-aware listing via the `ignore` crate (`max_depth(1)`, hidden dotfiles skipped), cursor wrap+scroll-clamp, and 14 unit tests; (2) `Mode` enum and browser state in `App` (`new_browser`, `open_from_browser`, `back_to_browser`, `enter_dir`, `ascend`), CLI dispatch changed to `Option<PathBuf>` (no-arg/dir/file paths); (3) `draw_browser` in `ui.rs` with bordered pane, dir title, `▶ ` selection prefix, bold-cyan Dir/ParentDir vs plain Markdown styling, and `browser_area` stored for mouse hit-testing; (4) browser key/mouse handlers (`map_browser_key`, `map_browser_mouse`, new `Action` variants), `apply` wired to App methods, `run_loop` mode-aware dispatch, and all `#[allow(dead_code)]` guards removed; (5) full validation — all four gating checks (fmt, clippy, 237 tests, release build) pass. PASS review verdict on all acceptance criteria. Notable decisions: `BrowserClickAt` single-click selects and immediately descends/opens; mouse scroll moves the viewport offset directly; Backspace in reader mode maps to `back_to_browser`; `require_git(false)` on the `ignore` WalkBuilder ensures `.gitignore` is honoured outside git repos. Next: Phase 2 Block F — Config + themes + live reload.
 
-```diff
- Cargo.lock                                         |  65 +++
- README.md                                          |  24 +-
- crates/bella/Cargo.toml                            |   1 +
- crates/bella/src/app.rs                            | 279 ++++++++++
- crates/bella/src/browser.rs                        | 562 +++++++++++++++++++++
- crates/bella/src/events.rs                         | 482 +++++++++++++++++-
- crates/bella/src/main.rs                            |  41 +-
- crates/bella/src/ui.rs                             | 242 ++++++++-
- log.md                                             |  17 +
- .../1.E-file-browser/sdlc/sdlc-flow-state.json     | 116 +++++
- planning/1.E-file-browser/sdlc/worklog.md          |  34 ++
- planning/1.E-file-browser/tasks.md                 |   2 +-
- planning/status.md                                 |   6 +-
- 13 files changed, 1833 insertions(+), 38 deletions(-)
+```
+d4ba5cf chore: flow state — docs
+8ef57cc docs: update docs for 1.E-file-browser
+b04f520 chore: flow state — task 5 passed
+4c1e5d9 chore: flow state — task 4 passed
+9982256 feat: implement 1.E-file-browser-task4
+68aab2b chore: flow state — task 3 passed
+cddf877 feat: implement 1.E-file-browser-task3
+7159872 chore: flow state — task 2 passed
 ```
 
 ---
