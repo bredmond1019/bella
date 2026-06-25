@@ -6,8 +6,8 @@ description: Current state and progress tracker for Bella.
 
 # STATUS — Current State & Progress
 
-**Last updated:** 2026-06-25 — Block B complete; `bella` binary crate live with 21 passing tests
-**Current focus:** Phase 0, Block C — Keyboard navigation (link focus/follow, `/` search, history)
+**Last updated:** 2026-06-25 — Block C complete; keyboard navigation (7 tasks), 136 tests pass, PASS review
+**Current focus:** Phase 0, Block D — Mouse support (scroll/hover/click/drag-select/double-click)
 
 ---
 
@@ -30,7 +30,7 @@ description: Current state and progress tracker for Bella.
 ### Phase 1 — Core viewer (v0.1)
 | Block | What | Status | Notes |
 |---|---|---|---|
-| Block C | Keyboard navigation | Not started | Link focus/follow, `/` search, history |
+| Block C | Keyboard navigation | Done | Link focus/follow, `/` search, history; PR #1; 136 tests; PASS |
 | Block D | Mouse | Not started | Scroll/hover/click/drag-select/double-click — **= v0.1** |
 | Block E | File browser (directory navigator) | Not started | Port hackmd `Browser`; descend/ascend, `.md/.mdx` + dirs; mouse + `j/k` |
 
