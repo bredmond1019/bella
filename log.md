@@ -12,11 +12,28 @@ description: Chronological log of work completed for Bella.
 
 ## 2026-06-25 — Code review: Block D PR #2 fix and close-out
 
-Code review of PR #2 (Block D mouse support) identified a subtle bug in the double-click handler: after a successful double-click word-select, `selection_finish()` was being called twice — once on the second `Down` of the double-click sequence and again on the final `Up`. This caused the selection to be extracted and cleared prematurely. Fixed by guarding the DragEnd branch in `events.rs:307` behind `drag_origin.is_some()`, ensuring `selection_finish()` only runs when a real drag was initiated. Added regression test to catch this scenario. Block D now has 196 tests passing across all crates, all four gating checks (cargo fmt, clippy, test, build --release) exit 0. PR #2 ready to merge; next step is merge to main and close-out.
+Code review of PR #2 (Block D mouse support) identified a subtle bug in the double-click handler: after a successful double-click word-select, `selection_finish()` was being called twice — once on the second `Down` of the double-click sequence and again on the final `Up`. This caused the selection to be extracted and cleared prematurely. Fixed by guarding the DragEnd branch in `events.rs:307` behind `drag_origin.is_some()`, ensuring `selection_finish()` only runs when a real drag was initiated. Added regression test to catch this scenario. Block D now has 196 tests passing across all crates, all four gating checks (cargo fmt, clippy, test, build --release) exit 0. PR #2 merged; Block D shipped as v0.1.
 
 ```diff
 planning/handoff.md | 76 ++++++++++++++++++++++++++++++++---------------------
  1 file changed, 46 insertions(+), 30 deletions(-)
+```
+
+---
+
+## 2026-06-25 — Phase 1 Block D complete: mouse support (6 tasks, 195 tests, PASS)
+
+Completed `/sdlc-flow` for Block 0.D — mouse support, the v0.1 deliverable. All 6 tasks implemented and passed on first attempt: (1) `selection.rs` module with `Selection` type, `extract_text`, and `copy_to_clipboard` via `arboard`; (2) mouse capture enabled/disabled in terminal setup, teardown, and panic hook, plus scroll-wheel → `ScrollUp`/`ScrollDown` dispatch; (3) click-to-follow links, hover highlight, and checkbox visual toggle using `body_pos` coordinate conversion and a stored `body_area` Rect in App; (4) drag-select with `DragStart`/`DragUpdate`/`DragEnd` action pipeline — selections are highlighted in LightBlue and released to the system clipboard; (5) double-click word-select within a 450 ms window using `bella_engine::select_word_at`, with deterministic timestamp injection for tests; (6) validation gate confirming all four checks (fmt, clippy, 195 tests, release build) pass clean. PASS review verdict on all acceptance criteria. Notable decisions: ClickAt action variant added in Task 3 was removed in Task 4 in favour of a unified DragStart+DragEnd plain-click path; scroll wheel maps to 3 lines per tick. Next: Phase 1 Block E — File browser (directory navigator).
+
+```
+3db5208 chore: flow state — docs
+e3da5e0 docs: update docs for 0.D-mouse-support
+56dd851 chore: flow state — task 6 passed
+5224309 chore: flow state — task 5 passed
+e17c9fe feat: implement 0.D-mouse-support-task5
+e11c201 chore: flow state — task 4 passed
+46c0bb2 feat: implement 0.D-mouse-support-task4
+bc9bfd3 chore: flow state — task 3 passed
 ```
 
 ---

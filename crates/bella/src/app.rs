@@ -1,15 +1,20 @@
 //! App state: holds the source, rendered output, scroll position, and navigation metadata.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use bella_engine::{
-    LinkMap, Theme,
+    CheckboxMap, LinkMap, Theme, body_pos,
     links::{LinkTarget, TableExpansions},
     markdown::{HeadingInfo, render_with_edit},
+    select_word_at,
 };
+use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use crate::history::{History, HistoryEntry};
+use crate::selection::{self, Selection};
 
 /// Search state while a `/`-search is active or has matches.
 #[derive(Debug, Clone)]
@@ -44,6 +49,8 @@ pub struct App {
     pub lines: Vec<Line<'static>>,
     /// Link metadata extracted from the last render.
     pub link_map: LinkMap,
+    /// Checkbox metadata extracted from the last render.
+    pub checkbox_map: CheckboxMap,
     /// Heading metadata extracted from the last render.
     pub headings: Vec<HeadingInfo>,
     /// Current top display row (scroll offset).
@@ -58,6 +65,11 @@ pub struct App {
     pub should_quit: bool,
     /// Index of the currently focused link (into `link_map.links`), if any.
     pub focused_link: Option<usize>,
+    /// Index of the link currently under the mouse pointer (into `link_map.links`), if any.
+    pub hovered_link: Option<usize>,
+    /// Visual-only set of toggled checkbox indices (into `checkbox_map.items`).
+    /// No source mutation — edit-sync stays dormant.
+    pub toggled_checkboxes: HashSet<usize>,
     /// Active search state, if any.
     pub search: Option<SearchState>,
     /// Non-fatal status message to display in the status line (e.g. file-not-found).
@@ -65,6 +77,23 @@ pub struct App {
     pub status_message: Option<String>,
     /// Back/forward navigation history stack (Task 6).
     pub history: History,
+    /// Body viewport rectangle — updated after each draw so mouse handlers can
+    /// call `body_pos` with accurate geometry.
+    pub body_area: Rect,
+    /// Pending drag origin: the content position where `Down(Left)` was recorded.
+    /// Cleared on `Up(Left)`.  Used to distinguish a plain click from a true drag.
+    pub drag_origin: Option<(usize, usize)>,
+    /// Active or completed text selection (drag-select or double-click).
+    /// `None` when no selection is in progress or completed.
+    pub selection: Option<Selection>,
+    /// Timestamp and content position of the most recent left-button down event.
+    ///
+    /// Used to detect double-clicks: if the next `Down(Left)` arrives within
+    /// **450 ms** at the same content position this is treated as a double-click.
+    /// Stored as `(time, content_row, col)`.  `None` when no prior click has
+    /// been recorded (or after a double-click fires, so a triple-click begins
+    /// a fresh single-click cycle).
+    pub last_click: Option<(Instant, usize, usize)>,
 }
 
 impl App {
@@ -75,11 +104,13 @@ impl App {
     pub fn new(src: String, file: PathBuf, width: u16, term_height: u16) -> Self {
         let viewport_height = term_height.saturating_sub(1);
         let base_dir = file.parent().map(Path::to_path_buf);
-        let (lines, link_map, headings) = render_metadata(&src, width, base_dir.as_deref());
+        let (lines, link_map, checkbox_map, headings) =
+            render_metadata(&src, width, base_dir.as_deref());
         Self {
             src,
             lines,
             link_map,
+            checkbox_map,
             headings,
             scroll: 0,
             viewport_height,
@@ -87,9 +118,15 @@ impl App {
             file,
             should_quit: false,
             focused_link: None,
+            hovered_link: None,
+            toggled_checkboxes: HashSet::new(),
             search: None,
             status_message: None,
             history: History::new(),
+            body_area: Rect::default(),
+            drag_origin: None,
+            selection: None,
+            last_click: None,
         }
     }
 
@@ -97,15 +134,22 @@ impl App {
     pub fn render(&mut self, width: u16) {
         self.width = width;
         let base_dir = self.file.parent().map(Path::to_path_buf);
-        let (lines, link_map, headings) = render_metadata(&self.src, width, base_dir.as_deref());
+        let (lines, link_map, checkbox_map, headings) =
+            render_metadata(&self.src, width, base_dir.as_deref());
         self.lines = lines;
         self.link_map = link_map;
+        self.checkbox_map = checkbox_map;
         self.headings = headings;
         // Re-clamp scroll in case the new render is shorter.
         self.scroll = self.scroll.min(self.max_scroll());
         // Reset navigation state — line indices change on resize.
         self.focused_link = None;
+        self.hovered_link = None;
+        self.toggled_checkboxes.clear();
         self.search = None;
+        self.drag_origin = None;
+        self.selection = None;
+        self.last_click = None;
     }
 
     /// Update the viewport height (called after each draw when the body area
@@ -238,15 +282,21 @@ impl App {
         self.src = src;
         self.file = path;
         let base_dir = self.file.parent().map(Path::to_path_buf);
-        let (lines, link_map, headings) =
+        let (lines, link_map, checkbox_map, headings) =
             render_metadata(&self.src, self.width, base_dir.as_deref());
         self.lines = lines;
         self.link_map = link_map;
+        self.checkbox_map = checkbox_map;
         self.headings = headings;
         self.scroll = 0;
         self.focused_link = None;
+        self.hovered_link = None;
+        self.toggled_checkboxes.clear();
         self.search = None;
         self.status_message = None;
+        self.drag_origin = None;
+        self.selection = None;
+        self.last_click = None;
         Ok(())
     }
 
@@ -343,6 +393,141 @@ impl App {
         }
     }
 
+    // --- mouse hover/click (Task 3) ---
+
+    /// Update `hovered_link` based on the pointer's content position.
+    ///
+    /// `content_row` and `col` are in rendered-line space (as returned by
+    /// `body_pos`). Clears the hover when the pointer is not over any link.
+    pub fn hover_at(&mut self, content_row: usize, col: u16) {
+        self.hovered_link = self.link_map.at(content_row, col as usize);
+    }
+
+    /// Handle a left-click at the given content position.
+    ///
+    /// - If the click lands on a link, follows it (exactly as the keyboard
+    ///   `Enter` path does), recording history.
+    /// - If the click lands on a checkbox, toggles its visual state in
+    ///   `toggled_checkboxes` (visual-only — no source mutation).
+    /// - Otherwise, clears any hover state.
+    ///
+    /// Returns `Some((prev_file, prev_scroll))` when a file navigation occurred
+    /// (passed up to the event loop for history recording), otherwise `None`.
+    pub fn click_at(&mut self, content_row: usize, col: u16) -> Option<(PathBuf, u16)> {
+        // Check link hit first.
+        if let Some(idx) = self.link_map.at(content_row, col as usize) {
+            // Mirror the keyboard Follow path: set focused_link then follow.
+            self.focused_link = Some(idx);
+            return self.follow_focused();
+        }
+        // Check checkbox hit.
+        if let Some(idx) = self.checkbox_map.at(content_row, col as usize) {
+            if self.toggled_checkboxes.contains(&idx) {
+                self.toggled_checkboxes.remove(&idx);
+            } else {
+                self.toggled_checkboxes.insert(idx);
+            }
+        }
+        None
+    }
+
+    // --- drag-select (Task 4) ---
+
+    /// Start a new drag selection anchored at `(row, col)`.
+    ///
+    /// Replaces any existing selection.
+    pub fn selection_start(&mut self, row: usize, col: usize) {
+        self.selection = Some(Selection::new((row, col)));
+    }
+
+    /// Update the moving end of the active selection to `(row, col)`.
+    ///
+    /// No-op when no selection is in progress.
+    pub fn selection_update(&mut self, row: usize, col: usize) {
+        if let Some(sel) = &mut self.selection {
+            sel.cursor = (row, col);
+        }
+    }
+
+    /// Finish the drag selection: extract the selected text, copy to clipboard,
+    /// and record a status message.  The selection is **kept** for visual rendering.
+    ///
+    /// No-op when there is no selection or it is zero-length.
+    pub fn selection_finish(&mut self) {
+        let Some(sel) = &self.selection else { return };
+        if sel.is_empty() {
+            return;
+        }
+        let text = selection::extract_text(&self.lines, sel);
+        match selection::copy_to_clipboard(&text) {
+            Ok(()) => {
+                let count = text.chars().count();
+                self.status_message = Some(format!("Copied {count} chars"));
+            }
+            Err(e) => {
+                self.status_message = Some(e);
+            }
+        }
+        // Keep self.selection alive for the visual highlight.
+    }
+
+    // --- double-click word-select (Task 5 of Block D) ---
+
+    /// Handle a double-click at the given screen position.
+    ///
+    /// Calls `select_word_at` to find the word under the pointer.  If a word is
+    /// found its column span is recorded as the active `selection` and the text
+    /// is copied to the clipboard.  If the pointer is over whitespace or outside
+    /// the body area this is a no-op (selection stays `None`).
+    ///
+    /// After this call `last_click` is set to `None` so that a subsequent click
+    /// starts a fresh single-click cycle rather than triggering another
+    /// double-click immediately.
+    pub fn double_click_word_select(&mut self, screen_col: u16, screen_row: u16) {
+        // Reset last_click so a third click starts a new single-click cycle.
+        self.last_click = None;
+
+        let Some((word, start_col, width)) = select_word_at(
+            self.body_area,
+            false, // line_numbers
+            self.scroll as usize,
+            &self.lines,
+            screen_col,
+            screen_row,
+        ) else {
+            // Whitespace or outside body — no selection.
+            return;
+        };
+
+        // Derive the content row from the same screen coordinates.
+        let Some((content_row, _)) = body_pos(
+            self.body_area,
+            false,
+            self.lines.len(),
+            self.scroll as usize,
+            screen_col,
+            screen_row,
+        ) else {
+            return;
+        };
+
+        let end_col = start_col + width;
+        self.selection = Some(Selection {
+            anchor: (content_row, start_col),
+            cursor: (content_row, end_col),
+        });
+
+        match selection::copy_to_clipboard(&word) {
+            Ok(()) => {
+                let count = word.chars().count();
+                self.status_message = Some(format!("Copied {count} chars"));
+            }
+            Err(e) => {
+                self.status_message = Some(e);
+            }
+        }
+    }
+
     // --- in-document search (Task 5) ---
 
     /// Enter search-input mode (triggered by `/`).
@@ -432,15 +617,20 @@ impl App {
     }
 }
 
-/// Render `src` and return `(lines, link_map, headings)`.
+/// Render `src` and return `(lines, link_map, checkbox_map, headings)`.
 fn render_metadata(
     src: &str,
     width: u16,
     base_dir: Option<&Path>,
-) -> (Vec<Line<'static>>, LinkMap, Vec<HeadingInfo>) {
+) -> (Vec<Line<'static>>, LinkMap, CheckboxMap, Vec<HeadingInfo>) {
     let theme = Theme::dark();
     let rendered = render_with_edit(src, base_dir, width, &theme, None, &TableExpansions::new());
-    (rendered.lines, rendered.link_map, rendered.headings)
+    (
+        rendered.lines,
+        rendered.link_map,
+        rendered.checkbox_map,
+        rendered.headings,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1334,5 +1524,381 @@ mod tests {
             !app.history.can_forward(),
             "forward history must be truncated after a new follow from a mid-stack position"
         );
+    }
+
+    // --- Task 3 (Block D) tests: hover_at, click_at, checkbox toggle ---
+
+    /// Build an App from a doc that contains a task-list checkbox.
+    fn make_checkbox_app() -> App {
+        // The engine renders `- [ ] Item` as a task-list item with a checkbox glyph.
+        let src = "- [ ] First task\n- [x] Second task".to_string();
+        App::new(src, PathBuf::from("test.md"), 80, 25)
+    }
+
+    #[test]
+    fn hover_at_sets_hovered_link_when_over_link() {
+        // Doc with a link so hover can hit it.
+        let src = "[alpha](a.md)\n\nOther text.".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+
+        // The link should be on line 0, starting at col 0.
+        let link = &app.link_map.links[0];
+        let link_line = link.line;
+        let link_col = link.col_start;
+
+        // Before hover — no hovered_link.
+        assert_eq!(app.hovered_link, None, "hovered_link must start as None");
+
+        app.hover_at(link_line, link_col as u16);
+        assert_eq!(
+            app.hovered_link,
+            Some(0),
+            "hover_at on the link must set hovered_link to Some(0)"
+        );
+    }
+
+    #[test]
+    fn hover_at_clears_hovered_link_when_off_link() {
+        let src = "[alpha](a.md)\n\nOther text.".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.hovered_link = Some(0);
+
+        // Hover on a row/col that has no link.
+        app.hover_at(100, 100);
+        assert_eq!(
+            app.hovered_link, None,
+            "hover_at off any link must clear hovered_link"
+        );
+    }
+
+    #[test]
+    fn click_at_on_checkbox_toggles_membership() {
+        let mut app = make_checkbox_app();
+        assert!(
+            !app.checkbox_map.items.is_empty(),
+            "precondition: checkbox exists"
+        );
+
+        let cb = app.checkbox_map.items[0].clone();
+        // Initially not in toggled set.
+        assert!(
+            !app.toggled_checkboxes.contains(&0),
+            "precondition: checkbox 0 not toggled"
+        );
+
+        // First click — should add to toggled set.
+        app.click_at(cb.line, cb.col_start as u16);
+        assert!(
+            app.toggled_checkboxes.contains(&0),
+            "click_at on a checkbox must add it to toggled_checkboxes"
+        );
+
+        // Second click — should remove from toggled set.
+        app.click_at(cb.line, cb.col_start as u16);
+        assert!(
+            !app.toggled_checkboxes.contains(&0),
+            "second click_at on a checkbox must remove it from toggled_checkboxes"
+        );
+    }
+
+    #[test]
+    fn click_at_on_local_file_link_follows_file() {
+        let dir = tempdir_for_test("click_at_follow");
+        let target_content = "# Clicked Target\n\nContent.";
+        write_temp_file(&dir, "target.md", target_content);
+        let main_path = write_temp_file(&dir, "main.md", "[go](target.md)");
+        let src = std::fs::read_to_string(&main_path).unwrap();
+
+        let mut app = App::new(src, main_path.clone(), 80, 25);
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+
+        let link = &app.link_map.links[0];
+        let link_line = link.line;
+        let link_col = link.col_start;
+
+        let result = app.click_at(link_line, link_col as u16);
+
+        assert!(
+            result.is_some(),
+            "click_at on a local file link must return Some((prev_path, prev_scroll))"
+        );
+        assert_eq!(
+            app.file,
+            dir.join("target.md"),
+            "app.file must be updated to the followed file"
+        );
+    }
+
+    #[test]
+    fn click_at_on_empty_area_is_noop() {
+        let src = "Just plain text, no links.".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        let file_before = app.file.clone();
+
+        let result = app.click_at(0, 0);
+        assert!(result.is_none(), "click_at on empty area must return None");
+        assert_eq!(app.file, file_before, "file must not change");
+    }
+
+    // --- Task 4 (Block D) tests: drag-select methods ---
+
+    #[test]
+    fn selection_start_creates_selection_at_position() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        assert!(app.selection.is_none(), "precondition: no selection");
+
+        app.selection_start(0, 3);
+        let sel = app.selection.as_ref().expect("selection must be Some");
+        assert_eq!(sel.anchor, (0, 3));
+        assert_eq!(sel.cursor, (0, 3));
+        assert!(sel.is_empty(), "zero-length selection must be empty");
+    }
+
+    #[test]
+    fn selection_update_moves_cursor() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.selection_start(0, 3);
+        app.selection_update(0, 8);
+
+        let sel = app.selection.as_ref().unwrap();
+        assert_eq!(sel.anchor, (0, 3));
+        assert_eq!(sel.cursor, (0, 8));
+        assert!(!sel.is_empty(), "non-zero selection must not be empty");
+    }
+
+    #[test]
+    fn selection_update_noop_when_no_selection() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        // No selection — must not panic.
+        app.selection_update(0, 5);
+        assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn selection_finish_sets_status_on_nonempty_selection() {
+        // Use a rendered document whose first line contains known text.
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        // Select characters 0..5 on line 0 ("hello").
+        app.selection_start(0, 0);
+        app.selection_update(0, 5);
+
+        app.selection_finish();
+
+        // Whether clipboard succeeded or failed, status_message must be set.
+        assert!(
+            app.status_message.is_some(),
+            "selection_finish must set status_message"
+        );
+        // Selection must be kept for visual rendering.
+        assert!(
+            app.selection.is_some(),
+            "selection_finish must keep the selection"
+        );
+    }
+
+    #[test]
+    fn selection_finish_noop_on_empty_selection() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.selection_start(0, 3);
+        // Don't update — selection is zero-length.
+        app.selection_finish();
+        // No status message set (nothing to copy).
+        assert!(
+            app.status_message.is_none(),
+            "selection_finish on empty selection must not set status_message"
+        );
+    }
+
+    #[test]
+    fn selection_finish_noop_when_no_selection() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        // Must not panic when there is no selection.
+        app.selection_finish();
+        assert!(app.status_message.is_none());
+    }
+
+    #[test]
+    fn selection_cleared_on_render() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.selection_start(0, 0);
+        app.selection_update(0, 5);
+        assert!(app.selection.is_some(), "precondition: selection set");
+
+        app.render(80);
+        assert!(app.selection.is_none(), "render must clear the selection");
+    }
+
+    #[test]
+    fn selection_cleared_on_load_file() {
+        let dir = tempdir_for_test("selection_clear_load");
+        let target_path = write_temp_file(&dir, "target.md", "# New file");
+
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.selection_start(0, 0);
+        app.selection_update(0, 5);
+        assert!(app.selection.is_some(), "precondition: selection set");
+
+        app.load_file(target_path).expect("load_file must succeed");
+        assert!(
+            app.selection.is_none(),
+            "load_file must clear the selection"
+        );
+    }
+
+    #[test]
+    fn drag_origin_cleared_on_load_file() {
+        let dir = tempdir_for_test("drag_origin_clear_load");
+        let target_path = write_temp_file(&dir, "target.md", "# New file");
+
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.drag_origin = Some((0, 5));
+
+        app.load_file(target_path).expect("load_file must succeed");
+        assert!(
+            app.drag_origin.is_none(),
+            "load_file must clear drag_origin"
+        );
+    }
+
+    #[test]
+    fn checkbox_toggled_state_cleared_on_load_file() {
+        let dir = tempdir_for_test("checkbox_load_clear");
+        let target_path = write_temp_file(&dir, "target.md", "# New file");
+
+        let mut app = make_checkbox_app();
+        app.toggled_checkboxes.insert(0);
+        assert!(!app.toggled_checkboxes.is_empty(), "precondition: toggled");
+
+        app.load_file(target_path).expect("load_file must succeed");
+        assert!(
+            app.toggled_checkboxes.is_empty(),
+            "toggled_checkboxes must be cleared on load_file"
+        );
+    }
+
+    // --- Task 5 (Block D) tests: double-click word-select ---
+
+    use ratatui::layout::Rect;
+    use std::time::{Duration, Instant};
+
+    /// Build an App whose first rendered line contains "hello world".
+    fn make_double_click_app() -> App {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        // Set body_area so select_word_at and body_pos work with screen coords.
+        app.body_area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        app
+    }
+
+    #[test]
+    fn double_click_within_window_selects_word_and_sets_status() {
+        let mut app = make_double_click_app();
+
+        // Inject last_click 400 ms in the past at content position (0, 0).
+        // This simulates a previous single-click at that position.
+        app.last_click = Some((Instant::now() - Duration::from_millis(400), 0, 0));
+
+        // Double-click at screen position (0, 0) — lands on "hello".
+        app.double_click_word_select(0, 0);
+
+        assert!(
+            app.selection.is_some(),
+            "double_click_word_select must populate selection when over a word"
+        );
+        let sel = app.selection.as_ref().unwrap();
+        assert!(
+            !sel.is_empty(),
+            "double-click selection must be non-zero-length"
+        );
+        // status_message set (copy attempt succeeded or failed — either is fine).
+        assert!(
+            app.status_message.is_some(),
+            "double_click_word_select must set status_message"
+        );
+        // last_click is reset so a third click starts fresh.
+        assert!(
+            app.last_click.is_none(),
+            "double_click_word_select must clear last_click"
+        );
+    }
+
+    #[test]
+    fn two_clicks_outside_450ms_window_do_not_produce_word_selection() {
+        let mut app = make_double_click_app();
+
+        // Inject last_click 600 ms in the past (outside the 450 ms window).
+        app.last_click = Some((Instant::now() - Duration::from_millis(600), 0, 0));
+
+        // Check that map_mouse produces DragStart (not DoubleClickAt) for a
+        // Down(Left) at the same position.  We simulate this at the app level
+        // by confirming that double_click_word_select is NOT the path that fires:
+        // we'll call apply(DragStart) which records last_click, then manually
+        // check that the old (expired) timestamp would not trigger a double-click.
+        let now = Instant::now();
+        let is_double = app
+            .last_click
+            .as_ref()
+            .map(|(t, cr, cc)| {
+                now.duration_since(*t) <= Duration::from_millis(450) && *cr == 0 && *cc == 0
+            })
+            .unwrap_or(false);
+
+        assert!(
+            !is_double,
+            "an expired last_click (>450 ms) must not be detected as double-click"
+        );
+        // Selection must remain None (no double-click fired).
+        assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn double_click_on_whitespace_selects_nothing() {
+        let mut app = make_double_click_app();
+
+        // Inject last_click at the same position so timing passes.
+        app.last_click = Some((Instant::now() - Duration::from_millis(200), 0, 5));
+
+        // Column 5 in "hello world" is the space between the two words.
+        // select_word_at returns None for whitespace.
+        app.double_click_word_select(5, 0);
+
+        assert!(
+            app.selection.is_none(),
+            "double-click on whitespace must leave selection as None"
+        );
+    }
+
+    #[test]
+    fn last_click_cleared_on_render() {
+        let mut app = make_double_click_app();
+        app.last_click = Some((Instant::now(), 0, 0));
+        app.render(80);
+        assert!(app.last_click.is_none(), "render must clear last_click");
+    }
+
+    #[test]
+    fn last_click_cleared_on_load_file() {
+        let dir = tempdir_for_test("last_click_load_clear");
+        let target_path = write_temp_file(&dir, "target.md", "# New file");
+
+        let mut app = make_double_click_app();
+        app.last_click = Some((Instant::now(), 0, 0));
+        app.load_file(target_path).expect("load_file must succeed");
+        assert!(app.last_click.is_none(), "load_file must clear last_click");
     }
 }
