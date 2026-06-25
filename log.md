@@ -10,6 +10,22 @@ description: Chronological log of work completed for Bella.
 
 ---
 
+## 2026-06-25 — Phase 0 Block C complete: keyboard navigation
+
+Implemented the full keyboard navigation layer across seven tasks in `crates/bella/src/`. Task 1 retained `link_map` and `headings` from each render, threaded `base_dir` from `file.parent()`, and scaffolded `focused_link`/`SearchState` fields. Task 2 added `crates/bella/src/history.rs` — a self-contained browser-style back/forward stack with push-after-back truncation and 10 unit tests. Task 3 wired Tab/Shift-Tab/Esc into a focus ring over `link_map.links` with a REVERSED highlight overlay that splits existing ratatui `Span` vectors at `col_start`/`col_end` boundaries. Task 4 added `follow_focused()` dispatching on `LocalFile` (file reload), `Url` (system browser via the `open` crate), `Anchor` (intra-doc scroll), and `FileAnchor` (load then scroll); Enter maps to `Action::Follow`. Task 5 implemented in-document search (`/` to open prompt, Enter to commit, n/N to cycle, Esc to cancel) with case-insensitive substring matching, current match in Cyan and other matches in Yellow. Task 6 wired the `History` struct into `App` — `go_back`/`go_forward` load the recorded file then restore the saved scroll offset; `[`/`]` keybindings added. Task 7 confirmed all four validation commands pass with 136 tests. First review attempt: PASS. Next: Phase 0, Block D — Mouse support.
+
+```
+889ba49 chore: flow state — docs
+5fa7188 docs: update docs for 0.C-keyboard-navigation
+29087c8 chore: flow state — task 7 passed
+a48a029 chore: flow state — task 6 passed
+c11b2c9 feat: implement 0.C-keyboard-navigation-task6
+bf2f406 chore: flow state — task 5 passed
+c352c4e feat: implement 0.C-keyboard-navigation-task5
+```
+
+---
+
 ## 2026-06-25 — Close-out: Block 0.B gating checks + doc patch
 
 Completed `/close-out` for Block 0.B. All four gating checks passed (cargo fmt, cargo clippy, cargo test, cargo build --release) and emoji gate cleared. Coverage verified: 59 tests total (21 bella + 37 engine + 1 integration), all inline #[cfg(test)] blocks across all 4 source files in the bella binary crate (main.rs, app.rs, ui.rs, events.rs). Updated README.md via `/update-docs --patch` to add the `crates/bella/` entry to the directory map. Wrote `planning/handoff.md` marking Phase 0 Block C (keyboard navigation: link focus/follow, `/` search, history) as the next focus. Block B is now fully shipped.
