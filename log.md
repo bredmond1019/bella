@@ -10,6 +10,23 @@ description: Chronological log of work completed for Bella.
 
 ---
 
+## 2026-06-25 — Phase 1 Block D complete: mouse support (6 tasks, 195 tests, PASS)
+
+Completed `/sdlc-flow` for Block 0.D — mouse support, the v0.1 deliverable. All 6 tasks implemented and passed on first attempt: (1) `selection.rs` module with `Selection` type, `extract_text`, and `copy_to_clipboard` via `arboard`; (2) mouse capture enabled/disabled in terminal setup, teardown, and panic hook, plus scroll-wheel → `ScrollUp`/`ScrollDown` dispatch; (3) click-to-follow links, hover highlight, and checkbox visual toggle using `body_pos` coordinate conversion and a stored `body_area` Rect in App; (4) drag-select with `DragStart`/`DragUpdate`/`DragEnd` action pipeline — selections are highlighted in LightBlue and released to the system clipboard; (5) double-click word-select within a 450 ms window using `bella_engine::select_word_at`, with deterministic timestamp injection for tests; (6) validation gate confirming all four checks (fmt, clippy, 195 tests, release build) pass clean. PASS review verdict on all acceptance criteria. Notable decisions: ClickAt action variant added in Task 3 was removed in Task 4 in favour of a unified DragStart+DragEnd plain-click path; scroll wheel maps to 3 lines per tick. Next: Phase 1 Block E — File browser (directory navigator).
+
+```
+3db5208 chore: flow state — docs
+e3da5e0 docs: update docs for 0.D-mouse-support
+56dd851 chore: flow state — task 6 passed
+5224309 chore: flow state — task 5 passed
+e17c9fe feat: implement 0.D-mouse-support-task5
+e11c201 chore: flow state — task 4 passed
+46c0bb2 feat: implement 0.D-mouse-support-task4
+bc9bfd3 chore: flow state — task 3 passed
+```
+
+---
+
 ## 2026-06-25 — Phase 0 Block C complete: keyboard navigation (7 tasks, 136 tests, PASS)
 
 Completed `/sdlc-flow` for Block 0.C — keyboard navigation. All 7 tasks implemented and passed on first attempt: (1) retained link/heading metadata + real base_dir in App, (2) back/forward history stack, (3) link focus ring + Tab/Shift-Tab highlight, (4) link follow via Enter (URLs, local files, anchors), (5) in-document search with `/`, `n`/`N` cycling, (6) history navigation wiring via `[`/`]`, (7) validation. PASS review verdict on all acceptance criteria. Test suite grew to 136 tests total (21 + 37 engine + 78 new); all four gating checks (cargo fmt, clippy, test, build --release) exit 0. PR #1 opened to main. Close-out also patched `CLAUDE.md` (added keybindings section + directory map), and `README.md` (keybindings → Link focus with Tab/Shift-Tab, Enter to follow, `/` search, `[`/`]` history). Block C is now fully shipped; next focus is Phase 0 Block D — Mouse support (scroll/hover/click).
