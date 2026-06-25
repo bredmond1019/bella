@@ -105,23 +105,17 @@ pub struct App {
     /// a fresh single-click cycle).
     pub last_click: Option<(Instant, usize, usize)>,
     /// Current application mode.
-    // Wired by events.rs / ui.rs in Tasks 3–4; suppress dead_code until then.
-    #[allow(dead_code)]
     pub mode: Mode,
     /// Directory browser state (present when `mode == Browser` or when the
     /// reader was entered from the browser and a back-navigation is possible).
-    #[allow(dead_code)]
     pub browser: Option<Browser>,
     /// Saved browser position for round-trip back: `(dir, selected_index)`.
     ///
     /// Recorded by [`Self::open_from_browser`]; cleared by [`Self::back_to_browser`].
-    #[allow(dead_code)]
     pub browser_origin: Option<(PathBuf, usize)>,
     /// Inner listing rectangle of the browser pane — updated after each
     /// `draw_browser` call so Task 4's mouse handlers can map clicks to rows.
     /// Analogous to [`Self::body_area`] in the reader path.
-    // Read by events.rs in Task 4; suppress dead_code until then.
-    #[allow(dead_code)]
     pub browser_area: Rect,
 }
 
@@ -208,8 +202,6 @@ impl App {
     ///
     /// Returns `Err(String)` if the file cannot be read (caller surfaces it via
     /// `status_message`).
-    // Called from events.rs in Task 4.
-    #[allow(dead_code)]
     pub fn open_from_browser(&mut self, path: PathBuf) -> Result<(), String> {
         // Record the browser origin before loading the file.
         if let Some(b) = &self.browser {
@@ -228,8 +220,6 @@ impl App {
     ///
     /// No-op when there is no saved origin (e.g. bella was invoked directly with
     /// a file argument).
-    // Called from events.rs in Task 4.
-    #[allow(dead_code)]
     pub fn back_to_browser(&mut self) {
         let Some((dir, selected)) = self.browser_origin.take() else {
             return;
@@ -244,8 +234,6 @@ impl App {
     /// Descend into `dir`: replace the active browser with one rooted at `dir`.
     ///
     /// `mode` remains [`Mode::Browser`].
-    // Called from events.rs in Task 4.
-    #[allow(dead_code)]
     pub fn enter_dir(&mut self, dir: PathBuf) {
         self.browser = Some(Browser::new(dir));
     }
@@ -254,8 +242,6 @@ impl App {
     ///
     /// Uses the active browser's [`Browser::ascend_target`].  No-op when there
     /// is no active browser or the current directory has no accessible parent.
-    // Called from events.rs in Task 4.
-    #[allow(dead_code)]
     pub fn ascend(&mut self) {
         let target = self.browser.as_ref().and_then(|b| b.ascend_target());
         if let Some(dir) = target {
