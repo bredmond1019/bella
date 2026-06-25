@@ -1,68 +1,78 @@
 ---
 type: Handoff
-created: 2026-06-24
+created: 2026-06-25
 ---
 
-# Handoff — Block A done; Block B (binary skeleton) is next
+# Handoff — Block B done; Block C (keyboard navigation) is next
 
 > **For the next agent:** Read this immediately after `/prime`. Delete this file once consumed.
 
 ## What we're doing and why
 
-Building Bella — a local-only, mouse-driven terminal markdown viewer (see D2 for the
-architectural split). Block 0.A (workspace + `bella-engine` extraction) shipped this session
-with a PASS verdict on the first review attempt: 38 tests pass, all four gating checks
-(fmt/clippy/test/release build) exit 0. The codebase is clean and ready for Block B —
-the `bella` binary crate that wires `bella-engine` into a real Crossterm/Ratatui TUI and
-renders a file from the CLI (`cargo run -p bella -- <file>`). No mouse support yet; that is
-Block D.
+Building Bella — a local-only terminal markdown viewer. Phase 0 is the foundation sequence
+(Blocks A → B → C → D). Block A shipped `bella-engine` (pure render library, 37 unit +
+1 integration tests). Block B shipped the `bella` binary — clap CLI, Crossterm raw mode,
+Ratatui draw loop, `App` scroll model, pure key-mapping — 21 tests, all four gating checks
+clean. Block C adds keyboard navigation: link focus cycling with visual highlight, `/` search
+(jump to heading or text), and navigation history (back/forward). This is the next block in
+`planning/master-plan.md`.
 
 ## Completed this session
 
-- **Block 0.A shipped** via `/sdlc-run 0.A-workspace-engine-extraction --from implement`:
-  - Root `Cargo.toml` workspace with `members = ["crates/*"]`, `exclude = ["reference"]`
-  - `crates/bella-engine`: 6 ported modules (`markdown`, `links`, `syntax`, `theme`,
-    `palette`, `md_config`) + new pure `geometry.rs`; all App/cloud deps removed; edit-sync
-    types (`row_source`, `EditCtx`, `BlockInfo`) preserved dormant
-  - 38 tests (37 unit + 1 integration) pass; public surface: `render_with_edit`, `Rendered`,
-    `LinkMap`, `CheckboxMap`, `TableMap`, `LinkTarget`, `Theme`, `body_pos`, `select_word_at`
-  - Attribution: `LICENSE` + `ATTRIBUTION.md` + per-file headers (zemse/hackmd @ 7650cdc, MIT)
-  - Commits: `184005a` (implement), `8ee949b` (docs), `a391dd1` (wrap-up)
-- **`/close-out` run**: all 4 gating checks + emoji gate passed; doc patch added
-  `planning/decisions/index.md` row to `README.md` (uncommitted — included in this session's commit)
-- **`planning/status.md`** updated: Block A → Done; focus → Block B
+- **Block B shipped** via `/sdlc-run 0.B-binary-skeleton --from implement` (PASS on first attempt):
+  - `crates/bella/src/main.rs` — clap CLI (`bella <file>`), terminal lifecycle (raw mode,
+    alternate screen, panic hook), sync event loop
+  - `crates/bella/src/app.rs` — `App` struct: rendered lines, clamped scroll offset,
+    `scroll_down/up/jump_top/jump_bottom` (note: `to_top/to_bottom` renamed → `jump_*` to
+    satisfy `clippy::wrong_self_convention` on mutating methods)
+  - `crates/bella/src/ui.rs` — `draw_reader`: body + 1-row statusline; pushes body height
+    back to `App`; `TestBackend` draw assertions
+  - `crates/bella/src/events.rs` — pure `map_key` → `Action` (j/k, g/G, arrows, PgDn/Up,
+    Ctrl-d/u, q, Ctrl-C); `handle_event` drives `App` and sets `should_quit`
+  - 21 bella tests + 37 engine tests + 1 integration = 59 total; all four gating checks exit 0
+  - Commits: `e6aa18e` (implement), `6eac051` (docs), `1d75c76` (wrap-up)
+- **`/close-out` run**: fmt/clippy/test/build + emoji gate all pass; `README.md` directory map
+  patched to add `crates/bella/` entry (committed in this session)
+- **`planning/status.md`** updated: Block B → Done; focus → Block C
 
 ## Remaining work
 
-- **Block B — Binary skeleton renders a file (no mouse)** ← next
-  - Create `crates/bella` binary crate in the workspace
-  - Wire `bella-engine::render_with_edit` into Crossterm raw mode + Ratatui `Frame`
-  - CLI: `bella <file>` → render + scroll (j/k or arrow keys); `q` to quit
-  - No mouse, no keyboard nav beyond scroll and quit — that is Blocks C and D
-- Blocks C → J follow in order per `planning/master-plan.md`
+- **Block C — Keyboard navigation** ← next
+  - Link focus ring: cycle through links in the rendered view with Tab/Shift-Tab; highlight
+    the focused link visually (a colour or bracket style in the Ratatui render pass)
+  - Link follow: `Enter` on a focused link → open in browser or descend into a local `.md`
+    file; `Esc` dismisses focus
+  - `/` search: open an inline search bar (bottom row); jump to first heading or text match;
+    `n/N` to cycle matches; `Esc` to dismiss
+  - History: `[` / `]` (or `Alt-Left/Right`) to navigate back/forward through visited files
+  - No mouse — that is Block D
+- Blocks D → J follow in order per `planning/master-plan.md`
 
 ## Open questions / choices
 
-- `cargo run -p bella` in `README.md`'s "Running locally" section is currently dead (the `bella`
-  crate doesn't exist yet). The comment "(Block B and later)" is accurate. Verify once Block B
-  ships and remove the parenthetical.
-- `planning/0.A-workspace-engine-extraction/sdlc/sdlc-state.json` is untracked — it's an
-  internal pipeline breadcrumb for `/sdlc-block` resume. Safe to `.gitignore` or leave; no
-  action required.
+- `README.md` "Running locally" previously had a dead `cargo run -p bella` note marked
+  "(Block B and later)". Block B is now shipped — that parenthetical should be dropped when
+  README prose is next touched (minor; not blocking).
+- `planning/0.A-workspace-engine-extraction/sdlc/sdlc-state.json` and
+  `planning/0.B-binary-skeleton/sdlc/sdlc-state.json` are untracked pipeline breadcrumbs.
+  They are safe to `.gitignore` or leave as-is; no action needed.
 
 ## Context the next agent needs
 
-- `bella-engine` public surface lives in `crates/bella-engine/src/lib.rs` (re-exports only;
-  the crate is a library). The integration test at `crates/bella-engine/tests/render.rs`
-  shows how to call `render_with_edit`.
-- Upstream reference frozen at `reference/hackmd/` (excluded from workspace via
-  `Cargo.toml:exclude`). For "how did hackmd do X" questions, read from there — don't
-  depend on `../potential-projects/`.
+- `bella-engine` public surface lives in `crates/bella-engine/src/lib.rs`. The rendered
+  output type is `Rendered` (contains `Vec<RenderedLine>`). Each `RenderedLine` carries span
+  metadata that includes link ranges (`LinkMap` / `LinkTarget`) — this is the data structure
+  Block C's focus ring will consume to locate tabbable links.
+- `crates/bella-engine/src/links.rs` owns `LinkMap` and `LinkTarget` — read it to understand
+  how link spans are tracked across wrapped lines.
+- Upstream reference is at `reference/hackmd/` (excluded from Cargo workspace). For "how did
+  hackmd do keyboard nav / link follow", start there.
 - D2 (`planning/decisions/D2-engine-app-crate-split.md`) governs the crate boundary:
-  everything in `bella-engine` is attributed-derivative; everything in `bella` is original.
-- The edit-sync types (`EditCtx`, `BlockInfo`, `row_source` on `RenderedLine`) are dormant in
-  `bella-engine` — do NOT activate them in Block B. They ship in Block H.
+  `bella-engine` is attributed-derivative; `bella` is original. All Block C logic goes in
+  `bella`, calling into `bella-engine` API only.
+- Edit-sync types (`EditCtx`, `BlockInfo`, `row_source`) remain dormant — do NOT activate
+  them until Block H.
 
 ## First command after `/prime`
 
-`/generate-tasks 0.B-binary-skeleton`
+`/generate-tasks 0.C-keyboard-navigation`
