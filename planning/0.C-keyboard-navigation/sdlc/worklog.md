@@ -40,3 +40,6 @@ Patched: /Users/brandon/Dev/agentic-portfolio/bella/trees/0.C-keyboard-navigatio
 
 ## Wrap-up — PASS
 Next: Phase 0, Block D — Mouse support
+
+## PR
+https://github.com/bredmond1019/bella/pull/1
