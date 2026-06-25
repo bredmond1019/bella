@@ -394,13 +394,15 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         Action::None => {}
         // Browser actions (Block E, Task 4)
         Action::BrowserUp => {
+            let vp = app.browser_area.height.max(1);
             if let Some(b) = app.browser.as_mut() {
-                b.move_cursor(-1, app.viewport_height);
+                b.move_cursor(-1, vp);
             }
         }
         Action::BrowserDown => {
+            let vp = app.browser_area.height.max(1);
             if let Some(b) = app.browser.as_mut() {
-                b.move_cursor(1, app.viewport_height);
+                b.move_cursor(1, vp);
             }
         }
         Action::BrowserAscend => {
@@ -427,12 +429,20 @@ pub(crate) fn apply(action: Action, app: &mut App) {
             }
         }
         Action::BrowserClickAt { row } => {
-            // Select the clicked row.
-            if let Some(b) = app.browser.as_mut() {
+            // Select the clicked row; skip descend/open if click is below the last entry.
+            let in_range = if let Some(b) = app.browser.as_mut() {
                 let target_idx = b.scroll as usize + row as usize;
                 if target_idx < b.entries.len() {
                     b.selected = target_idx;
+                    true
+                } else {
+                    false
                 }
+            } else {
+                false
+            };
+            if !in_range {
+                return;
             }
             // Then descend/open the now-selected entry.
             let descend_dir = app.browser.as_ref().and_then(|b| b.descend());
@@ -454,9 +464,10 @@ pub(crate) fn apply(action: Action, app: &mut App) {
             }
         }
         Action::BrowserScroll(delta) => {
+            let vp = app.browser_area.height.max(1);
             if let Some(b) = app.browser.as_mut() {
                 if delta > 0 {
-                    let max_scroll = (b.entries.len() as u16).saturating_sub(app.viewport_height);
+                    let max_scroll = (b.entries.len() as u16).saturating_sub(vp);
                     b.scroll = b.scroll.saturating_add(delta as u16).min(max_scroll);
                 } else {
                     b.scroll = b.scroll.saturating_sub((-delta) as u16);
@@ -513,8 +524,18 @@ pub fn run_loop(
             }
             Event::Resize(width, height) => {
                 app.set_viewport_height(height.saturating_sub(1));
+                app.width = width;
                 if app.mode == Mode::Reader {
                     app.render(width);
+                }
+                // Re-clamp browser scroll to the new terminal height.
+                let browser_inner_h = height.saturating_sub(2) as usize;
+                if let Some(b) = app.browser.as_mut() {
+                    let max_scroll = b.entries.len().saturating_sub(browser_inner_h) as u16;
+                    b.scroll = b.scroll.min(max_scroll);
+                    if b.selected < b.scroll as usize {
+                        b.scroll = b.selected as u16;
+                    }
                 }
             }
             Event::Mouse(mouse) => {

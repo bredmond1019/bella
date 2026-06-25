@@ -182,8 +182,8 @@ fn build_entries(dir: &Path) -> Vec<BrowserEntry> {
     }
 
     // Sort alphabetically (case-insensitive) within each group.
-    dirs.sort_by_key(|a| a.display.to_lowercase());
-    files.sort_by_key(|a| a.display.to_lowercase());
+    dirs.sort_by_cached_key(|a| a.display.to_lowercase());
+    files.sort_by_cached_key(|a| a.display.to_lowercase());
 
     // Prepend `..` when a parent exists.
     let mut entries: Vec<BrowserEntry> = Vec::new();
