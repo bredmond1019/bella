@@ -9,3 +9,8 @@ Validated: gating checks (fast tripwire)
 What: Added self-contained back/forward history stack in history.rs with browser semantics (push-after-back truncates forward tail), 10 unit tests, registered as pub mod history in main.rs
 Decisions: Made mod history pub so Task 6 (App integration) can use the HistoryEntry type from tests via the bella:: path shown in the doc-comment example
 Validated: gating checks (fast tripwire)
+
+## Task 3 — PASSED (1 attempt)
+What: Tab/Shift-Tab/Esc link focus ring with REVERSED highlight overlay in the body renderer
+Decisions: Used `if let ... && let ...` chained pattern (let-chains) in draw_body to satisfy clippy collapsible_if lint; apply_span_highlight splits existing ratatui Span vec at col_start/col_end boundaries so only the link text gets the REVERSED modifier while surrounding text keeps its original style; apply() made pub(crate) so test modules in events.rs can call it directly without re-exporting
+Validated: gating checks (fast tripwire)

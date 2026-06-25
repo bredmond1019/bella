@@ -2,10 +2,10 @@
   "spec_slug": "0.C-keyboard-navigation",
   "branch": "0.C-keyboard-navigation-flow-2",
   "started_at": "2026-06-25T08:12:05Z",
-  "updated_at": "2026-06-25T08:14:30Z",
+  "updated_at": "2026-06-25T08:20:10Z",
   "worktree_path": "/Users/brandon/Dev/agentic-portfolio/bella/trees/0.C-keyboard-navigation-flow-2",
   "status": "running",
-  "current_task": 2,
+  "current_task": 3,
   "tasks": {
     "1": {
       "status": "passed",
@@ -35,6 +35,25 @@
       "files_changed": [
         "crates/bella/src/history.rs",
         "crates/bella/src/main.rs"
+      ],
+      "commit": "",
+      "validated": "gating checks (fast tripwire)"
+    },
+    "3": {
+      "status": "passed",
+      "attempts": 1,
+      "summary": "Tab/Shift-Tab/Esc link focus ring with REVERSED highlight overlay in the body renderer",
+      "issues": [],
+      "fixes": [],
+      "decisions": [
+        "Used `if let ... && let ...` chained pattern (let-chains) in draw_body to satisfy clippy collapsible_if lint",
+        "apply_span_highlight splits existing ratatui Span vec at col_start/col_end boundaries so only the link text gets the REVERSED modifier while surrounding text keeps its original style",
+        "apply() made pub(crate) so test modules in events.rs can call it directly without re-exporting"
+      ],
+      "files_changed": [
+        "crates/bella/src/app.rs",
+        "crates/bella/src/events.rs",
+        "crates/bella/src/ui.rs"
       ],
       "commit": "",
       "validated": "gating checks (fast tripwire)"
