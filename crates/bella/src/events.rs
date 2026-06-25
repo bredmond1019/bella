@@ -1,7 +1,7 @@
 //! Synchronous event loop: draw → read event → dispatch → repeat.
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::app::App;
@@ -84,6 +84,18 @@ pub fn map_search_key(key: KeyEvent) -> Action {
     }
 }
 
+/// Pure mouse→action mapper (unit-testable without a live terminal).
+///
+/// Only scroll-wheel kinds are mapped for now; button/drag/move kinds return
+/// `Action::None` and will be filled in by later tasks.
+pub fn map_mouse(mouse: MouseEvent, _app: &App) -> Action {
+    match mouse.kind {
+        MouseEventKind::ScrollDown => Action::ScrollDown(3),
+        MouseEventKind::ScrollUp => Action::ScrollUp(3),
+        _ => Action::None,
+    }
+}
+
 /// Apply an `Action` to `app`.
 pub(crate) fn apply(action: Action, app: &mut App) {
     match action {
@@ -157,6 +169,10 @@ pub fn run_loop(
             Event::Resize(width, height) => {
                 app.set_viewport_height(height.saturating_sub(1));
                 app.render(width);
+            }
+            Event::Mouse(mouse) => {
+                let action = map_mouse(mouse, &app);
+                apply(action, &mut app);
             }
             _ => {}
         }
@@ -554,5 +570,37 @@ mod tests {
         // Cleanup.
         let _ = std::fs::remove_file(&target);
         let _ = std::fs::remove_file(&main_path);
+    }
+
+    // --- Task 2 tests: map_mouse ---
+
+    fn mouse_event(kind: crossterm::event::MouseEventKind) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+        }
+    }
+
+    #[test]
+    fn map_mouse_scroll_down_produces_scroll_down() {
+        let app = make_app();
+        let ev = mouse_event(crossterm::event::MouseEventKind::ScrollDown);
+        assert_eq!(super::map_mouse(ev, &app), Action::ScrollDown(3));
+    }
+
+    #[test]
+    fn map_mouse_scroll_up_produces_scroll_up() {
+        let app = make_app();
+        let ev = mouse_event(crossterm::event::MouseEventKind::ScrollUp);
+        assert_eq!(super::map_mouse(ev, &app), Action::ScrollUp(3));
+    }
+
+    #[test]
+    fn map_mouse_unmapped_kind_produces_none() {
+        let app = make_app();
+        let ev = mouse_event(crossterm::event::MouseEventKind::Moved);
+        assert_eq!(super::map_mouse(ev, &app), Action::None);
     }
 }

@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -37,13 +38,14 @@ fn main() -> Result<()> {
     // --- terminal setup ---
     enable_raw_mode().context("enable raw mode")?;
     let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen).context("enter alternate screen")?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
+        .context("enter alternate screen + enable mouse")?;
 
     // Panic hook: restore terminal before the default handler prints.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
         default_hook(info);
     }));
 
@@ -54,7 +56,11 @@ fn main() -> Result<()> {
 
     // --- always restore ---
     let _ = disable_raw_mode();
-    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    );
     let _ = terminal.show_cursor();
 
     result
