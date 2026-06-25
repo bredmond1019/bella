@@ -53,8 +53,11 @@ cargo run -p bella -- <file|dir>             # run the viewer
 ```
 bella/
 ├── .claude/        ← Claude Code commands + SDLC workflow engines
+├── crates/
+│   ├── bella-engine/   ← render/layout library (palette, markdown, geometry, syntax, links)
+│   └── bella/          ← TUI binary (clap CLI, ratatui draw loop, events, app state, history)
 ├── planning/       ← context, status, master-plan, harness.json, decisions/, <concept>/
-└── <source dirs>   ← add as the project grows
+└── reference/      ← upstream zemse/hackmd source (excluded from workspace)
 ```
 
 ## What NOT to touch
