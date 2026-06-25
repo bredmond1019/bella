@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use bella_engine::{
     LinkMap, Theme,
-    links::TableExpansions,
+    links::{LinkTarget, TableExpansions},
     markdown::{HeadingInfo, render_with_edit},
 };
 use ratatui::text::Line;
@@ -51,6 +51,8 @@ pub struct App {
     pub scroll: u16,
     /// Height of the content viewport (body area, excluding status line).
     pub viewport_height: u16,
+    /// Terminal width — stored so `load_file` can re-render at the same width.
+    pub width: u16,
     /// File path shown in the status line.
     pub file: PathBuf,
     /// Exit flag — set to `true` to terminate the event loop.
@@ -59,6 +61,9 @@ pub struct App {
     pub focused_link: Option<usize>,
     /// Active search state, if any.
     pub search: Option<SearchState>,
+    /// Non-fatal status message to display in the status line (e.g. file-not-found).
+    /// Cleared on the next successful action that overwrites it.
+    pub status_message: Option<String>,
 }
 
 impl App {
@@ -77,15 +82,18 @@ impl App {
             headings,
             scroll: 0,
             viewport_height,
+            width,
             file,
             should_quit: false,
             focused_link: None,
             search: None,
+            status_message: None,
         }
     }
 
     /// Re-render at a new `width` (called on terminal resize).
     pub fn render(&mut self, width: u16) {
+        self.width = width;
         let base_dir = self.file.parent().map(Path::to_path_buf);
         let (lines, link_map, headings) = render_metadata(&self.src, width, base_dir.as_deref());
         self.lines = lines;
@@ -190,6 +198,81 @@ impl App {
         }
         // Re-clamp in case of rounding edge.
         self.scroll = self.scroll.min(self.max_scroll());
+    }
+
+    // --- link follow (Task 4) ---
+
+    /// Load a new file into the reader.
+    ///
+    /// Re-renders at the current `width`, resets scroll and navigation state,
+    /// and updates `self.file`. Returns a user-facing error string if the file
+    /// cannot be read (caller surfaces it via `status_message`).
+    pub fn load_file(&mut self, path: PathBuf) -> Result<(), String> {
+        let src = std::fs::read_to_string(&path)
+            .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        self.src = src;
+        self.file = path;
+        let base_dir = self.file.parent().map(Path::to_path_buf);
+        let (lines, link_map, headings) =
+            render_metadata(&self.src, self.width, base_dir.as_deref());
+        self.lines = lines;
+        self.link_map = link_map;
+        self.headings = headings;
+        self.scroll = 0;
+        self.focused_link = None;
+        self.search = None;
+        self.status_message = None;
+        Ok(())
+    }
+
+    /// Follow the currently-focused link.
+    ///
+    /// Dispatches on the target type:
+    /// - `LocalFile` — load the file via [`Self::load_file`] and reset the reader.
+    /// - `Url` — open in the system browser; reader state unchanged.
+    /// - `Anchor` — scroll to the heading's line within the current document.
+    /// - `FileAnchor` — load the file then scroll to the anchor.
+    ///
+    /// Returns `Some((prev_file, prev_scroll))` when the open file changed so
+    /// that Task 6 can record the previous location in the history stack.
+    /// Returns `None` for URL opens (no file change), anchor-only scrolls, and
+    /// when no link is focused or file loading fails.
+    pub fn follow_focused(&mut self) -> Option<(PathBuf, u16)> {
+        let idx = self.focused_link?;
+        let span = self.link_map.links.get(idx)?.clone();
+        match span.target {
+            LinkTarget::LocalFile(path) => {
+                let prev = (self.file.clone(), self.scroll);
+                if let Err(msg) = self.load_file(path) {
+                    self.status_message = Some(msg);
+                    return None;
+                }
+                Some(prev)
+            }
+            LinkTarget::Url(url) => {
+                // Open in the system browser; ignore errors (no browser available is non-fatal).
+                let _ = open::that(url);
+                None
+            }
+            LinkTarget::Anchor(slug) => {
+                if let Some(&line) = self.link_map.anchors.get(&slug) {
+                    self.scroll = (line as u16).min(self.max_scroll());
+                }
+                None
+            }
+            LinkTarget::FileAnchor(path, slug) => {
+                let prev = (self.file.clone(), self.scroll);
+                if let Err(msg) = self.load_file(path) {
+                    self.status_message = Some(msg);
+                    return None;
+                }
+                // Scroll to the anchor in the newly-loaded document.
+                if let Some(&line) = self.link_map.anchors.get(&slug) {
+                    self.scroll = (line as u16).min(self.max_scroll());
+                }
+                Some(prev)
+            }
+        }
     }
 }
 
@@ -493,5 +576,210 @@ mod tests {
         assert!(!app.link_map.links.is_empty(), "link must be found");
         // Clean up.
         let _ = std::fs::remove_file(&file_path);
+    }
+
+    // --- Task 4 tests: link follow ---
+
+    /// Write a temp file and return its path.  The file is created relative to a
+    /// unique temp directory so tests don't collide with each other.
+    fn write_temp_file(dir: &std::path::Path, name: &str, content: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, content).expect("write temp file");
+        path
+    }
+
+    #[test]
+    fn follow_local_file_link_swaps_app_file_and_rerenders() {
+        let dir = tempdir_for_test("follow_local");
+        // Write the target file.
+        let target_content = "# Target File\n\nThis is the target.";
+        write_temp_file(&dir, "target.md", target_content);
+
+        // Create main file with a link to target.md.
+        let main_path = write_temp_file(&dir, "main.md", "[go](target.md)");
+        let src = std::fs::read_to_string(&main_path).unwrap();
+        let mut app = App::new(src, main_path.clone(), 80, 25);
+
+        // Precondition: links present and first link is a LocalFile.
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+        app.focused_link = Some(0);
+
+        let original_file = app.file.clone();
+        let result = app.follow_focused();
+
+        // Navigation happened — result contains previous location.
+        assert!(
+            result.is_some(),
+            "follow_focused must return previous location"
+        );
+        let (prev_file, _prev_scroll) = result.unwrap();
+        assert_eq!(
+            prev_file, original_file,
+            "returned prev_file must be the original"
+        );
+
+        // App now shows the target file.
+        assert_eq!(
+            app.file,
+            dir.join("target.md"),
+            "app.file must be updated to the followed path"
+        );
+        // Lines reflect the new file's content.
+        let all_text: String = app
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            all_text.contains("Target File"),
+            "re-rendered lines must contain the target file's heading; got: {all_text:?}"
+        );
+        // Scroll reset.
+        assert_eq!(app.scroll, 0, "scroll must be reset after following a link");
+    }
+
+    #[test]
+    fn follow_anchor_scrolls_to_heading_line() {
+        // Build a document with a heading far below the viewport and an anchor link.
+        // Use a small viewport so the anchor is well below the initial scroll position.
+        let mut lines: Vec<String> = (1..=20).map(|i| format!("line {i}")).collect();
+        lines.push("[jump](#deep-anchor)".to_string());
+        lines.push(String::new());
+        lines.push("## Deep Anchor".to_string());
+        let src = lines.join("\n\n");
+
+        let mut app = App::new(src, PathBuf::from("doc.md"), 80, 11);
+        app.viewport_height = 10;
+
+        // Precondition: an anchor link exists.
+        let anchor_idx = app
+            .link_map
+            .links
+            .iter()
+            .position(|s| matches!(&s.target, bella_engine::links::LinkTarget::Anchor(_)))
+            .expect("anchor link must exist");
+        app.focused_link = Some(anchor_idx);
+
+        // The anchor "deep-anchor" must resolve to some line.
+        let anchor_line = *app
+            .link_map
+            .anchors
+            .get("deep-anchor")
+            .expect("anchor must be in link_map.anchors");
+
+        // The expected scroll is the anchor line clamped to max_scroll (scroll cannot exceed
+        // max_scroll even if the anchor is on the very last line).
+        let max = app.max_scroll();
+        let expected = (anchor_line as u16).min(max);
+
+        app.follow_focused();
+
+        assert_eq!(
+            app.scroll, expected,
+            "scroll must land on the anchor's line ({anchor_line}), clamped to max_scroll ({max}); got {}",
+            app.scroll
+        );
+        // Verify scroll moved — it must be greater than the initial scroll of 0.
+        assert!(app.scroll > 0, "scroll must have moved toward the anchor");
+    }
+
+    #[test]
+    fn follow_url_leaves_file_and_lines_unchanged() {
+        // Doc with a URL link.
+        let src = "[web](https://example.com)".to_string();
+        let file = PathBuf::from("readme.md");
+        let mut app = App::new(src.clone(), file.clone(), 80, 25);
+
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+        app.focused_link = Some(0);
+
+        let lines_before = app.lines.clone();
+        let result = app.follow_focused();
+
+        // URL follow returns None (no file navigation).
+        assert!(
+            result.is_none(),
+            "follow_focused on a URL must return None (no file navigation)"
+        );
+        // File and lines are unchanged.
+        assert_eq!(app.file, file, "app.file must not change for a URL link");
+        assert_eq!(
+            app.lines.len(),
+            lines_before.len(),
+            "lines must not change for a URL link"
+        );
+    }
+
+    #[test]
+    fn follow_missing_file_sets_status_message_and_returns_none() {
+        let src = "[missing](nonexistent_file_that_does_not_exist.md)".to_string();
+        let mut app = App::new(src, PathBuf::from("doc.md"), 80, 25);
+
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+        app.focused_link = Some(0);
+
+        let result = app.follow_focused();
+
+        assert!(
+            result.is_none(),
+            "follow_focused on a missing file must return None"
+        );
+        assert!(
+            app.status_message.is_some(),
+            "status_message must be set on a file-not-found error"
+        );
+    }
+
+    #[test]
+    fn follow_noop_when_no_link_focused() {
+        let src = "[link](other.md)".to_string();
+        let file = PathBuf::from("doc.md");
+        let mut app = App::new(src, file.clone(), 80, 25);
+        // No focused link.
+        assert!(app.focused_link.is_none());
+
+        let result = app.follow_focused();
+        assert!(
+            result.is_none(),
+            "follow_focused with no focus must return None"
+        );
+        assert_eq!(app.file, file, "file must not change");
+    }
+
+    #[test]
+    fn load_file_updates_src_and_resets_state() {
+        let dir = tempdir_for_test("load_file");
+        let target_content = "# Loaded\n\nSome content.";
+        let target_path = write_temp_file(&dir, "loaded.md", target_content);
+
+        let mut app = App::new("Original".to_string(), PathBuf::from("orig.md"), 80, 25);
+        app.scroll = 5;
+        app.focused_link = Some(0);
+
+        app.load_file(target_path.clone())
+            .expect("load_file must succeed");
+
+        assert_eq!(app.file, target_path, "file must be updated");
+        assert_eq!(app.scroll, 0, "scroll must be reset");
+        assert!(app.focused_link.is_none(), "focused_link must be reset");
+        // Lines reflect the loaded content.
+        let all_text: String = app
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            all_text.contains("Loaded"),
+            "lines must reflect loaded content"
+        );
+    }
+
+    /// Create a uniquely-named temp directory to avoid inter-test collisions.
+    fn tempdir_for_test(label: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!("bella_task4_{label}"));
+        std::fs::create_dir_all(&base).expect("create temp dir");
+        base
     }
 }
