@@ -6,8 +6,8 @@ description: Current state and progress tracker for Bella.
 
 # STATUS — Current State & Progress
 
-**Last updated:** 2026-06-25 — Block D PR #2 code review: double selection_finish bug fixed (guard DragEnd branch), regression test added, 196 tests pass, ready to merge
-**Current focus:** Phase 0, Block D — Mouse support (scroll/hover/click/drag-select/double-click) — PR #2 awaiting merge
+**Last updated:** 2026-06-25 — Block D merged (PR #2); v0.1 shipped; 196 tests pass
+**Current focus:** Phase 1, Block E — File browser (directory navigator)
 
 ---
 
@@ -31,7 +31,7 @@ description: Current state and progress tracker for Bella.
 | Block | What | Status | Notes |
 |---|---|---|---|
 | Block C | Keyboard navigation | Done | Link focus/follow, `/` search, history; PR #1; 136 tests; PASS |
-| Block D | Mouse | Not started | Scroll/hover/click/drag-select/double-click — **= v0.1** — PR #2: code review found double selection_finish bug, fixed, regression test added, 196 tests pass |
+| Block D | Mouse | Done | Scroll/hover/click/drag-select/double-click; PR #2 merged; 196 tests; PASS — **v0.1 shipped** |
 | Block E | File browser (directory navigator) | Not started | Port hackmd `Browser`; descend/ascend, `.md/.mdx` + dirs; mouse + `j/k` |
 
 ### Phase 2 — Depth / Hardening
