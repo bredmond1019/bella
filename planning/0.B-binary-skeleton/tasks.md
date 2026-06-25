@@ -6,7 +6,7 @@ description: Decomposed task spec for the bella binary crate that renders a file
 
 # Task Spec — Phase 0, Block B (Binary skeleton renders a file)
 
-**Status:** Not started · **Last run:** never
+**Status:** Done · **Last run:** 2026-06-25
 
 ## Goal
 `bella file.md` reads the file, renders it through `bella_engine::render_with_edit`, and draws it to the terminal with scroll (`j/k`, `g/G`) and clean `q` exit — no mouse, no nav.
@@ -74,4 +74,4 @@ cargo build --release
 
 ## Amendment Log
 <!-- Append-only. Pipeline stages append one dated line here when they deviate from the spec. -->
-_No amendments yet._
+2026-06-25 [implement] Task 2 named scroll methods `to_top`/`to_bottom`; renamed to `jump_top`/`jump_bottom` to satisfy `clippy::wrong_self_convention` (mutating methods must not use `to_*` naming). Semantics unchanged.

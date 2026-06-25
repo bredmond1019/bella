@@ -6,8 +6,8 @@ description: Current state and progress tracker for Bella.
 
 # STATUS — Current State & Progress
 
-**Last updated:** 2026-06-24 — Block A complete; `bella-engine` crate live with 38 passing tests
-**Current focus:** Phase 0, Block B — Binary skeleton renders a file (no mouse)
+**Last updated:** 2026-06-25 — Block B complete; `bella` binary crate live with 21 passing tests
+**Current focus:** Phase 0, Block C — Keyboard navigation (link focus/follow, `/` search, history)
 
 ---
 
@@ -25,7 +25,7 @@ description: Current state and progress tracker for Bella.
 | Block | What | Status | Notes |
 |---|---|---|---|
 | Block A | Workspace + engine extraction | Done | `bella-engine` crate: 6 ported modules + `geometry.rs`; 38 tests pass; public surface complete |
-| Block B | Binary skeleton renders a file (no mouse) | Not started | `bella file.md` → engine render + scroll |
+| Block B | Binary skeleton renders a file (no mouse) | Done | `bella` binary crate: clap CLI, ratatui draw loop, scroll engine; 21 tests pass |
 
 ### Phase 1 — Core viewer (v0.1)
 | Block | What | Status | Notes |

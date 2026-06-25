@@ -10,6 +10,16 @@ description: Chronological log of work completed for Bella.
 
 ---
 
+## 2026-06-25 — Phase 0 Block B complete: bella binary skeleton renders a file
+
+Created the `bella` binary crate (4 source modules: `main.rs`, `app.rs`, `ui.rs`, `events.rs`). The clap CLI accepts a required file path; terminal lifecycle uses raw mode, alternate screen, and a panic hook that restores the terminal before re-raising. The `App` struct holds rendered lines and a clamped scroll offset; `draw_reader` splits the frame into a body + 1-row statusline and pushes the body height back to `App` on every draw. The pure `map_key` function maps `j/k`, `g/G`, arrows, PageDown/PageUp, Ctrl-d/u, and `q/Ctrl-C` to actions with no terminal dependency. All 7 acceptance criteria were met on the first review attempt (PASS). 21 new tests pass (scroll clamping, key mapping, TestBackend draw assertions); total suite is 59 tests across both crates. All four gating checks exit 0. Next: Phase 0 Block C — keyboard navigation (link focus/follow, `/` search, history).
+
+```
+6eac051 docs: update docs for 0.B-binary-skeleton
+e6aa18e feat: implement 0.B-binary-skeleton
+765951e chore: add spec for 0.B-binary-skeleton
+```
+
 ## 2026-06-24 — Close-out: Block 0.A gating checks + doc patch
 
 Completed `/close-out` for Block 0.A. All four gating checks passed (cargo fmt, cargo clippy, cargo test, cargo build --release) and emoji gate cleared. Coverage verified: 38 tests (37 unit + 1 integration). Updated planning docs via `/update-docs --patch` to add `planning/decisions/index.md` to the root README. Wrote `planning/handoff.md` marking Block B as the next focus. Block A is now fully shipped; current focus is Phase 0 Block B (binary skeleton renders a file without mouse).
