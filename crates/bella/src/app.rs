@@ -9,6 +9,8 @@ use bella_engine::{
 };
 use ratatui::text::Line;
 
+use crate::history::{History, HistoryEntry};
+
 /// Search state while a `/`-search is active or has matches.
 #[derive(Debug, Clone)]
 pub struct SearchState {
@@ -61,6 +63,8 @@ pub struct App {
     /// Non-fatal status message to display in the status line (e.g. file-not-found).
     /// Cleared on the next successful action that overwrites it.
     pub status_message: Option<String>,
+    /// Back/forward navigation history stack (Task 6).
+    pub history: History,
 }
 
 impl App {
@@ -85,6 +89,7 @@ impl App {
             focused_link: None,
             search: None,
             status_message: None,
+            history: History::new(),
         }
     }
 
@@ -291,6 +296,41 @@ impl App {
                     self.scroll = (line as u16).min(self.max_scroll());
                 }
                 Some(prev)
+            }
+        }
+    }
+
+    // --- history navigation (Task 6) ---
+
+    /// Go back one step in the navigation history.
+    ///
+    /// Restores the previous file and its recorded scroll position.
+    /// No-op when there is no back history.  Does NOT push a new entry —
+    /// the history cursor moves without adding to the stack.
+    pub fn go_back(&mut self) {
+        let entry = self.history.back().cloned();
+        if let Some(HistoryEntry { path, scroll }) = entry {
+            // Load the file; errors are non-fatal (surfaced as a status message).
+            if let Err(msg) = self.load_file(path) {
+                self.status_message = Some(msg);
+            } else {
+                // load_file resets scroll to 0 — override with the saved value.
+                self.scroll = scroll.min(self.max_scroll());
+            }
+        }
+    }
+
+    /// Go forward one step in the navigation history.
+    ///
+    /// Restores the next file and its recorded scroll position.
+    /// No-op when there is no forward history.  Does NOT push a new entry.
+    pub fn go_forward(&mut self) {
+        let entry = self.history.forward().cloned();
+        if let Some(HistoryEntry { path, scroll }) = entry {
+            if let Err(msg) = self.load_file(path) {
+                self.status_message = Some(msg);
+            } else {
+                self.scroll = scroll.min(self.max_scroll());
             }
         }
     }
@@ -1117,6 +1157,174 @@ mod tests {
             match_line >= vp_start && match_line < vp_end,
             "commit_search must scroll the first match into view: \
              line={match_line}, scroll={vp_start}, vp_end={vp_end}"
+        );
+    }
+
+    // --- Task 6 tests: history navigation wiring ---
+
+    /// Helper: create two real temp files (main and target) and return their paths.
+    fn make_two_temp_files(label: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("bella_task6_{label}"));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let main_path = dir.join("main.md");
+        let target_path = dir.join("target.md");
+        std::fs::write(&main_path, "[go](target.md)").expect("write main");
+        std::fs::write(&target_path, "# Target\n\nContent.").expect("write target");
+        (main_path, target_path)
+    }
+
+    #[test]
+    fn history_field_defaults_empty() {
+        let app = App::new("hello".to_string(), PathBuf::from("doc.md"), 80, 25);
+        assert!(
+            !app.history.can_back(),
+            "history must be empty on construction"
+        );
+        assert!(!app.history.can_forward());
+    }
+
+    #[test]
+    fn go_back_after_follow_restores_file_and_scroll() {
+        // Write files with enough content so max_scroll > 0 and scroll=3 is valid.
+        let dir = std::env::temp_dir().join("bella_task6_go_back_scroll");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let main_content: String = (1..=30)
+            .map(|i| format!("line {i}\n\n"))
+            .collect::<Vec<_>>()
+            .join("");
+        let main_path = dir.join("main.md");
+        std::fs::write(&main_path, format!("{main_content}\n[go](target.md)")).expect("write main");
+        let target_path = dir.join("target.md");
+        std::fs::write(&target_path, "# Target\n\nContent.").expect("write target");
+
+        let src = std::fs::read_to_string(&main_path).unwrap();
+        let mut app = App::new(src, main_path.clone(), 80, 11);
+        app.viewport_height = 10;
+
+        // Verify scroll=3 is within range.
+        assert!(
+            app.max_scroll() >= 3,
+            "precondition: max_scroll must be >= 3 for this test to be meaningful"
+        );
+
+        // Set a non-zero scroll offset so we can verify it is restored.
+        app.scroll = 3;
+        let prev_scroll = app.scroll;
+        let prev_file = app.file.clone();
+
+        // Simulate following a link using the History cursor model:
+        // push BOTH the previous position AND the new position so the cursor
+        // sits on the new entry and `back()` returns the previous one.
+        use crate::history::HistoryEntry;
+        app.history
+            .push(HistoryEntry::new(prev_file.clone(), prev_scroll));
+        app.load_file(target_path.clone()).expect("load target");
+        app.history
+            .push(HistoryEntry::new(app.file.clone(), app.scroll));
+
+        // Sanity: we are now on the target.
+        assert_ne!(app.file, prev_file, "precondition: file must have changed");
+
+        // Now go back.
+        app.go_back();
+
+        assert_eq!(
+            app.file, prev_file,
+            "go_back must restore the previous file"
+        );
+        assert_eq!(
+            app.scroll, prev_scroll,
+            "go_back must restore the previous scroll offset"
+        );
+    }
+
+    #[test]
+    fn go_forward_after_go_back_returns_to_followed_file() {
+        let (main_path, target_path) = make_two_temp_files("go_forward");
+        let src = std::fs::read_to_string(&main_path).unwrap();
+        let mut app = App::new(src, main_path.clone(), 80, 25);
+
+        // Simulate a follow: push prev (main) and new (target) to the history.
+        use crate::history::HistoryEntry;
+        app.history.push(HistoryEntry::new(main_path.clone(), 0));
+        app.load_file(target_path.clone()).expect("load target");
+        app.history.push(HistoryEntry::new(target_path.clone(), 0));
+
+        // go_back → back to main.
+        app.go_back();
+        assert_eq!(app.file, main_path, "after go_back: file must be main.md");
+
+        // go_forward → back to target.
+        app.go_forward();
+        assert_eq!(
+            app.file, target_path,
+            "go_forward must return to the followed file"
+        );
+    }
+
+    #[test]
+    fn go_back_at_start_is_noop() {
+        let mut app = App::new("hello".to_string(), PathBuf::from("doc.md"), 80, 25);
+        let file_before = app.file.clone();
+        // No history — go_back must be a no-op.
+        app.go_back();
+        assert_eq!(
+            app.file, file_before,
+            "go_back at start must not change file"
+        );
+        assert!(app.status_message.is_none(), "no error message expected");
+    }
+
+    #[test]
+    fn go_forward_at_end_is_noop() {
+        let mut app = App::new("hello".to_string(), PathBuf::from("doc.md"), 80, 25);
+        let file_before = app.file.clone();
+        // No forward history.
+        app.go_forward();
+        assert_eq!(
+            app.file, file_before,
+            "go_forward at end must not change file"
+        );
+        assert!(app.status_message.is_none(), "no error message expected");
+    }
+
+    #[test]
+    fn follow_then_new_follow_after_go_back_truncates_forward() {
+        // Verify that the App-level delegation to History truncates forward entries
+        // when a new entry is pushed after going back.
+        let (main_path, target_path) = make_two_temp_files("truncate_fwd");
+        let src = std::fs::read_to_string(&main_path).unwrap();
+        let mut app = App::new(src, main_path.clone(), 80, 25);
+
+        use crate::history::HistoryEntry;
+
+        // First follow: main → target.
+        // Push prev (main) then new (target) so history cursor lands on target.
+        app.history.push(HistoryEntry::new(main_path.clone(), 0));
+        app.load_file(target_path.clone()).expect("load target");
+        app.history.push(HistoryEntry::new(target_path.clone(), 0));
+        // history = [main@0, target@0], cursor = 1
+
+        // Go back to main (cursor moves to 0).
+        app.go_back();
+        assert_eq!(app.file, main_path, "precondition: back to main");
+
+        // Now follow a new link from main — this should truncate the forward
+        // history (target@0 at index 1).  Push prev (main@scroll_now) at cursor+1
+        // (truncating target@0), then push new target.
+        let prev_file = app.file.clone();
+        let prev_scroll = app.scroll;
+        app.history.push(HistoryEntry::new(prev_file, prev_scroll));
+        app.load_file(target_path.clone()).expect("reload target");
+        app.history
+            .push(HistoryEntry::new(app.file.clone(), app.scroll));
+        // After truncation and two pushes: [main@0, main@0, target@0], cursor=2
+        // (or similar — the key invariant is no entries after cursor).
+
+        // Forward history must have been truncated — can_forward should be false.
+        assert!(
+            !app.history.can_forward(),
+            "forward history must be truncated after a new follow from a mid-stack position"
         );
     }
 }
