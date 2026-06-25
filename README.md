@@ -51,7 +51,8 @@ cargo fmt --check
 bella/
 ├── .claude/                  ← Claude Code commands + SDLC workflow engines
 ├── crates/
-│   └── bella-engine/         ← render/layout library (palette, syntax, theme, links, markdown, geometry)
+│   ├── bella-engine/         ← render/layout library (palette, syntax, theme, links, markdown, geometry)
+│   └── bella/                ← TUI binary (clap CLI, ratatui draw loop, scroll engine)
 ├── planning/                 ← context, status, master-plan, harness.json, decisions/, specs/
 └── reference/                ← upstream zemse/hackmd source (excluded from workspace)
 ```
