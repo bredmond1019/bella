@@ -35,3 +35,6 @@ Patched: /Users/brandon/Dev/agentic-portfolio/bella/trees/0.D-mouse-support-flow
 
 ## Wrap-up — PASS
 Next: Phase 1, Block E — File browser (directory navigator)
+
+## PR
+https://github.com/bredmond1019/bella/pull/2
