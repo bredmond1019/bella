@@ -7,6 +7,7 @@
 mod app;
 mod events;
 pub mod history;
+mod selection;
 mod ui;
 
 use std::path::{Path, PathBuf};
