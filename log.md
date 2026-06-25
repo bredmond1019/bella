@@ -10,6 +10,29 @@ description: Chronological log of work completed for Bella.
 
 ---
 
+## 2026-06-25 — Block E (file browser) complete via sdlc-flow — all 5 tasks PASS, PR #3 open for review
+
+Completed `/sdlc-flow 1.E-file-browser` for Phase 1 Block E — a hackmd-style directory navigator. All 5 tasks implemented and passed on first review attempt (PASS verdict). Implementation spans new `browser.rs` module (gitignore-aware directory listing, entry model, navigation), Mode enum + app integration (reader↔browser round-trip with preserved cursor), `draw_browser` UI rendering with scrolling and selection, and event handlers for keyboard (`j/k`, `Enter`, `Backspace`) and mouse (scroll, click). The directory navigator opens with `bella <dir>` or no args; descends/ascends with `Enter`/`Backspace`/`..`; lists `.md`/`.mdx` files and directories only (non-markdown hidden); preserves cursor position when round-tripping to/from the reader; and shows distinct styling for files vs. directories. PR #3 opened (https://github.com/bredmond1019/bella/pull/3) pending review + merge. Test suite grows to 260+ tests across both crates; all four gating checks pass (fmt, clippy, test, build --release). Next: review and merge PR #3, then Block F (config + themes + live reload).
+
+```diff
+ Cargo.lock                                         |  65 +++
+ README.md                                          |  24 +-
+ crates/bella/Cargo.toml                            |   1 +
+ crates/bella/src/app.rs                            | 279 ++++++++++
+ crates/bella/src/browser.rs                        | 562 +++++++++++++++++++++
+ crates/bella/src/events.rs                         | 482 +++++++++++++++++-
+ crates/bella/src/main.rs                            |  41 +-
+ crates/bella/src/ui.rs                             | 242 ++++++++-
+ log.md                                             |  17 +
+ .../1.E-file-browser/sdlc/sdlc-flow-state.json     | 116 +++++
+ planning/1.E-file-browser/sdlc/worklog.md          |  34 ++
+ planning/1.E-file-browser/tasks.md                 |   2 +-
+ planning/status.md                                 |   6 +-
+ 13 files changed, 1833 insertions(+), 38 deletions(-)
+```
+
+---
+
 ## 2026-06-25 — Code review: Block D PR #2 fix and close-out
 
 Code review of PR #2 (Block D mouse support) identified a subtle bug in the double-click handler: after a successful double-click word-select, `selection_finish()` was being called twice — once on the second `Down` of the double-click sequence and again on the final `Up`. This caused the selection to be extracted and cleared prematurely. Fixed by guarding the DragEnd branch in `events.rs:307` behind `drag_origin.is_some()`, ensuring `selection_finish()` only runs when a real drag was initiated. Added regression test to catch this scenario. Block D now has 196 tests passing across all crates, all four gating checks (cargo fmt, clippy, test, build --release) exit 0. PR #2 merged; Block D shipped as v0.1.
