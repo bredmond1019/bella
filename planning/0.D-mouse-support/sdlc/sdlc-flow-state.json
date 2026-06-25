@@ -2,10 +2,10 @@
   "spec_slug": "0.D-mouse-support",
   "branch": "0.D-mouse-support-flow",
   "started_at": "2026-06-25T10:38:34Z",
-  "updated_at": "2026-06-25T11:03:19Z",
+  "updated_at": "2026-06-25T11:12:36Z",
   "worktree_path": "/Users/brandon/Dev/agentic-portfolio/bella/trees/0.D-mouse-support-flow",
   "status": "running",
-  "current_task": 4,
+  "current_task": 5,
   "tasks": {
     "1": {
       "status": "passed",
@@ -78,6 +78,24 @@
         "crates/bella/src/events.rs",
         "crates/bella/src/selection.rs",
         "crates/bella/src/ui.rs"
+      ],
+      "commit": "",
+      "validated": "gating checks (fast tripwire)"
+    },
+    "5": {
+      "status": "passed",
+      "attempts": 1,
+      "summary": "Double-click word-select (450 ms window): App.last_click field, double_click_word_select method, DoubleClickAt Action, detection in map_mouse, apply routing — all with unit tests.",
+      "issues": [],
+      "fixes": [],
+      "decisions": [
+        "Stored last_click as (Instant, content_row, col) using content coordinates for position comparison, and passed screen coordinates via DoubleClickAt action to select_word_at — this correctly handles scrolling (same screen spot after scroll is a different word).",
+        "last_click is reset to None inside double_click_word_select so a third click always starts a fresh single-click cycle without requiring special handling in apply.",
+        "Duration import lives only in events.rs top-level (used in map_mouse); in app.rs tests it is re-imported inside the test module only — no unused-import warnings."
+      ],
+      "files_changed": [
+        "crates/bella/src/app.rs",
+        "crates/bella/src/events.rs"
       ],
       "commit": "",
       "validated": "gating checks (fast tripwire)"
