@@ -12,6 +12,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use crate::history::{History, HistoryEntry};
+use crate::selection::{self, Selection};
 
 /// Search state while a `/`-search is active or has matches.
 #[derive(Debug, Clone)]
@@ -77,6 +78,12 @@ pub struct App {
     /// Body viewport rectangle — updated after each draw so mouse handlers can
     /// call `body_pos` with accurate geometry.
     pub body_area: Rect,
+    /// Pending drag origin: the content position where `Down(Left)` was recorded.
+    /// Cleared on `Up(Left)`.  Used to distinguish a plain click from a true drag.
+    pub drag_origin: Option<(usize, usize)>,
+    /// Active or completed text selection (drag-select or double-click).
+    /// `None` when no selection is in progress or completed.
+    pub selection: Option<Selection>,
 }
 
 impl App {
@@ -107,6 +114,8 @@ impl App {
             status_message: None,
             history: History::new(),
             body_area: Rect::default(),
+            drag_origin: None,
+            selection: None,
         }
     }
 
@@ -127,6 +136,8 @@ impl App {
         self.hovered_link = None;
         self.toggled_checkboxes.clear();
         self.search = None;
+        self.drag_origin = None;
+        self.selection = None;
     }
 
     /// Update the viewport height (called after each draw when the body area
@@ -271,6 +282,8 @@ impl App {
         self.toggled_checkboxes.clear();
         self.search = None;
         self.status_message = None;
+        self.drag_origin = None;
+        self.selection = None;
         Ok(())
     }
 
@@ -399,6 +412,46 @@ impl App {
             }
         }
         None
+    }
+
+    // --- drag-select (Task 4) ---
+
+    /// Start a new drag selection anchored at `(row, col)`.
+    ///
+    /// Replaces any existing selection.
+    pub fn selection_start(&mut self, row: usize, col: usize) {
+        self.selection = Some(Selection::new((row, col)));
+    }
+
+    /// Update the moving end of the active selection to `(row, col)`.
+    ///
+    /// No-op when no selection is in progress.
+    pub fn selection_update(&mut self, row: usize, col: usize) {
+        if let Some(sel) = &mut self.selection {
+            sel.cursor = (row, col);
+        }
+    }
+
+    /// Finish the drag selection: extract the selected text, copy to clipboard,
+    /// and record a status message.  The selection is **kept** for visual rendering.
+    ///
+    /// No-op when there is no selection or it is zero-length.
+    pub fn selection_finish(&mut self) {
+        let Some(sel) = &self.selection else { return };
+        if sel.is_empty() {
+            return;
+        }
+        let text = selection::extract_text(&self.lines, sel);
+        match selection::copy_to_clipboard(&text) {
+            Ok(()) => {
+                let count = text.chars().count();
+                self.status_message = Some(format!("Copied {count} chars"));
+            }
+            Err(e) => {
+                self.status_message = Some(e);
+            }
+        }
+        // Keep self.selection alive for the visual highlight.
     }
 
     // --- in-document search (Task 5) ---
@@ -1512,6 +1565,135 @@ mod tests {
         let result = app.click_at(0, 0);
         assert!(result.is_none(), "click_at on empty area must return None");
         assert_eq!(app.file, file_before, "file must not change");
+    }
+
+    // --- Task 4 (Block D) tests: drag-select methods ---
+
+    #[test]
+    fn selection_start_creates_selection_at_position() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        assert!(app.selection.is_none(), "precondition: no selection");
+
+        app.selection_start(0, 3);
+        let sel = app.selection.as_ref().expect("selection must be Some");
+        assert_eq!(sel.anchor, (0, 3));
+        assert_eq!(sel.cursor, (0, 3));
+        assert!(sel.is_empty(), "zero-length selection must be empty");
+    }
+
+    #[test]
+    fn selection_update_moves_cursor() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.selection_start(0, 3);
+        app.selection_update(0, 8);
+
+        let sel = app.selection.as_ref().unwrap();
+        assert_eq!(sel.anchor, (0, 3));
+        assert_eq!(sel.cursor, (0, 8));
+        assert!(!sel.is_empty(), "non-zero selection must not be empty");
+    }
+
+    #[test]
+    fn selection_update_noop_when_no_selection() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        // No selection — must not panic.
+        app.selection_update(0, 5);
+        assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn selection_finish_sets_status_on_nonempty_selection() {
+        // Use a rendered document whose first line contains known text.
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        // Select characters 0..5 on line 0 ("hello").
+        app.selection_start(0, 0);
+        app.selection_update(0, 5);
+
+        app.selection_finish();
+
+        // Whether clipboard succeeded or failed, status_message must be set.
+        assert!(
+            app.status_message.is_some(),
+            "selection_finish must set status_message"
+        );
+        // Selection must be kept for visual rendering.
+        assert!(
+            app.selection.is_some(),
+            "selection_finish must keep the selection"
+        );
+    }
+
+    #[test]
+    fn selection_finish_noop_on_empty_selection() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.selection_start(0, 3);
+        // Don't update — selection is zero-length.
+        app.selection_finish();
+        // No status message set (nothing to copy).
+        assert!(
+            app.status_message.is_none(),
+            "selection_finish on empty selection must not set status_message"
+        );
+    }
+
+    #[test]
+    fn selection_finish_noop_when_no_selection() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        // Must not panic when there is no selection.
+        app.selection_finish();
+        assert!(app.status_message.is_none());
+    }
+
+    #[test]
+    fn selection_cleared_on_render() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.selection_start(0, 0);
+        app.selection_update(0, 5);
+        assert!(app.selection.is_some(), "precondition: selection set");
+
+        app.render(80);
+        assert!(app.selection.is_none(), "render must clear the selection");
+    }
+
+    #[test]
+    fn selection_cleared_on_load_file() {
+        let dir = tempdir_for_test("selection_clear_load");
+        let target_path = write_temp_file(&dir, "target.md", "# New file");
+
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.selection_start(0, 0);
+        app.selection_update(0, 5);
+        assert!(app.selection.is_some(), "precondition: selection set");
+
+        app.load_file(target_path).expect("load_file must succeed");
+        assert!(
+            app.selection.is_none(),
+            "load_file must clear the selection"
+        );
+    }
+
+    #[test]
+    fn drag_origin_cleared_on_load_file() {
+        let dir = tempdir_for_test("drag_origin_clear_load");
+        let target_path = write_temp_file(&dir, "target.md", "# New file");
+
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.drag_origin = Some((0, 5));
+
+        app.load_file(target_path).expect("load_file must succeed");
+        assert!(
+            app.drag_origin.is_none(),
+            "load_file must clear drag_origin"
+        );
     }
 
     #[test]
