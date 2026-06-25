@@ -6,8 +6,8 @@ description: Current state and progress tracker for Bella.
 
 # STATUS — Current State & Progress
 
-**Last updated:** 2026-06-25 — Block D merged (PR #2); v0.1 shipped; 196 tests pass
-**Current focus:** Phase 1, Block E — File browser (directory navigator)
+**Last updated:** 2026-06-25 — Block E implemented; file browser live; 237 tests pass
+**Current focus:** Phase 2, Block F — Config + themes + live reload
 
 ---
 
@@ -32,7 +32,7 @@ description: Current state and progress tracker for Bella.
 |---|---|---|---|
 | Block C | Keyboard navigation | Done | Link focus/follow, `/` search, history; PR #1; 136 tests; PASS |
 | Block D | Mouse | Done | Scroll/hover/click/drag-select/double-click; PR #2 merged; 196 tests; PASS — **v0.1 shipped** |
-| Block E | File browser (directory navigator) | Not started | Port hackmd `Browser`; descend/ascend, `.md/.mdx` + dirs; mouse + `j/k` |
+| Block E | File browser (directory navigator) | Done | `browser.rs`: model + gitignore-aware listing; `Mode` enum in `app.rs`; `draw_browser` in `ui.rs`; key + mouse wiring; 237 tests pass |
 
 ### Phase 2 — Depth / Hardening
 | Block | What | Status | Notes |
