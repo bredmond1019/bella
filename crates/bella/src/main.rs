@@ -11,7 +11,7 @@ pub mod history;
 mod selection;
 mod ui;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -26,15 +26,12 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Cli {
-    /// Markdown file to view.
-    file: PathBuf,
+    /// Markdown file or directory to open.  Omit to browse the current directory.
+    file: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-
-    let src = std::fs::read_to_string(&cli.file)
-        .with_context(|| format!("cannot read {:?}", cli.file))?;
 
     // --- terminal setup ---
     enable_raw_mode().context("enable raw mode")?;
@@ -53,7 +50,7 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("create terminal")?;
 
-    let result = run(&mut terminal, &cli.file, src);
+    let result = run(&mut terminal, cli.file);
 
     // --- always restore ---
     let _ = disable_raw_mode();
@@ -69,11 +66,26 @@ fn main() -> Result<()> {
 
 fn run(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    file: &Path,
-    src: String,
+    file: Option<PathBuf>,
 ) -> Result<()> {
     let size = terminal.size().context("get terminal size")?;
-    let app = app::App::new(src, file.to_path_buf(), size.width, size.height);
+
+    let app = match file {
+        // No argument → browser at the current working directory.
+        None => {
+            let cwd = std::env::current_dir().context("get current directory")?;
+            app::App::new_browser(cwd, size.width, size.height)
+        }
+        // Directory argument → browser rooted at that directory.
+        Some(path) if path.is_dir() => app::App::new_browser(path, size.width, size.height),
+        // File argument → reader (existing behaviour).
+        Some(path) => {
+            let src = std::fs::read_to_string(&path)
+                .with_context(|| format!("cannot read {:?}", path))?;
+            app::App::new(src, path, size.width, size.height)
+        }
+    };
+
     events::run_loop(terminal, app)
 }
 
@@ -90,13 +102,13 @@ mod tests {
     #[test]
     fn file_arg_parses() {
         let m = Cli::try_parse_from(["bella", "some.md"]).expect("should parse");
-        assert_eq!(m.file.to_str().unwrap(), "some.md");
+        assert_eq!(m.file.as_ref().unwrap().to_str().unwrap(), "some.md");
     }
 
     #[test]
-    fn missing_positional_is_rejected() {
-        let result = Cli::try_parse_from(["bella"]);
-        assert!(result.is_err(), "expected error when no file given");
+    fn no_arg_parses_to_none() {
+        let m = Cli::try_parse_from(["bella"]).expect("no arg must parse successfully");
+        assert!(m.file.is_none(), "missing file arg must parse to None");
     }
 
     #[test]
