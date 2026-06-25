@@ -10,6 +10,17 @@ description: Chronological log of work completed for Bella.
 
 ---
 
+## 2026-06-25 — Code review: Block D PR #2 fix and close-out
+
+Code review of PR #2 (Block D mouse support) identified a subtle bug in the double-click handler: after a successful double-click word-select, `selection_finish()` was being called twice — once on the second `Down` of the double-click sequence and again on the final `Up`. This caused the selection to be extracted and cleared prematurely. Fixed by guarding the DragEnd branch in `events.rs:307` behind `drag_origin.is_some()`, ensuring `selection_finish()` only runs when a real drag was initiated. Added regression test to catch this scenario. Block D now has 196 tests passing across all crates, all four gating checks (cargo fmt, clippy, test, build --release) exit 0. PR #2 ready to merge; next step is merge to main and close-out.
+
+```diff
+planning/handoff.md | 76 ++++++++++++++++++++++++++++++++---------------------
+ 1 file changed, 46 insertions(+), 30 deletions(-)
+```
+
+---
+
 ## 2026-06-25 — Fix: suppress browser-tab side effect in tests
 
 Added a `#[cfg(not(test))]` guard to `open::that(url)` in `crates/bella/src/app.rs` to prevent unintended browser tabs from opening during test runs. This was a hygiene fix found during Block D setup — the link-follow feature from Block C was triggering browser launches in unit tests. Guard is scoped tightly to the side-effect call only, leaving production behavior unchanged.
