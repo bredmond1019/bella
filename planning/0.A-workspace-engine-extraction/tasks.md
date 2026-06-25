@@ -26,7 +26,7 @@ Get the hard, reusable render/layout IP compiling in isolation behind a clean pu
 
 ### 1. Workspace + engine-crate scaffold
 - Create root `Cargo.toml` as a `[workspace]` with `members = ["crates/*"]` and **`exclude = ["reference"]`** (the gitignored `reference/` tree carries its own `Cargo.toml`s and must never be pulled into the workspace).
-- Create `crates/bella-engine/Cargo.toml`: edition 2024, deps aligned with bastion/D2 — `ratatui` 0.30, `crossterm` 0.29, `pulldown-cmark`, `syntect`; keep the `images` feature on by default (no engine surgery in v0.1).
+- Create `crates/bella-engine/Cargo.toml`: edition 2024, deps aligned with bastion/D2 — `ratatui` 0.30, `crossterm` 0.29, `pulldown-cmark`, `syntect`, and `unicode-width = "0.2"` (non-optional — `geometry::word_span_at_col` needs it; upstream has it behind a feature, Bella does not); keep the `images` feature on by default (no engine surgery in v0.1). Confirm exact dep versions against `reference/hackmd/Cargo.toml` while porting.
 - Create the legal files: `crates/bella-engine/LICENSE` (MIT + `zemse/hackmd` copyright) and `crates/bella-engine/ATTRIBUTION.md` (records derivation from `zemse/hackmd @ 7650cdc`, per D2).
 - Create a stub `crates/bella-engine/src/lib.rs` (empty/minimal) so the crate compiles before the port lands.
 - **Files (owned):** `Cargo.toml` (new, root), `crates/bella-engine/Cargo.toml` (new), `crates/bella-engine/LICENSE` (new), `crates/bella-engine/ATTRIBUTION.md` (new), `crates/bella-engine/src/lib.rs` (new stub).
@@ -40,11 +40,25 @@ Get the hard, reusable render/layout IP compiling in isolation behind a clean pu
 - **Depends on:** Task 1 (crate must exist).
 
 ### 3. Lift `geometry.rs` as pure functions
-- Create `crates/bella-engine/src/geometry.rs` with `body_pos` and `select_word_at` lifted from `reference/hackmd/src/tui/events.rs:1986` and `:2068`.
-- Refactor each from its `&App`/`&mut App` signature into a **standalone pure function** taking explicit parameters (the rendered geometry / row data it reads, scroll offset, viewport — whatever the body actually touches). No dependency on app state.
-- Add unit tests in `geometry.rs` exercising both functions directly as pure functions (e.g. a coordinate maps to the expected body position; a click selects the expected word span).
+- Create `crates/bella-engine/src/geometry.rs` lifting `body_pos` (`reference/hackmd/src/tui/events.rs:1986`) and the word-resolution core of `select_word_at` (`events.rs:2068`) into **standalone pure functions** — no `App`, no I/O, no threads. Also bring across the two pure helpers `select_word_at` depends on: `word_span_at_col` (`events.rs:2455`) and `point_in` (`events.rs:2505`).
+- **`body_pos`** — exact target signature (collapse the upstream `View::Reader/Browser/Cloud` scroll match to a single `scroll` param; Bella has no Cloud):
+  ```rust
+  pub fn body_pos(viewport: Rect, line_numbers: bool, line_count: usize,
+                  scroll: usize, col: u16, row: u16) -> Option<(usize, u16)>
+  //                                          → (content_row_index, local_col)
+  ```
+  `line_count` replaces the upstream `rendered.lines.len()` read used only to size the line-number gutter (`format!("{line_count}").len() + 1` when `line_numbers`).
+- **`select_word_at`** — lift **only the pure resolution**; the upstream clipboard write, `app.status` update, and the macOS `dict` lookup/popover are **NOT ported** (see Out of scope). Exact target signature:
+  ```rust
+  pub fn select_word_at(viewport: Rect, line_numbers: bool, scroll: usize,
+                        lines: &[Line<'static>], col: u16, row: u16)
+      -> Option<(String, usize, usize)>   // → (word, word_start_col, word_width)
+  ```
+  Body = upstream's geometry (the `point_in` guard, gutter width, `line_idx = scroll + (row - viewport.y)`, build the line's text from its spans), then delegate to `word_span_at_col(&text, local_col)` and return its result. Drop everything after the `copy_to_clipboard`/`app.status`/`dict` lines.
+- `word_span_at_col(line: &str, target_col: usize) -> Option<(String, usize, usize)>` and `point_in(rect: Rect, col: u16, row: u16) -> bool` port verbatim — both are already pure.
+- Add unit tests in `geometry.rs` for each: `body_pos` (in-body coord → expected `(row, col)`; out-of-bounds / gutter → `None`), `select_word_at` (click on a known word → that word + span; click on whitespace → `None`), and `word_span_at_col` (punctuation-trimming, internal `_-/.#` kept whole).
 - **Files (owned):** `crates/bella-engine/src/geometry.rs` (new).
-- **Depends on:** Task 2 (uses the ported `Rendered`/row-geometry types).
+- **Depends on:** Task 2 (uses the ported `Rendered`/`Line` geometry; `unicode-width` from Task 1).
 
 ### 4. Public surface in `lib.rs`
 - Replace the Task-1 stub with the real public contract: `pub mod` the ported modules + `geometry`, and `pub use` the exports every later `bella`-crate block consumes — `render_with_edit`, `Rendered`, `LinkMap`, `CheckboxMap`, `TableMap`, `LinkTarget`, `Theme`, `body_pos`, `select_word_at`.
@@ -64,7 +78,7 @@ Get the hard, reusable render/layout IP compiling in isolation behind a clean pu
 - `cargo build -p bella-engine` succeeds; the root workspace excludes `reference/`.
 - The public surface exports `render_with_edit`, `Rendered`, `LinkMap`/`CheckboxMap`/`TableMap`, `LinkTarget`, `Theme`, `body_pos`, `select_word_at`.
 - A unit test calls `render_with_edit` on `"# hi\n\n```rs\nfn main(){}\n```"` and asserts non-empty `Rendered.lines` with heading + code-block styling.
-- `body_pos` and `select_word_at` are callable as pure standalone functions (no `App`), each with its own passing unit test.
+- `body_pos` and `select_word_at` are callable as pure standalone functions (no `App`, no I/O), matching the signatures in Task 3, each with its own passing unit test; `select_word_at` returns `(word, col, width)` and performs no clipboard/status/dictionary side-effects (those are deferred to Block D; the macOS `dict` lookup is dropped).
 - Edit-sync types (`row_source`, `EditCtx`, `BlockInfo`, and the corresponding `Rendered` fields) are present but unused — preserved dormant, not stripped.
 - `crates/bella-engine/LICENSE` + `ATTRIBUTION.md` exist and each ported source file carries a 2-line attribution header to `zemse/hackmd @ 7650cdc`.
 - No `bella` (app) crate is created (that is Block B); no cloud code is written.
@@ -77,6 +91,12 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 cargo build --release
 ```
+
+## Out of Scope
+- The `bella` (app) crate — Block B.
+- `select_word_at`'s clipboard write + status update — deferred to **Block D (mouse)**, which owns `arboard` and the app status line.
+- The macOS dictionary-lookup popover (`dict.rs`, `spawn_lookup`, `LookupState`) — **dropped from Bella entirely**; not ported. `select_word_at`'s `(word, col, width)` return preserves the option to re-add it later.
+- Any cloud code (never written); `app`/`events`/`ui`/`cloud` modules are not pulled into the engine.
 
 ## Notes
 <filled in as work happens>
