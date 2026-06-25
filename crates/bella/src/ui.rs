@@ -120,6 +120,45 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
+    // Overlay active selection highlight (applied last so it appears on top of
+    // other overlays).  The LightBlue background is visually distinct from the
+    // Yellow/Cyan search styles, Cyan-underline hover, and REVERSED focus styles.
+    if let Some(sel) = &app.selection
+        && !sel.is_empty()
+    {
+        let ((start_row, start_col), (end_row, end_col)) = sel.normalized();
+        let selection_style = Style::default().fg(Color::Black).bg(Color::LightBlue);
+
+        for doc_line in start_row..=end_row {
+            if doc_line >= start && doc_line < end {
+                let row = doc_line - start;
+                // Full char-count of this visible row (for whole-line coverage).
+                let line_len: usize = visible[row]
+                    .spans
+                    .iter()
+                    .map(|s| s.content.chars().count())
+                    .sum();
+                let (col_s, col_e) = if doc_line == start_row && doc_line == end_row {
+                    // Single-row selection.
+                    (start_col.min(line_len), end_col.min(line_len))
+                } else if doc_line == start_row {
+                    // Head: from start_col to the end of the line.
+                    (start_col.min(line_len), line_len)
+                } else if doc_line == end_row {
+                    // Tail: from the start of the line to end_col.
+                    (0, end_col.min(line_len))
+                } else {
+                    // Middle: highlight the entire line.
+                    (0, line_len)
+                };
+                if col_s < col_e {
+                    visible[row] =
+                        apply_span_highlight(visible[row].clone(), col_s, col_e, selection_style);
+                }
+            }
+        }
+    }
+
     let paragraph = Paragraph::new(visible).block(Block::default());
     frame.render_widget(paragraph, area);
 }
@@ -618,5 +657,99 @@ mod tests {
             any_diff,
             "checkbox row must differ (different glyph symbol) after toggling"
         );
+    }
+
+    // --- Task 4 (Block D) tests: selection highlight ---
+
+    #[test]
+    fn selected_cells_have_different_style_from_unselected() {
+        // A plain-text document whose first rendered line contains known text.
+        let src = "hello world\n\nanother line";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Draw without selection.
+        let mut app_plain = make_app(src, width, height);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_plain);
+            })
+            .unwrap();
+        let buf_plain = terminal.backend().buffer().clone();
+
+        // Draw with a selection covering columns 0..5 on row 0 ("hello").
+        let mut app_selected = make_app(src, width, height);
+        use crate::selection::Selection;
+        app_selected.selection = Some(Selection {
+            anchor: (0, 0),
+            cursor: (0, 5),
+        });
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_selected);
+            })
+            .unwrap();
+        let buf_selected = terminal.backend().buffer().clone();
+
+        // At least one cell in columns 0..5 of body row 0 must have a different style.
+        let any_diff = (0_u16..5_u16).any(|x| {
+            buf_plain
+                .cell((x, 0))
+                .zip(buf_selected.cell((x, 0)))
+                .map(|(p, s)| p.style() != s.style())
+                .unwrap_or(false)
+        });
+        assert!(
+            any_diff,
+            "selected cells must have a different style compared to unselected cells"
+        );
+    }
+
+    #[test]
+    fn empty_selection_does_not_change_render() {
+        // A zero-length selection (anchor == cursor) must not change the rendered output.
+        let src = "hello world\n\nanother line";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app_plain = make_app(src, width, height);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_plain);
+            })
+            .unwrap();
+        let buf_plain = terminal.backend().buffer().clone();
+
+        // Zero-length selection.
+        let mut app_empty_sel = make_app(src, width, height);
+        use crate::selection::Selection;
+        app_empty_sel.selection = Some(Selection {
+            anchor: (0, 3),
+            cursor: (0, 3),
+        });
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_empty_sel);
+            })
+            .unwrap();
+        let buf_empty = terminal.backend().buffer().clone();
+
+        // Body rows must be identical to the plain render.
+        for y in 0..height - 1 {
+            for x in 0..width {
+                let plain_style = buf_plain.cell((x, y)).map(|c| c.style());
+                let empty_style = buf_empty.cell((x, y)).map(|c| c.style());
+                assert_eq!(
+                    plain_style, empty_style,
+                    "empty selection must not change cell style at ({x}, {y})"
+                );
+            }
+        }
     }
 }

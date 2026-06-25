@@ -39,8 +39,22 @@ pub enum Action {
         content_row: usize,
         col: u16,
     },
-    /// Left-click at a content position — follow link or toggle checkbox.
-    ClickAt {
+    // Drag-select actions (Task 4)
+    /// Left mouse button pressed — start of a possible click or drag.
+    DragStart {
+        content_row: usize,
+        col: u16,
+    },
+    /// Left mouse button dragged — extend the active selection.
+    DragUpdate {
+        content_row: usize,
+        col: u16,
+    },
+    /// Left mouse button released — finish a drag or fall through to a plain click.
+    ///
+    /// `content_row == usize::MAX` is a sentinel meaning the button was released
+    /// outside the body area; in that case a plain click is not triggered.
+    DragEnd {
         content_row: usize,
         col: u16,
     },
@@ -138,12 +152,51 @@ pub fn map_mouse(mouse: MouseEvent, app: &App) -> Action {
                 mouse.column,
                 mouse.row,
             ) {
-                Action::ClickAt {
+                Action::DragStart {
                     content_row,
                     col: local_col,
                 }
             } else {
                 Action::None
+            }
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if let Some((content_row, local_col)) = body_pos(
+                app.body_area,
+                false,
+                app.lines.len(),
+                app.scroll as usize,
+                mouse.column,
+                mouse.row,
+            ) {
+                Action::DragUpdate {
+                    content_row,
+                    col: local_col,
+                }
+            } else {
+                Action::None
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            if let Some((content_row, local_col)) = body_pos(
+                app.body_area,
+                false,
+                app.lines.len(),
+                app.scroll as usize,
+                mouse.column,
+                mouse.row,
+            ) {
+                Action::DragEnd {
+                    content_row,
+                    col: local_col,
+                }
+            } else {
+                // Released outside body. If a selection was in progress,
+                // the DragEnd sentinel lets apply finish it without clicking.
+                Action::DragEnd {
+                    content_row: usize::MAX,
+                    col: 0,
+                }
             }
         }
         _ => Action::None,
@@ -190,14 +243,38 @@ pub(crate) fn apply(action: Action, app: &mut App) {
                 app.hover_at(content_row, col);
             }
         }
-        Action::ClickAt { content_row, col } => {
-            // Mirror the keyboard Follow path: record history when a file
-            // navigation occurs.
-            if let Some((prev_path, prev_scroll)) = app.click_at(content_row, col) {
-                app.history.push(HistoryEntry::new(prev_path, prev_scroll));
-                app.history
-                    .push(HistoryEntry::new(app.file.clone(), app.scroll));
+        // Drag-select actions (Task 4)
+        Action::DragStart { content_row, col } => {
+            // Clear any prior selection — a new drag replaces it.
+            app.selection = None;
+            // Record the drag origin; the actual `Selection` is created on the
+            // first `Drag` event so that a plain click (no drag) falls through
+            // to `click_at` instead.
+            app.drag_origin = Some((content_row, col as usize));
+        }
+        Action::DragUpdate { content_row, col } => {
+            // First drag event: promote the pending origin to a real selection.
+            if app.selection.is_none()
+                && let Some((or, oc)) = app.drag_origin
+            {
+                app.selection_start(or, oc);
             }
+            app.selection_update(content_row, col as usize);
+        }
+        Action::DragEnd { content_row, col } => {
+            if app.selection.is_some() {
+                // A real drag occurred — extract and copy the selected text.
+                app.selection_finish();
+            } else if app.drag_origin.is_some() && content_row != usize::MAX {
+                // No drag — treat as a plain click: follow link or toggle checkbox.
+                if let Some((prev_path, prev_scroll)) = app.click_at(content_row, col) {
+                    app.history.push(HistoryEntry::new(prev_path, prev_scroll));
+                    app.history
+                        .push(HistoryEntry::new(app.file.clone(), app.scroll));
+                }
+            }
+            // Always clear the drag origin on mouse-up.
+            app.drag_origin = None;
         }
         // Search actions
         Action::SearchStart => app.start_search(),
@@ -672,9 +749,9 @@ mod tests {
     #[test]
     fn map_mouse_unmapped_kind_produces_none() {
         let app = make_app();
-        // Up(Left) is not yet handled in Task 3 — must return None.
-        let ev = mouse_event(crossterm::event::MouseEventKind::Up(
-            crossterm::event::MouseButton::Left,
+        // Down(Right) is not handled — must return None.
+        let ev = mouse_event(crossterm::event::MouseEventKind::Down(
+            crossterm::event::MouseButton::Right,
         ));
         assert_eq!(super::map_mouse(ev, &app), Action::None);
     }
@@ -750,7 +827,7 @@ mod tests {
     }
 
     #[test]
-    fn map_mouse_down_left_inside_body_produces_click_at() {
+    fn map_mouse_down_left_inside_body_produces_drag_start() {
         let mut app = make_app();
         use ratatui::layout::Rect;
         app.body_area = Rect {
@@ -767,9 +844,85 @@ mod tests {
         );
         let action = super::map_mouse(ev, &app);
         assert!(
-            matches!(action, super::Action::ClickAt { .. }),
-            "Down(Left) inside body must produce ClickAt; got {action:?}"
+            matches!(action, super::Action::DragStart { .. }),
+            "Down(Left) inside body must produce DragStart; got {action:?}"
         );
+    }
+
+    #[test]
+    fn map_mouse_drag_left_inside_body_produces_drag_update() {
+        let mut app = make_app();
+        use ratatui::layout::Rect;
+        app.body_area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 10,
+        };
+
+        let ev = mouse_event_at(
+            crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+            5,
+            2,
+        );
+        let action = super::map_mouse(ev, &app);
+        assert!(
+            matches!(action, super::Action::DragUpdate { .. }),
+            "Drag(Left) inside body must produce DragUpdate; got {action:?}"
+        );
+    }
+
+    #[test]
+    fn map_mouse_up_left_inside_body_produces_drag_end() {
+        let mut app = make_app();
+        use ratatui::layout::Rect;
+        app.body_area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 10,
+        };
+
+        let ev = mouse_event_at(
+            crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+            5,
+            2,
+        );
+        let action = super::map_mouse(ev, &app);
+        assert!(
+            matches!(action, super::Action::DragEnd { .. }),
+            "Up(Left) inside body must produce DragEnd; got {action:?}"
+        );
+    }
+
+    #[test]
+    fn map_mouse_up_left_outside_body_produces_drag_end_sentinel() {
+        let mut app = make_app();
+        use ratatui::layout::Rect;
+        app.body_area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 10,
+        };
+
+        // Row 15 is outside the body.
+        let ev = mouse_event_at(
+            crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+            5,
+            15,
+        );
+        let action = super::map_mouse(ev, &app);
+        match action {
+            super::Action::DragEnd { content_row, .. } => {
+                assert_eq!(
+                    content_row,
+                    usize::MAX,
+                    "Up(Left) outside body must produce DragEnd with sentinel content_row"
+                );
+            }
+            other => panic!("expected DragEnd, got {other:?}"),
+        }
     }
 
     #[test]
@@ -812,8 +965,185 @@ mod tests {
         );
     }
 
+    // --- Task 4 (Block D) tests: drag-select actions ---
+
     #[test]
-    fn apply_click_at_on_checkbox_toggles_it() {
+    fn apply_drag_start_sets_drag_origin_and_clears_selection() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        // Pre-set a selection to verify it gets cleared.
+        app.selection_start(0, 0);
+        app.selection_update(0, 5);
+        assert!(app.selection.is_some(), "precondition: selection set");
+
+        super::apply(
+            super::Action::DragStart {
+                content_row: 0,
+                col: 2,
+            },
+            &mut app,
+        );
+
+        assert!(
+            app.selection.is_none(),
+            "DragStart must clear any existing selection"
+        );
+        assert_eq!(
+            app.drag_origin,
+            Some((0, 2)),
+            "DragStart must set drag_origin"
+        );
+    }
+
+    #[test]
+    fn apply_drag_update_creates_and_extends_selection() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+
+        // Simulate Down then first Drag.
+        super::apply(
+            super::Action::DragStart {
+                content_row: 0,
+                col: 0,
+            },
+            &mut app,
+        );
+        assert!(
+            app.selection.is_none(),
+            "before first drag: no selection yet"
+        );
+
+        super::apply(
+            super::Action::DragUpdate {
+                content_row: 0,
+                col: 5,
+            },
+            &mut app,
+        );
+
+        let sel = app
+            .selection
+            .as_ref()
+            .expect("DragUpdate must create selection");
+        assert_eq!(sel.anchor, (0, 0), "anchor must be the drag origin");
+        assert_eq!(sel.cursor, (0, 5), "cursor must be the drag destination");
+    }
+
+    #[test]
+    fn apply_drag_end_after_drag_finishes_selection_and_clears_origin() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+
+        // Full drag sequence: Down → Drag → Up.
+        super::apply(
+            super::Action::DragStart {
+                content_row: 0,
+                col: 0,
+            },
+            &mut app,
+        );
+        super::apply(
+            super::Action::DragUpdate {
+                content_row: 0,
+                col: 5,
+            },
+            &mut app,
+        );
+        super::apply(
+            super::Action::DragEnd {
+                content_row: 0,
+                col: 5,
+            },
+            &mut app,
+        );
+
+        // Selection must remain for visual rendering.
+        assert!(
+            app.selection.is_some(),
+            "DragEnd must keep the selection for display"
+        );
+        // Drag origin must be cleared.
+        assert!(app.drag_origin.is_none(), "DragEnd must clear drag_origin");
+        // Status message set by copy attempt.
+        assert!(
+            app.status_message.is_some(),
+            "DragEnd after drag must set status_message (copy attempt)"
+        );
+    }
+
+    #[test]
+    fn apply_drag_end_without_drag_does_not_create_selection() {
+        let src = "Just plain text.".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+
+        // Down then Up with no Drag.
+        super::apply(
+            super::Action::DragStart {
+                content_row: 0,
+                col: 0,
+            },
+            &mut app,
+        );
+        super::apply(
+            super::Action::DragEnd {
+                content_row: 0,
+                col: 0,
+            },
+            &mut app,
+        );
+
+        assert!(
+            app.selection.is_none(),
+            "Down+Up with no drag must not create a selection"
+        );
+        assert!(
+            app.drag_origin.is_none(),
+            "DragEnd must clear drag_origin even without a drag"
+        );
+    }
+
+    #[test]
+    fn apply_drag_end_without_drag_follows_link() {
+        // Write a real target so load_file can succeed.
+        let dir = std::env::temp_dir().join("bella_drag_click_follow");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target.md");
+        std::fs::write(&target, "# Target\n\nContent.").unwrap();
+        let main_path = dir.join("main.md");
+        let src = "[go](target.md)".to_string();
+        std::fs::write(&main_path, &src).unwrap();
+
+        let mut app = App::new(src, main_path.clone(), 80, 11);
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+        let link = app.link_map.links[0].clone();
+
+        // Simulate a click (Down + Up, no Drag) directly on the link.
+        super::apply(
+            super::Action::DragStart {
+                content_row: link.line,
+                col: link.col_start as u16,
+            },
+            &mut app,
+        );
+        super::apply(
+            super::Action::DragEnd {
+                content_row: link.line,
+                col: link.col_start as u16,
+            },
+            &mut app,
+        );
+
+        assert_eq!(app.file, target, "Down+Up (click) on a link must follow it");
+        assert!(app.selection.is_none(), "click must not leave a selection");
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_file(&main_path);
+    }
+
+    #[test]
+    fn apply_drag_end_click_on_checkbox_toggles_it() {
+        // A plain click (DragStart → DragEnd, no Drag) on a checkbox must toggle it.
         let src = "- [ ] Task one\n\n- [x] Task two".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
         if app.checkbox_map.items.is_empty() {
@@ -826,8 +1156,16 @@ mod tests {
             "precondition: not toggled"
         );
 
+        // Simulate a plain click: DragStart then DragEnd with no intervening DragUpdate.
         super::apply(
-            super::Action::ClickAt {
+            super::Action::DragStart {
+                content_row: cb.line,
+                col: cb.col_start as u16,
+            },
+            &mut app,
+        );
+        super::apply(
+            super::Action::DragEnd {
                 content_row: cb.line,
                 col: cb.col_start as u16,
             },
@@ -835,7 +1173,7 @@ mod tests {
         );
         assert!(
             app.toggled_checkboxes.contains(&0),
-            "apply ClickAt on a checkbox must toggle it"
+            "DragStart+DragEnd (plain click) on a checkbox must toggle it"
         );
     }
 }

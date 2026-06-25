@@ -3,10 +3,6 @@
 //! This module is pure and event-loop-independent — it holds no terminal or
 //! application state, making it straightforward to unit-test.
 
-// Items in this module are consumed by later tasks in Block D (Tasks 2–5).
-// Suppress dead-code warnings until those tasks wire the module in.
-#![allow(dead_code)]
-
 use ratatui::text::Line;
 
 /// A text selection in rendered-line space.
