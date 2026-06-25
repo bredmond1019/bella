@@ -19,3 +19,8 @@ Validated: gating checks (fast tripwire)
 What: Task 4: link follow (Enter) — App::load_file + follow_focused dispatch on LocalFile/Url/Anchor/FileAnchor, Action::Follow mapped to Enter, status_message shown in status line for non-fatal file errors.
 Decisions: Added `width: u16` field to App so load_file can re-render at the current terminal width without requiring the caller to pass width through.; follow_focused returns Option<(PathBuf, u16)> (prev file+scroll) so Task 6 can record history without having to intercept load_file — the return value is the clean hook the spec requested.; Anchor scroll clamped to max_scroll; test asserts expected = anchor_line.min(max_scroll) rather than the raw anchor line, which is the correct behavior when the anchor is on or near the last line.; open::that result is intentionally ignored (let _ = ...) — no browser in CI is non-fatal.
 Validated: gating checks (fast tripwire)
+
+## Task 5 — PASSED (1 attempt)
+What: Implement in-document search (/, n, N, Esc) with query input mode, case-insensitive match highlighting, match cycling with viewport scrolling, and search prompt in the status row
+Decisions: Esc in normal mode cancels active search via the existing ClearFocus action (checked in apply), so no new key binding is needed; map_search_key is a separate pure function for search input mode; run_loop dispatches via it when app.search.input_mode is true, keeping map_key unaware of app state; commit_search on a blank query clears search entirely rather than showing zero results; Current match highlighted in Cyan, other matches in Yellow to make the active match visually distinct; Used let-chain (&&) in draw_body to collapse nested if per clippy::collapsible_if requirement
+Validated: gating checks (fast tripwire)
