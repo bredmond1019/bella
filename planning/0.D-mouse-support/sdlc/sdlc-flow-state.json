@@ -2,10 +2,10 @@
   "spec_slug": "0.D-mouse-support",
   "branch": "0.D-mouse-support-flow",
   "started_at": "2026-06-25T10:38:34Z",
-  "updated_at": "2026-06-25T10:38:34Z",
+  "updated_at": "2026-06-25T10:41:56Z",
   "worktree_path": "/Users/brandon/Dev/agentic-portfolio/bella/trees/0.D-mouse-support-flow",
   "status": "running",
-  "current_task": 1,
+  "current_task": 2,
   "tasks": {
     "1": {
       "status": "passed",
@@ -21,6 +21,23 @@
         "crates/bella/Cargo.toml",
         "crates/bella/src/main.rs",
         "Cargo.lock"
+      ],
+      "commit": "",
+      "validated": "gating checks (fast tripwire)"
+    },
+    "2": {
+      "status": "passed",
+      "attempts": 1,
+      "summary": "Enable mouse capture in terminal setup/teardown/panic-hook and add map_mouse dispatcher (scroll wheel → ScrollDown/ScrollUp, all other kinds → None) with Event::Mouse arm in run_loop, plus 3 unit tests.",
+      "issues": [],
+      "fixes": [],
+      "decisions": [
+        "map_mouse takes &App (not &mut App) to keep it a pure mapper matching the map_key pattern; later tasks will need &mut App or direct app calls so the signature can evolve",
+        "ScrollDown/ScrollUp maps to 3 lines per tick (a common TUI convention for smooth scrolling) rather than 1"
+      ],
+      "files_changed": [
+        "crates/bella/src/main.rs",
+        "crates/bella/src/events.rs"
       ],
       "commit": "",
       "validated": "gating checks (fast tripwire)"
