@@ -29,3 +29,8 @@ Validated: gating checks (fast tripwire)
 What: Task 6: wired back/forward history navigation into App and the event loop — `history: History` field added, `go_back`/`go_forward` methods, `[`/`]` key bindings, and history push on link follow.
 Decisions: History cursor model requires pushing BOTH the previous and new positions on follow (not just the previous): the cursor must sit on the new entry so history.back() returns the prior one.; go_back/go_forward load the file via load_file() then override scroll to the saved value (load_file resets scroll to 0).; Tests that verify scroll restoration require a document long enough that max_scroll >= the target scroll value.
 Validated: gating checks (fast tripwire)
+
+## Task 7 — PASSED (1 attempt)
+What: All Block C validation commands pass: fmt/clippy clean, 136 tests pass, release build succeeds
+Decisions: Task 7 is pure validation — no source changes needed; all prior tasks (1-6) already implemented the full feature set
+Validated: gating checks (fast tripwire)
