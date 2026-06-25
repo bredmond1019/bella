@@ -6,7 +6,7 @@ description: Decomposed task spec for Bella Block C — link focus/follow, in-do
 
 # Task Spec — Phase 0, Block C: Keyboard navigation
 
-**Status:** Not started · **Last run:** never
+**Status:** Done · **Last run:** 2026-06-25 (PASS, 7/7 tasks, 136 tests)
 
 ## Goal
 Make the reader navigable: link focus (`Tab`/`Shift-Tab`) + follow (`Enter`), `/` in-document search with `n/N` cycling, and a back/forward history stack.
@@ -175,4 +175,6 @@ cargo build --release
 
 ## Amendment Log
 <!-- Append-only. Pipeline stages append one dated line here when they deviate from the spec. -->
-_No amendments yet._
+- 2026-06-25 [task 6] History push semantics: spec said "push the *prior* location" at follow time; implementation pushes both the prior and the new entry (cursor sits on the new one) so `history.back()` correctly returns the prior location. Behavior is identical from the user's perspective; the internal model differs from the spec's wording.
+- 2026-06-25 [task 5] Esc in normal mode cancels active search via the existing `ClearFocus` action (no new key binding needed); spec implied a separate cancel path but `ClearFocus` already covered it cleanly.
+- 2026-06-25 [task 1] Added `#[allow(dead_code)]` to `SearchState` struct and impl — required to pass `cargo clippy -D warnings` since the struct is intentional scaffolding declared before its consumers (Tasks 3-5) are implemented.

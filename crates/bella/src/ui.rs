@@ -3,7 +3,8 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::Color,
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Paragraph},
 };
@@ -38,16 +39,141 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
 fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
     let start = app.scroll as usize;
     let end = (start + area.height as usize).min(app.lines.len());
-    let visible: Vec<Line<'static>> = app.lines[start..end].to_vec();
+    let mut visible: Vec<Line<'static>> = app.lines[start..end].to_vec();
+
+    // Overlay search-match highlights (applied before the link-focus highlight so
+    // the focused-link style wins if they overlap).
+    if let Some(s) = &app.search
+        && !s.input_mode
+        && !s.query.is_empty()
+    {
+        let current_line = s.matches.get(s.current).copied();
+        let match_style = Style::default().fg(Color::Black).bg(Color::Yellow);
+        let current_style = Style::default().fg(Color::Black).bg(Color::Cyan);
+        for &doc_line in &s.matches {
+            if doc_line >= start && doc_line < end {
+                let row = doc_line - start;
+                let style = if Some(doc_line) == current_line {
+                    current_style
+                } else {
+                    match_style
+                };
+                if let Some((col_start, col_end)) = find_query_col(&visible[row], &s.query) {
+                    visible[row] =
+                        apply_span_highlight(visible[row].clone(), col_start, col_end, style);
+                }
+            }
+        }
+    }
+
+    // Overlay focused-link highlight if a link is focused and on a visible row.
+    if let Some(focused_idx) = app.focused_link
+        && let Some(span) = app.link_map.links.get(focused_idx)
+    {
+        let doc_line = span.line;
+        if doc_line >= start && doc_line < end {
+            let row = doc_line - start;
+            let highlight = Style::default().add_modifier(Modifier::REVERSED);
+            visible[row] = apply_span_highlight(
+                visible[row].clone(),
+                span.col_start,
+                span.col_end,
+                highlight,
+            );
+        }
+    }
+
     let paragraph = Paragraph::new(visible).block(Block::default());
     frame.render_widget(paragraph, area);
 }
 
+/// Find the first case-insensitive occurrence of `query` in a rendered `Line`.
+///
+/// Returns `(col_start, col_end)` as character-column positions, or `None` if
+/// the query is empty or not found.
+fn find_query_col(line: &Line, query: &str) -> Option<(usize, usize)> {
+    if query.is_empty() {
+        return None;
+    }
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let text_lower = text.to_lowercase();
+    let query_lower = query.to_lowercase();
+    let byte_pos = text_lower.find(&query_lower)?;
+    // Slice text_lower (not text) — byte_pos is a valid boundary in text_lower,
+    // but lowercasing can change UTF-8 byte lengths, making it invalid in text.
+    let col_start = text_lower[..byte_pos].chars().count();
+    let col_end = col_start + query_lower.chars().count();
+    Some((col_start, col_end))
+}
+
+/// Apply `highlight` style to columns `[col_start, col_end)` within `line`,
+/// splitting existing spans at the boundaries so the rest of the line is unchanged.
+fn apply_span_highlight(
+    line: Line<'static>,
+    col_start: usize,
+    col_end: usize,
+    highlight: Style,
+) -> Line<'static> {
+    let mut result: Vec<Span<'static>> = Vec::new();
+    let mut col = 0usize;
+
+    for span in line.spans {
+        let text = span.content.as_ref();
+        let char_count = text.chars().count();
+        let span_start = col;
+        let span_end = col + char_count;
+        col = span_end;
+
+        if span_end <= col_start || span_start >= col_end {
+            // No overlap — pass through unchanged.
+            result.push(span);
+        } else {
+            let chars: Vec<char> = text.chars().collect();
+
+            // Characters before the highlight window.
+            if span_start < col_start {
+                let pre: String = chars[..col_start - span_start].iter().collect();
+                result.push(Span::styled(pre, span.style));
+            }
+
+            // Characters inside the highlight window.
+            let hl_local_start = col_start.saturating_sub(span_start);
+            let hl_local_end = (col_end - span_start).min(char_count);
+            let hl: String = chars[hl_local_start..hl_local_end].iter().collect();
+            result.push(Span::styled(hl, highlight));
+
+            // Characters after the highlight window.
+            if span_end > col_end {
+                let post: String = chars[col_end - span_start..].iter().collect();
+                result.push(Span::styled(post, span.style));
+            }
+        }
+    }
+
+    Line::from(result)
+}
+
 fn draw_statusline(frame: &mut Frame, area: Rect, app: &App) {
-    let file_name = app.file.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-    let total = app.lines.len();
-    let current = (app.scroll as usize + app.viewport_height as usize).min(total);
-    let text = format!(" bella · {file_name} · {current}/{total}");
+    let text = if let Some(s) = &app.search {
+        // Search mode: show the prompt with the live query and (after commit) match count.
+        if s.input_mode {
+            format!("/{}_", s.query)
+        } else if s.matches.is_empty() {
+            format!("/{} [no matches]", s.query)
+        } else {
+            format!("/{} [{}/{}]", s.query, s.current + 1, s.matches.len())
+        }
+    } else if let Some(msg) = &app.status_message {
+        // Show the non-fatal status message (e.g. file-not-found) instead of
+        // the normal scroll position.  It stays visible until the next action
+        // that clears or replaces it.
+        format!(" bella · {msg}")
+    } else {
+        let file_name = app.file.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+        let total = app.lines.len();
+        let current = (app.scroll as usize + app.viewport_height as usize).min(total);
+        format!(" bella · {file_name} · {current}/{total}")
+    };
     let line = Line::from(vec![Span::styled(
         text,
         Style::default().fg(Color::Black).bg(Color::White),
@@ -109,6 +235,64 @@ mod tests {
         );
     }
 
+    // --- Task 3 tests: focused-link highlight ---
+
+    #[test]
+    fn focused_link_row_differs_from_unfocused() {
+        // Doc containing a link on the first rendered line.
+        let src = "[click me](other.md)\n\nSome other text.";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Draw without focus.
+        let mut app_unfocused = make_app(src, width, height);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_unfocused);
+            })
+            .unwrap();
+        let buf_unfocused = terminal.backend().buffer().clone();
+
+        // Draw with focus on the first link.
+        let mut app_focused = make_app(src, width, height);
+        assert!(
+            !app_focused.link_map.links.is_empty(),
+            "precondition: link exists"
+        );
+        app_focused.focused_link = Some(0);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_focused);
+            })
+            .unwrap();
+        let buf_focused = terminal.backend().buffer().clone();
+
+        // At minimum one cell in the link's row must differ (the focused style
+        // applies REVERSED, so either fg/bg or modifier is flipped).
+        let link_line = app_focused.link_map.links[0].line;
+        // The link is on a rendered doc line; find the matching body row.
+        // (body rows start at terminal row 0 when scroll==0)
+        let body_row = link_line as u16;
+        let col_start = app_focused.link_map.links[0].col_start as u16;
+        let col_end = app_focused.link_map.links[0].col_end as u16;
+
+        let any_diff = (col_start..col_end).any(|x| {
+            buf_unfocused
+                .cell((x, body_row))
+                .zip(buf_focused.cell((x, body_row)))
+                .map(|(u, f)| u.style() != f.style())
+                .unwrap_or(false)
+        });
+        assert!(
+            any_diff,
+            "at least one cell in the focused link span must have a different style \
+             compared to the unfocused render"
+        );
+    }
+
     #[test]
     fn scroll_offset_shifts_rendered_output() {
         // Build a document with enough distinct headings to exceed the viewport.
@@ -148,6 +332,97 @@ mod tests {
         assert_ne!(
             row0_before, row0_after,
             "first body row should change after scrolling"
+        );
+    }
+
+    // --- Task 5 tests: search prompt and highlighting ---
+
+    #[test]
+    fn search_prompt_shows_query_in_status_row() {
+        let src = "# Hello World\n\nSome text.";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_app(src, width, height);
+        // Enter search input mode with a query.
+        app.start_search();
+        app.push_search_char('h');
+        app.push_search_char('e');
+        app.push_search_char('l');
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        // The status row is the last row (height - 1).
+        let status_row = height - 1;
+        let buf = terminal.backend().buffer().clone();
+        let row_text: String = (0..width)
+            .map(|x| buf.cell((x, status_row)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+
+        assert!(
+            row_text.contains("hel"),
+            "status row must show the search query 'hel'; got: {row_text:?}"
+        );
+        // The prompt should start with `/`.
+        assert!(
+            row_text.trim_start().starts_with('/'),
+            "status row must start with '/' in search mode; got: {row_text:?}"
+        );
+    }
+
+    #[test]
+    fn search_match_highlight_differs_from_unhighlighted() {
+        let src = "hello world\n\nanother line without the word";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Draw without search.
+        let mut app_plain = make_app(src, width, height);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_plain);
+            })
+            .unwrap();
+        let buf_plain = terminal.backend().buffer().clone();
+
+        // Draw with search committed on "hello".
+        let mut app_search = make_app(src, width, height);
+        app_search.start_search();
+        app_search.push_search_char('h');
+        app_search.push_search_char('e');
+        app_search.push_search_char('l');
+        app_search.push_search_char('l');
+        app_search.push_search_char('o');
+        app_search.commit_search();
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_search);
+            })
+            .unwrap();
+        let buf_search = terminal.backend().buffer().clone();
+
+        // Row 0 has "hello world" — some cells in that row must differ.
+        let any_diff = (0..width).any(|x| {
+            buf_plain
+                .cell((x, 0))
+                .zip(buf_search.cell((x, 0)))
+                .map(|(p, s)| p.style() != s.style())
+                .unwrap_or(false)
+        });
+        assert!(
+            any_diff,
+            "at least one cell in the matched row must have a different style when search is active"
         );
     }
 }
