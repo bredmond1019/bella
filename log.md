@@ -10,6 +10,16 @@ description: Chronological log of work completed for Bella.
 
 ---
 
+## 2026-06-25 — Merged PR #3; added docs/ (architecture, modules, development, features)
+
+Merged Block E PR #3 after resolving rebase conflict and browser cursor/scroll edge cases. Added comprehensive `docs/` directory: `architecture.md` (two-crate workspace, load-bearing render/layout isolation, v0.1 scope + Phase 3 dormant edit machinery), `modules.md` (15 core modules from geometry/palette/links/syntax through app/events/ui/browser), `development.md` (build/test/run commands, Rust edition 2024, clippy gates), `features.md` (port scope from hackmd derived source + original app shell). All changes committed and pushed. Working tree clean. All 237 tests passing; next: Phase 2 Block F (config + themes + live reload).
+
+```
+Working tree clean — all changes committed and pushed
+```
+
+---
+
 ## 2026-06-25 — Phase 1 Block E complete: file browser (5 tasks, 237 tests, PASS)
 
 Completed `/sdlc-flow` for Block 1.E — file browser (directory navigator). All 5 tasks implemented and passed on first attempt: (1) `browser.rs` with `BrowserEntryKind`/`BrowserEntry`/`Browser` model, gitignore-aware listing via the `ignore` crate (`max_depth(1)`, hidden dotfiles skipped), cursor wrap+scroll-clamp, and 14 unit tests; (2) `Mode` enum and browser state in `App` (`new_browser`, `open_from_browser`, `back_to_browser`, `enter_dir`, `ascend`), CLI dispatch changed to `Option<PathBuf>` (no-arg/dir/file paths); (3) `draw_browser` in `ui.rs` with bordered pane, dir title, `▶ ` selection prefix, bold-cyan Dir/ParentDir vs plain Markdown styling, and `browser_area` stored for mouse hit-testing; (4) browser key/mouse handlers (`map_browser_key`, `map_browser_mouse`, new `Action` variants), `apply` wired to App methods, `run_loop` mode-aware dispatch, and all `#[allow(dead_code)]` guards removed; (5) full validation — all four gating checks (fmt, clippy, 237 tests, release build) pass. PASS review verdict on all acceptance criteria. Notable decisions: `BrowserClickAt` single-click selects and immediately descends/opens; mouse scroll moves the viewport offset directly; Backspace in reader mode maps to `back_to_browser`; `require_git(false)` on the `ignore` WalkBuilder ensures `.gitignore` is honoured outside git repos. Next: Phase 2 Block F — Config + themes + live reload.
