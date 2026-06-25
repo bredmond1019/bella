@@ -64,6 +64,7 @@ bella/
 | [planning/master-plan.md](planning/master-plan.md) | Strategy + phase specifications |
 | [planning/status.md](planning/status.md) | Current progress |
 | [planning/harness.json](planning/harness.json) | SDLC validation/UI-test config (see `harness.examples.md`) |
+| [planning/decisions/index.md](planning/decisions/index.md) | Architectural decision records (D1–…) |
 
 ---
 

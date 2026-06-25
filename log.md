@@ -10,6 +10,15 @@ description: Chronological log of work completed for Bella.
 
 ---
 
+## 2026-06-24 — Close-out: Block 0.A gating checks + doc patch
+
+Completed `/close-out` for Block 0.A. All four gating checks passed (cargo fmt, cargo clippy, cargo test, cargo build --release) and emoji gate cleared. Coverage verified: 38 tests (37 unit + 1 integration). Updated planning docs via `/update-docs --patch` to add `planning/decisions/index.md` to the root README. Wrote `planning/handoff.md` marking Block B as the next focus. Block A is now fully shipped; current focus is Phase 0 Block B (binary skeleton renders a file without mouse).
+
+```diff
+README.md | 1 +
+ 1 file changed, 1 insertion(+)
+```
+
 ## 2026-06-24 — Phase 0 Block A complete: workspace + bella-engine extraction
 
 Created the Cargo workspace and ported the render/layout subgraph from `zemse/hackmd @ 7650cdc` (MIT) into the new `bella-engine` crate. Six modules were ported (`markdown.rs`, `links.rs`, `syntax.rs`, `theme.rs`, `palette.rs`, `md_config.rs`) with all App/cloud dependencies removed and edit-sync types preserved dormant. A new `geometry.rs` lifted `body_pos` and `select_word_at` as pure functions with explicit parameters replacing the upstream `&App` reads. All eight acceptance criteria passed on the first review attempt (PASS verdict). 38 tests pass (37 unit + 1 integration); all four gating checks (fmt, clippy, test, build --release) exit 0. Next: Phase 0 Block B — `bella` binary skeleton that renders a file without mouse support.
