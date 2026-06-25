@@ -1,12 +1,14 @@
 //! App state: holds the source, rendered output, scroll position, and navigation metadata.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use bella_engine::{
-    LinkMap, Theme,
+    CheckboxMap, LinkMap, Theme,
     links::{LinkTarget, TableExpansions},
     markdown::{HeadingInfo, render_with_edit},
 };
+use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use crate::history::{History, HistoryEntry};
@@ -44,6 +46,8 @@ pub struct App {
     pub lines: Vec<Line<'static>>,
     /// Link metadata extracted from the last render.
     pub link_map: LinkMap,
+    /// Checkbox metadata extracted from the last render.
+    pub checkbox_map: CheckboxMap,
     /// Heading metadata extracted from the last render.
     pub headings: Vec<HeadingInfo>,
     /// Current top display row (scroll offset).
@@ -58,6 +62,11 @@ pub struct App {
     pub should_quit: bool,
     /// Index of the currently focused link (into `link_map.links`), if any.
     pub focused_link: Option<usize>,
+    /// Index of the link currently under the mouse pointer (into `link_map.links`), if any.
+    pub hovered_link: Option<usize>,
+    /// Visual-only set of toggled checkbox indices (into `checkbox_map.items`).
+    /// No source mutation — edit-sync stays dormant.
+    pub toggled_checkboxes: HashSet<usize>,
     /// Active search state, if any.
     pub search: Option<SearchState>,
     /// Non-fatal status message to display in the status line (e.g. file-not-found).
@@ -65,6 +74,9 @@ pub struct App {
     pub status_message: Option<String>,
     /// Back/forward navigation history stack (Task 6).
     pub history: History,
+    /// Body viewport rectangle — updated after each draw so mouse handlers can
+    /// call `body_pos` with accurate geometry.
+    pub body_area: Rect,
 }
 
 impl App {
@@ -75,11 +87,13 @@ impl App {
     pub fn new(src: String, file: PathBuf, width: u16, term_height: u16) -> Self {
         let viewport_height = term_height.saturating_sub(1);
         let base_dir = file.parent().map(Path::to_path_buf);
-        let (lines, link_map, headings) = render_metadata(&src, width, base_dir.as_deref());
+        let (lines, link_map, checkbox_map, headings) =
+            render_metadata(&src, width, base_dir.as_deref());
         Self {
             src,
             lines,
             link_map,
+            checkbox_map,
             headings,
             scroll: 0,
             viewport_height,
@@ -87,9 +101,12 @@ impl App {
             file,
             should_quit: false,
             focused_link: None,
+            hovered_link: None,
+            toggled_checkboxes: HashSet::new(),
             search: None,
             status_message: None,
             history: History::new(),
+            body_area: Rect::default(),
         }
     }
 
@@ -97,14 +114,18 @@ impl App {
     pub fn render(&mut self, width: u16) {
         self.width = width;
         let base_dir = self.file.parent().map(Path::to_path_buf);
-        let (lines, link_map, headings) = render_metadata(&self.src, width, base_dir.as_deref());
+        let (lines, link_map, checkbox_map, headings) =
+            render_metadata(&self.src, width, base_dir.as_deref());
         self.lines = lines;
         self.link_map = link_map;
+        self.checkbox_map = checkbox_map;
         self.headings = headings;
         // Re-clamp scroll in case the new render is shorter.
         self.scroll = self.scroll.min(self.max_scroll());
         // Reset navigation state — line indices change on resize.
         self.focused_link = None;
+        self.hovered_link = None;
+        self.toggled_checkboxes.clear();
         self.search = None;
     }
 
@@ -238,13 +259,16 @@ impl App {
         self.src = src;
         self.file = path;
         let base_dir = self.file.parent().map(Path::to_path_buf);
-        let (lines, link_map, headings) =
+        let (lines, link_map, checkbox_map, headings) =
             render_metadata(&self.src, self.width, base_dir.as_deref());
         self.lines = lines;
         self.link_map = link_map;
+        self.checkbox_map = checkbox_map;
         self.headings = headings;
         self.scroll = 0;
         self.focused_link = None;
+        self.hovered_link = None;
+        self.toggled_checkboxes.clear();
         self.search = None;
         self.status_message = None;
         Ok(())
@@ -339,6 +363,44 @@ impl App {
         }
     }
 
+    // --- mouse hover/click (Task 3) ---
+
+    /// Update `hovered_link` based on the pointer's content position.
+    ///
+    /// `content_row` and `col` are in rendered-line space (as returned by
+    /// `body_pos`). Clears the hover when the pointer is not over any link.
+    pub fn hover_at(&mut self, content_row: usize, col: u16) {
+        self.hovered_link = self.link_map.at(content_row, col as usize);
+    }
+
+    /// Handle a left-click at the given content position.
+    ///
+    /// - If the click lands on a link, follows it (exactly as the keyboard
+    ///   `Enter` path does), recording history.
+    /// - If the click lands on a checkbox, toggles its visual state in
+    ///   `toggled_checkboxes` (visual-only — no source mutation).
+    /// - Otherwise, clears any hover state.
+    ///
+    /// Returns `Some((prev_file, prev_scroll))` when a file navigation occurred
+    /// (passed up to the event loop for history recording), otherwise `None`.
+    pub fn click_at(&mut self, content_row: usize, col: u16) -> Option<(PathBuf, u16)> {
+        // Check link hit first.
+        if let Some(idx) = self.link_map.at(content_row, col as usize) {
+            // Mirror the keyboard Follow path: set focused_link then follow.
+            self.focused_link = Some(idx);
+            return self.follow_focused();
+        }
+        // Check checkbox hit.
+        if let Some(idx) = self.checkbox_map.at(content_row, col as usize) {
+            if self.toggled_checkboxes.contains(&idx) {
+                self.toggled_checkboxes.remove(&idx);
+            } else {
+                self.toggled_checkboxes.insert(idx);
+            }
+        }
+        None
+    }
+
     // --- in-document search (Task 5) ---
 
     /// Enter search-input mode (triggered by `/`).
@@ -428,15 +490,20 @@ impl App {
     }
 }
 
-/// Render `src` and return `(lines, link_map, headings)`.
+/// Render `src` and return `(lines, link_map, checkbox_map, headings)`.
 fn render_metadata(
     src: &str,
     width: u16,
     base_dir: Option<&Path>,
-) -> (Vec<Line<'static>>, LinkMap, Vec<HeadingInfo>) {
+) -> (Vec<Line<'static>>, LinkMap, CheckboxMap, Vec<HeadingInfo>) {
     let theme = Theme::dark();
     let rendered = render_with_edit(src, base_dir, width, &theme, None, &TableExpansions::new());
-    (rendered.lines, rendered.link_map, rendered.headings)
+    (
+        rendered.lines,
+        rendered.link_map,
+        rendered.checkbox_map,
+        rendered.headings,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1329,6 +1396,137 @@ mod tests {
         assert!(
             !app.history.can_forward(),
             "forward history must be truncated after a new follow from a mid-stack position"
+        );
+    }
+
+    // --- Task 3 (Block D) tests: hover_at, click_at, checkbox toggle ---
+
+    /// Build an App from a doc that contains a task-list checkbox.
+    fn make_checkbox_app() -> App {
+        // The engine renders `- [ ] Item` as a task-list item with a checkbox glyph.
+        let src = "- [ ] First task\n- [x] Second task".to_string();
+        App::new(src, PathBuf::from("test.md"), 80, 25)
+    }
+
+    #[test]
+    fn hover_at_sets_hovered_link_when_over_link() {
+        // Doc with a link so hover can hit it.
+        let src = "[alpha](a.md)\n\nOther text.".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+
+        // The link should be on line 0, starting at col 0.
+        let link = &app.link_map.links[0];
+        let link_line = link.line;
+        let link_col = link.col_start;
+
+        // Before hover — no hovered_link.
+        assert_eq!(app.hovered_link, None, "hovered_link must start as None");
+
+        app.hover_at(link_line, link_col as u16);
+        assert_eq!(
+            app.hovered_link,
+            Some(0),
+            "hover_at on the link must set hovered_link to Some(0)"
+        );
+    }
+
+    #[test]
+    fn hover_at_clears_hovered_link_when_off_link() {
+        let src = "[alpha](a.md)\n\nOther text.".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.hovered_link = Some(0);
+
+        // Hover on a row/col that has no link.
+        app.hover_at(100, 100);
+        assert_eq!(
+            app.hovered_link, None,
+            "hover_at off any link must clear hovered_link"
+        );
+    }
+
+    #[test]
+    fn click_at_on_checkbox_toggles_membership() {
+        let mut app = make_checkbox_app();
+        assert!(
+            !app.checkbox_map.items.is_empty(),
+            "precondition: checkbox exists"
+        );
+
+        let cb = app.checkbox_map.items[0].clone();
+        // Initially not in toggled set.
+        assert!(
+            !app.toggled_checkboxes.contains(&0),
+            "precondition: checkbox 0 not toggled"
+        );
+
+        // First click — should add to toggled set.
+        app.click_at(cb.line, cb.col_start as u16);
+        assert!(
+            app.toggled_checkboxes.contains(&0),
+            "click_at on a checkbox must add it to toggled_checkboxes"
+        );
+
+        // Second click — should remove from toggled set.
+        app.click_at(cb.line, cb.col_start as u16);
+        assert!(
+            !app.toggled_checkboxes.contains(&0),
+            "second click_at on a checkbox must remove it from toggled_checkboxes"
+        );
+    }
+
+    #[test]
+    fn click_at_on_local_file_link_follows_file() {
+        let dir = tempdir_for_test("click_at_follow");
+        let target_content = "# Clicked Target\n\nContent.";
+        write_temp_file(&dir, "target.md", target_content);
+        let main_path = write_temp_file(&dir, "main.md", "[go](target.md)");
+        let src = std::fs::read_to_string(&main_path).unwrap();
+
+        let mut app = App::new(src, main_path.clone(), 80, 25);
+        assert!(!app.link_map.links.is_empty(), "precondition: link exists");
+
+        let link = &app.link_map.links[0];
+        let link_line = link.line;
+        let link_col = link.col_start;
+
+        let result = app.click_at(link_line, link_col as u16);
+
+        assert!(
+            result.is_some(),
+            "click_at on a local file link must return Some((prev_path, prev_scroll))"
+        );
+        assert_eq!(
+            app.file,
+            dir.join("target.md"),
+            "app.file must be updated to the followed file"
+        );
+    }
+
+    #[test]
+    fn click_at_on_empty_area_is_noop() {
+        let src = "Just plain text, no links.".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        let file_before = app.file.clone();
+
+        let result = app.click_at(0, 0);
+        assert!(result.is_none(), "click_at on empty area must return None");
+        assert_eq!(app.file, file_before, "file must not change");
+    }
+
+    #[test]
+    fn checkbox_toggled_state_cleared_on_load_file() {
+        let dir = tempdir_for_test("checkbox_load_clear");
+        let target_path = write_temp_file(&dir, "target.md", "# New file");
+
+        let mut app = make_checkbox_app();
+        app.toggled_checkboxes.insert(0);
+        assert!(!app.toggled_checkboxes.is_empty(), "precondition: toggled");
+
+        app.load_file(target_path).expect("load_file must succeed");
+        assert!(
+            app.toggled_checkboxes.is_empty(),
+            "toggled_checkboxes must be cleared on load_file"
         );
     }
 }

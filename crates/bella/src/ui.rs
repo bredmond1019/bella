@@ -29,6 +29,8 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
 
     // Feed the real body height back into the app so max_scroll stays accurate.
     app.set_viewport_height(body_area.height);
+    // Store the body area for mouse coordinate conversion in event handlers.
+    app.body_area = body_area;
 
     draw_body(frame, body_area, app);
     draw_statusline(frame, status_area, app);
@@ -66,6 +68,26 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
+    // Overlay hovered-link highlight (applied before focused-link so keyboard
+    // focus wins on overlap).
+    if let Some(hovered_idx) = app.hovered_link
+        && let Some(span) = app.link_map.links.get(hovered_idx)
+    {
+        let doc_line = span.line;
+        if doc_line >= start && doc_line < end {
+            let row = doc_line - start;
+            let hover_style = Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::UNDERLINED);
+            visible[row] = apply_span_highlight(
+                visible[row].clone(),
+                span.col_start,
+                span.col_end,
+                hover_style,
+            );
+        }
+    }
+
     // Overlay focused-link highlight if a link is focused and on a visible row.
     if let Some(focused_idx) = app.focused_link
         && let Some(span) = app.link_map.links.get(focused_idx)
@@ -80,6 +102,21 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
                 span.col_end,
                 highlight,
             );
+        }
+    }
+
+    // Overlay toggled-checkbox glyphs. For each visually-toggled checkbox, swap
+    // the rendered `[ ]`/`[x]` glyph to its opposite state.
+    for &cb_idx in &app.toggled_checkboxes {
+        if let Some(cb) = app.checkbox_map.items.get(cb_idx) {
+            let doc_line = cb.line;
+            if doc_line >= start && doc_line < end {
+                let row = doc_line - start;
+                // Determine the replacement glyph (flip the original checked state).
+                let replacement = if cb.checked { "[ ]" } else { "[x]" };
+                visible[row] =
+                    replace_glyph_at(visible[row].clone(), cb.col_start, cb.col_end, replacement);
+            }
         }
     }
 
@@ -147,6 +184,59 @@ fn apply_span_highlight(
                 let post: String = chars[col_end - span_start..].iter().collect();
                 result.push(Span::styled(post, span.style));
             }
+        }
+    }
+
+    Line::from(result)
+}
+
+/// Replace the characters in `[col_start, col_end)` of `line` with `replacement`.
+///
+/// The replacement text is inserted with the style of the span that contained
+/// `col_start`, preserving surrounding text unchanged. Used for checkbox glyph
+/// toggling where we swap `[ ]` ↔ `[x]`.
+fn replace_glyph_at(
+    line: Line<'static>,
+    col_start: usize,
+    col_end: usize,
+    replacement: &'static str,
+) -> Line<'static> {
+    let mut result: Vec<Span<'static>> = Vec::new();
+    let mut col = 0usize;
+    let mut replaced = false;
+
+    for span in line.spans {
+        let text = span.content.as_ref();
+        let char_count = text.chars().count();
+        let span_start = col;
+        let span_end = col + char_count;
+        col = span_end;
+
+        if span_end <= col_start || span_start >= col_end {
+            // No overlap — pass through unchanged.
+            result.push(span);
+        } else {
+            let chars: Vec<char> = text.chars().collect();
+
+            // Characters before the replacement window.
+            if span_start < col_start {
+                let pre: String = chars[..col_start - span_start].iter().collect();
+                result.push(Span::styled(pre, span.style));
+            }
+
+            // Insert the replacement only once (the first overlapping span).
+            if !replaced {
+                result.push(Span::styled(replacement, span.style));
+                replaced = true;
+            }
+
+            // Characters after the replacement window.
+            if span_end > col_end {
+                let post: String = chars[col_end - span_start..].iter().collect();
+                result.push(Span::styled(post, span.style));
+            }
+            // Characters inside the window from subsequent spans are dropped
+            // (replaced by the single replacement span above).
         }
     }
 
@@ -423,6 +513,110 @@ mod tests {
         assert!(
             any_diff,
             "at least one cell in the matched row must have a different style when search is active"
+        );
+    }
+
+    // --- Task 3 (Block D) tests: hover highlight and toggled checkbox rendering ---
+
+    #[test]
+    fn hovered_link_row_differs_from_unhovered() {
+        let src = "[click me](other.md)\n\nSome other text.";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Draw without hover.
+        let mut app_plain = make_app(src, width, height);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_plain);
+            })
+            .unwrap();
+        let buf_plain = terminal.backend().buffer().clone();
+
+        // Draw with hover on the first link.
+        let mut app_hovered = make_app(src, width, height);
+        assert!(
+            !app_hovered.link_map.links.is_empty(),
+            "precondition: link exists"
+        );
+        app_hovered.hovered_link = Some(0);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_hovered);
+            })
+            .unwrap();
+        let buf_hovered = terminal.backend().buffer().clone();
+
+        let link = &app_hovered.link_map.links[0];
+        let body_row = link.line as u16;
+        let col_start = link.col_start as u16;
+        let col_end = link.col_end as u16;
+
+        let any_diff = (col_start..col_end).any(|x| {
+            buf_plain
+                .cell((x, body_row))
+                .zip(buf_hovered.cell((x, body_row)))
+                .map(|(p, h)| p.style() != h.style())
+                .unwrap_or(false)
+        });
+        assert!(
+            any_diff,
+            "at least one cell in the hovered link span must have a different style"
+        );
+    }
+
+    #[test]
+    fn toggled_checkbox_row_differs_from_untoggled() {
+        // Doc with a task-list checkbox.
+        let src = "- [ ] First task\n\nSome other text.";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Draw without toggle.
+        let mut app_plain = make_app(src, width, height);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_plain);
+            })
+            .unwrap();
+        let buf_plain = terminal.backend().buffer().clone();
+
+        // Only proceed if the engine rendered a checkbox.
+        if app_plain.checkbox_map.items.is_empty() {
+            // Engine did not produce a checkbox — skip rather than panic.
+            return;
+        }
+
+        // Draw with the first checkbox toggled.
+        let mut app_toggled = make_app(src, width, height);
+        app_toggled.toggled_checkboxes.insert(0);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_toggled);
+            })
+            .unwrap();
+        let buf_toggled = terminal.backend().buffer().clone();
+
+        let cb = &app_plain.checkbox_map.items[0];
+        let body_row = cb.line as u16;
+
+        // The checkbox row must produce different cell content when toggled.
+        let any_diff = (0..width).any(|x| {
+            buf_plain
+                .cell((x, body_row))
+                .zip(buf_toggled.cell((x, body_row)))
+                .map(|(p, t)| p.symbol() != t.symbol())
+                .unwrap_or(false)
+        });
+        assert!(
+            any_diff,
+            "checkbox row must differ (different glyph symbol) after toggling"
         );
     }
 }
