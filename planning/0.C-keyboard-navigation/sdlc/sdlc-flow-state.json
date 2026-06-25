@@ -1,0 +1,41 @@
+{
+  "spec_slug": "0.C-keyboard-navigation",
+  "branch": "0.C-keyboard-navigation-flow-2",
+  "started_at": "2026-06-25T08:12:05Z",
+  "updated_at": "2026-06-25T08:12:05Z",
+  "worktree_path": "/Users/brandon/Dev/agentic-portfolio/bella/trees/0.C-keyboard-navigation-flow-2",
+  "status": "running",
+  "current_task": 1,
+  "tasks": {
+    "1": {
+      "status": "passed",
+      "attempts": 1,
+      "summary": "App now retains link_map + headings from each render, threads real base_dir from file.parent(), and carries focused_link/SearchState scaffolding fields defaulted to None",
+      "issues": [],
+      "fixes": [],
+      "decisions": [
+        "Added #[allow(dead_code)] to SearchState struct and impl block — it is intentional scaffolding for Tasks 3-5 and would otherwise fail clippy -D warnings",
+        "Extracted render_metadata() helper that returns (lines, link_map, headings) triple to keep App::new and App::render symmetric"
+      ],
+      "files_changed": [
+        "crates/bella/src/app.rs"
+      ],
+      "commit": "",
+      "validated": "gating checks (fast tripwire)"
+    }
+  },
+  "review": {
+    "verdict": null,
+    "findings": [],
+    "attempts": 0
+  },
+  "docs": {
+    "changed": [],
+    "created": []
+  },
+  "bail_reason": null,
+  "pr": {
+    "url": null,
+    "number": null
+  }
+}
