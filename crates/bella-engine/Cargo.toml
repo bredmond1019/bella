@@ -1,0 +1,16 @@
+[package]
+name = "bella-engine"
+version = "0.1.0"
+edition = "2024"
+description = "Render/layout engine for Bella — attributed MIT derivative of zemse/hackmd"
+license = "MIT"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+pulldown-cmark = { version = "0.13", default-features = false }
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+unicode-width = "0.2"
+serde = { version = "1", features = ["derive"] }
+dirs = "6"
+toml = "1"
