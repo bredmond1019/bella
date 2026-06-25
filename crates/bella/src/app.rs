@@ -10,8 +10,6 @@ use bella_engine::{
 use ratatui::text::Line;
 
 /// Search state while a `/`-search is active or has matches.
-/// Fields are wired up by Tasks 3–5; allow dead-code until then.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SearchState {
     /// The search query as typed so far.
@@ -24,7 +22,6 @@ pub struct SearchState {
     pub input_mode: bool,
 }
 
-#[allow(dead_code)]
 impl SearchState {
     /// Create a new, empty search state in input mode.
     pub fn new() -> Self {
@@ -143,6 +140,29 @@ impl App {
     /// Request application exit.
     pub fn quit(&mut self) {
         self.should_quit = true;
+    }
+
+    /// Scroll the viewport so that `line` is visible.
+    fn scroll_to_line(&mut self, line: u16) {
+        let viewport_end = self.scroll.saturating_add(self.viewport_height);
+        if line < self.scroll {
+            self.scroll = line;
+        } else if line >= viewport_end {
+            self.scroll = line.saturating_sub(self.viewport_height.saturating_sub(1));
+        }
+        self.scroll = self.scroll.min(self.max_scroll());
+    }
+
+    /// Scroll to `matches[current]`, if search is active and matches is non-empty.
+    fn scroll_to_current_match(&mut self) {
+        if let Some(line) = self
+            .search
+            .as_ref()
+            .and_then(|s| s.matches.get(s.current))
+            .copied()
+        {
+            self.scroll_to_line(line as u16);
+        }
     }
 
     // --- link focus helpers ---
@@ -273,6 +293,94 @@ impl App {
                 Some(prev)
             }
         }
+    }
+
+    // --- in-document search (Task 5) ---
+
+    /// Enter search-input mode (triggered by `/`).
+    pub fn start_search(&mut self) {
+        self.search = Some(SearchState::new());
+    }
+
+    /// Append a character to the live search query.
+    pub fn push_search_char(&mut self, ch: char) {
+        if let Some(s) = &mut self.search {
+            s.query.push(ch);
+        }
+    }
+
+    /// Remove the last character from the search query (backspace).
+    pub fn pop_search_char(&mut self) {
+        if let Some(s) = &mut self.search {
+            s.query.pop();
+        }
+    }
+
+    /// Commit the search: compute match list, leave input mode, scroll to first match.
+    ///
+    /// A blank query clears the search entirely.
+    pub fn commit_search(&mut self) {
+        let query = match &self.search {
+            Some(s) => s.query.clone(),
+            None => return,
+        };
+        if query.is_empty() {
+            self.search = None;
+            return;
+        }
+        let query_lower = query.to_lowercase();
+        let matches: Vec<usize> = self
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| {
+                let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                text.to_lowercase().contains(&query_lower)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        if let Some(s) = &mut self.search {
+            s.matches = matches;
+            s.current = 0;
+            s.input_mode = false;
+        }
+        self.scroll_to_current_match();
+    }
+
+    /// Advance to the next match (wrapping), scrolling it into view.
+    pub fn search_next(&mut self) {
+        if let Some(s) = &mut self.search {
+            if s.matches.is_empty() {
+                return;
+            }
+            s.current = (s.current + 1) % s.matches.len();
+        } else {
+            return;
+        }
+        self.scroll_to_current_match();
+    }
+
+    /// Retreat to the previous match (wrapping), scrolling it into view.
+    pub fn search_prev(&mut self) {
+        if let Some(s) = &mut self.search {
+            if s.matches.is_empty() {
+                return;
+            }
+            let len = s.matches.len();
+            s.current = if s.current == 0 {
+                len - 1
+            } else {
+                s.current - 1
+            };
+        } else {
+            return;
+        }
+        self.scroll_to_current_match();
+    }
+
+    /// Cancel the search and clear all search state.
+    pub fn cancel_search(&mut self) {
+        self.search = None;
     }
 }
 
@@ -781,5 +889,234 @@ mod tests {
         let base = std::env::temp_dir().join(format!("bella_task4_{label}"));
         std::fs::create_dir_all(&base).expect("create temp dir");
         base
+    }
+
+    // --- Task 5 tests: in-document search ---
+
+    /// Build an App from a source string with a generous viewport (no scroll needed).
+    fn make_search_app(src: &str) -> App {
+        App::new(src.to_owned(), PathBuf::from("test.md"), 80, 50)
+    }
+
+    #[test]
+    fn start_search_enters_input_mode() {
+        let mut app = make_search_app("hello world");
+        assert!(app.search.is_none(), "precondition: no search");
+        app.start_search();
+        let s = app
+            .search
+            .as_ref()
+            .expect("search must be Some after start");
+        assert!(s.input_mode, "search must be in input mode");
+        assert!(s.query.is_empty(), "query must be empty on start");
+    }
+
+    #[test]
+    fn push_and_pop_search_char_edits_query() {
+        let mut app = make_search_app("hello world");
+        app.start_search();
+        app.push_search_char('h');
+        app.push_search_char('i');
+        assert_eq!(
+            app.search.as_ref().unwrap().query,
+            "hi",
+            "push_search_char must append characters"
+        );
+        app.pop_search_char();
+        assert_eq!(
+            app.search.as_ref().unwrap().query,
+            "h",
+            "pop_search_char must remove the last character"
+        );
+    }
+
+    #[test]
+    fn commit_search_finds_matching_lines_in_document_order() {
+        // Two headings that match "sec", one that does not.
+        let src = "# Section One\n\nOther text here.\n\n# Section Two\n\n# Unrelated";
+        let mut app = make_search_app(src);
+        app.start_search();
+        app.push_search_char('s');
+        app.push_search_char('e');
+        app.push_search_char('c');
+        app.commit_search();
+
+        let s = app
+            .search
+            .as_ref()
+            .expect("search must be Some after commit");
+        assert!(
+            !s.input_mode,
+            "input_mode must be false after commit_search"
+        );
+        assert!(
+            s.matches.len() >= 2,
+            "expected >= 2 matching lines; got {}",
+            s.matches.len()
+        );
+        // Matches must be in ascending (document) order.
+        let sorted = {
+            let mut v = s.matches.clone();
+            v.sort_unstable();
+            v
+        };
+        assert_eq!(s.matches, sorted, "matches must be in document order");
+    }
+
+    #[test]
+    fn commit_search_case_insensitive() {
+        let src = "Hello World\n\nAnother line.";
+        let mut app = make_search_app(src);
+        app.start_search();
+        // Query in upper case — should still match "Hello World".
+        for ch in "HELLO".chars() {
+            app.push_search_char(ch);
+        }
+        app.commit_search();
+        let s = app.search.as_ref().unwrap();
+        assert!(
+            !s.matches.is_empty(),
+            "case-insensitive search must find 'Hello World' with query 'HELLO'"
+        );
+    }
+
+    #[test]
+    fn commit_search_no_matches_yields_empty_list() {
+        let src = "Nothing relevant here.";
+        let mut app = make_search_app(src);
+        app.start_search();
+        for ch in "zzz_no_match_zzz".chars() {
+            app.push_search_char(ch);
+        }
+        app.commit_search();
+        let s = app
+            .search
+            .as_ref()
+            .expect("search must be Some (not blank)");
+        assert!(
+            s.matches.is_empty(),
+            "non-matching query must produce an empty match list"
+        );
+    }
+
+    #[test]
+    fn search_next_wraps_and_updates_current() {
+        let src = "# Section A\n\n# Section B\n\n# Section C";
+        let mut app = make_search_app(src);
+        app.start_search();
+        for ch in "section".chars() {
+            app.push_search_char(ch);
+        }
+        app.commit_search();
+
+        let n = app.search.as_ref().unwrap().matches.len();
+        assert!(n >= 2, "precondition: at least 2 matches");
+
+        // current should start at 0.
+        assert_eq!(app.search.as_ref().unwrap().current, 0);
+
+        app.search_next();
+        assert_eq!(app.search.as_ref().unwrap().current, 1);
+
+        // Wrap from last back to 0.
+        for _ in 0..n - 1 {
+            app.search_next();
+        }
+        assert_eq!(
+            app.search.as_ref().unwrap().current,
+            0,
+            "search_next must wrap back to 0 after the last match"
+        );
+    }
+
+    #[test]
+    fn search_prev_wraps_backward() {
+        let src = "# Section A\n\n# Section B\n\n# Section C";
+        let mut app = make_search_app(src);
+        app.start_search();
+        for ch in "section".chars() {
+            app.push_search_char(ch);
+        }
+        app.commit_search();
+
+        let n = app.search.as_ref().unwrap().matches.len();
+        assert!(n >= 2, "precondition: at least 2 matches");
+
+        // current = 0; going back must wrap to the last match.
+        app.search_prev();
+        assert_eq!(
+            app.search.as_ref().unwrap().current,
+            n - 1,
+            "search_prev from 0 must wrap to the last match"
+        );
+    }
+
+    #[test]
+    fn search_next_noop_on_no_matches() {
+        let src = "Nothing here.";
+        let mut app = make_search_app(src);
+        app.start_search();
+        for ch in "zzz_no_match_zzz".chars() {
+            app.push_search_char(ch);
+        }
+        app.commit_search();
+        // This must not panic or change anything.
+        app.search_next();
+        let s = app.search.as_ref().unwrap();
+        assert!(s.matches.is_empty());
+        assert_eq!(s.current, 0);
+    }
+
+    #[test]
+    fn cancel_search_clears_state() {
+        let mut app = make_search_app("hello");
+        app.start_search();
+        app.push_search_char('h');
+        app.cancel_search();
+        assert!(
+            app.search.is_none(),
+            "cancel_search must clear the search state"
+        );
+    }
+
+    #[test]
+    fn commit_blank_query_clears_search() {
+        let mut app = make_search_app("hello");
+        app.start_search();
+        // No characters pushed — query is empty.
+        app.commit_search();
+        assert!(
+            app.search.is_none(),
+            "committing a blank query must clear the search state"
+        );
+    }
+
+    #[test]
+    fn search_next_scrolls_match_into_view() {
+        // Build a large document so matches are off-screen.
+        let mut lines: Vec<String> = (1..=30).map(|i| format!("line {i}")).collect();
+        lines.push("# Section Target".to_string());
+        let src = lines.join("\n\n");
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 11);
+        app.viewport_height = 10;
+
+        app.start_search();
+        for ch in "target".chars() {
+            app.push_search_char(ch);
+        }
+        app.commit_search();
+
+        let s = app.search.as_ref().expect("search must be Some");
+        assert!(!s.matches.is_empty(), "precondition: match found");
+        let match_line = s.matches[s.current] as u16;
+
+        // The match line must be visible in the viewport.
+        let vp_start = app.scroll;
+        let vp_end = app.scroll + app.viewport_height;
+        assert!(
+            match_line >= vp_start && match_line < vp_end,
+            "commit_search must scroll the first match into view: \
+             line={match_line}, scroll={vp_start}, vp_end={vp_end}"
+        );
     }
 }
