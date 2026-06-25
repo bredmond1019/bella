@@ -10,6 +10,17 @@ description: Chronological log of work completed for Bella.
 
 ---
 
+## 2026-06-25 — Fix: suppress browser-tab side effect in tests
+
+Added a `#[cfg(not(test))]` guard to `open::that(url)` in `crates/bella/src/app.rs` to prevent unintended browser tabs from opening during test runs. This was a hygiene fix found during Block D setup — the link-follow feature from Block C was triggering browser launches in unit tests. Guard is scoped tightly to the side-effect call only, leaving production behavior unchanged.
+
+```diff
+crates/bella/src/app.rs | 4 ++++
+ 1 file changed, 4 insertions(+)
+```
+
+---
+
 ## 2026-06-25 — Phase 0 Block C complete: keyboard navigation (7 tasks, 136 tests, PASS)
 
 Completed `/sdlc-flow` for Block 0.C — keyboard navigation. All 7 tasks implemented and passed on first attempt: (1) retained link/heading metadata + real base_dir in App, (2) back/forward history stack, (3) link focus ring + Tab/Shift-Tab highlight, (4) link follow via Enter (URLs, local files, anchors), (5) in-document search with `/`, `n`/`N` cycling, (6) history navigation wiring via `[`/`]`, (7) validation. PASS review verdict on all acceptance criteria. Test suite grew to 136 tests total (21 + 37 engine + 78 new); all four gating checks (cargo fmt, clippy, test, build --release) exit 0. PR #1 opened to main. Close-out also patched `CLAUDE.md` (added keybindings section + directory map), and `README.md` (keybindings → Link focus with Tab/Shift-Tab, Enter to follow, `/` search, `[`/`]` history). Block C is now fully shipped; next focus is Phase 0 Block D — Mouse support (scroll/hover/click).
