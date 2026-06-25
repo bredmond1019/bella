@@ -7,6 +7,9 @@ Cargo.lock.orig
 # Frozen copies of hackmd/ and md-tui/ kept for porting reference (see reference/README.md).
 /reference/
 
+# Git Worktree
+trees/
+
 # Env / secrets
 .env
 .env.*
