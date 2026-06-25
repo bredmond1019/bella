@@ -136,6 +136,61 @@ impl App {
     pub fn quit(&mut self) {
         self.should_quit = true;
     }
+
+    // --- link focus helpers ---
+
+    /// Advance focus to the next link (wrapping).  No-op when there are no links.
+    pub fn focus_next(&mut self) {
+        let n = self.link_map.links.len();
+        if n == 0 {
+            return;
+        }
+        self.focused_link = Some(match self.focused_link {
+            None => 0,
+            Some(i) => (i + 1) % n,
+        });
+        self.scroll_to_focused_link();
+    }
+
+    /// Retreat focus to the previous link (wrapping).  No-op when there are no links.
+    pub fn focus_prev(&mut self) {
+        let n = self.link_map.links.len();
+        if n == 0 {
+            return;
+        }
+        self.focused_link = Some(match self.focused_link {
+            None => n.saturating_sub(1),
+            Some(0) => n - 1,
+            Some(i) => i - 1,
+        });
+        self.scroll_to_focused_link();
+    }
+
+    /// Clear link focus (e.g. on `Esc`).
+    pub fn clear_focus(&mut self) {
+        self.focused_link = None;
+    }
+
+    /// If a link is focused and its display line is outside the viewport, scroll
+    /// so that line becomes visible.
+    pub fn scroll_to_focused_link(&mut self) {
+        let Some(idx) = self.focused_link else {
+            return;
+        };
+        let Some(span) = self.link_map.links.get(idx) else {
+            return;
+        };
+        let line = span.line as u16;
+        let viewport_start = self.scroll;
+        let viewport_end = self.scroll.saturating_add(self.viewport_height);
+        if line < viewport_start {
+            self.scroll = line;
+        } else if line >= viewport_end {
+            self.scroll = line.saturating_sub(self.viewport_height.saturating_sub(1));
+        }
+        // Re-clamp in case of rounding edge.
+        self.scroll = self.scroll.min(self.max_scroll());
+    }
 }
 
 /// Render `src` and return `(lines, link_map, headings)`.
@@ -295,6 +350,131 @@ mod tests {
         assert!(
             app.link_map.links.is_empty(),
             "link_map must be empty for a doc with no links"
+        );
+    }
+
+    // --- Task 3 tests: link focus ring ---
+
+    fn make_link_app() -> App {
+        // Doc with two links on separate lines so we can test cycling.
+        let src = "[Alpha](a.md)\n\n[Beta](b.md)".to_string();
+        App::new(src, PathBuf::from("test.md"), 80, 25)
+    }
+
+    #[test]
+    fn focus_next_from_none_selects_first_link() {
+        let mut app = make_link_app();
+        assert!(!app.link_map.links.is_empty(), "precondition: links exist");
+        app.focus_next();
+        assert_eq!(
+            app.focused_link,
+            Some(0),
+            "focus_next from None must select index 0"
+        );
+    }
+
+    #[test]
+    fn focus_next_wraps_at_end() {
+        let mut app = make_link_app();
+        let n = app.link_map.links.len();
+        // Advance past the last link.
+        for _ in 0..n {
+            app.focus_next();
+        }
+        // One more wrap should land back at 0.
+        app.focus_next();
+        assert_eq!(
+            app.focused_link,
+            Some(0),
+            "focus_next must wrap back to index 0 after the last link"
+        );
+    }
+
+    #[test]
+    fn focus_prev_wraps_backward() {
+        let mut app = make_link_app();
+        let n = app.link_map.links.len();
+        // focus_prev from None should select the last link.
+        app.focus_prev();
+        assert_eq!(
+            app.focused_link,
+            Some(n - 1),
+            "focus_prev from None must wrap to the last link"
+        );
+    }
+
+    #[test]
+    fn focus_prev_from_first_wraps_to_last() {
+        let mut app = make_link_app();
+        let n = app.link_map.links.len();
+        app.focused_link = Some(0);
+        app.focus_prev();
+        assert_eq!(
+            app.focused_link,
+            Some(n - 1),
+            "focus_prev from index 0 must wrap to the last link"
+        );
+    }
+
+    #[test]
+    fn focus_next_noop_without_links() {
+        let src = "Just plain text.".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.focus_next();
+        assert_eq!(
+            app.focused_link, None,
+            "focus_next must be a no-op when there are no links"
+        );
+    }
+
+    #[test]
+    fn focus_prev_noop_without_links() {
+        let src = "Just plain text.".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.focus_prev();
+        assert_eq!(
+            app.focused_link, None,
+            "focus_prev must be a no-op when there are no links"
+        );
+    }
+
+    #[test]
+    fn clear_focus_clears_focused_link() {
+        let mut app = make_link_app();
+        app.focus_next();
+        assert!(app.focused_link.is_some(), "precondition: focus set");
+        app.clear_focus();
+        assert_eq!(
+            app.focused_link, None,
+            "clear_focus must set focused_link to None"
+        );
+    }
+
+    #[test]
+    fn scroll_to_focused_link_brings_off_screen_link_into_view() {
+        // Create a doc with a link far below the initial viewport.
+        let mut lines = (1..=30).map(|i| format!("line {i}")).collect::<Vec<_>>();
+        lines.push("[deep link](deep.md)".to_string());
+        let src = lines.join("\n\n");
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 11);
+        app.viewport_height = 10;
+
+        // Focus the last (deep) link — it's well below the viewport.
+        let n = app.link_map.links.len();
+        assert!(n > 0, "precondition: link exists");
+        app.focused_link = Some(n - 1);
+        let link_line = app.link_map.links[n - 1].line as u16;
+
+        app.scroll_to_focused_link();
+
+        let viewport_start = app.scroll;
+        let viewport_end = app.scroll + app.viewport_height;
+        assert!(
+            link_line >= viewport_start && link_line < viewport_end,
+            "focused link (line {link_line}) must be visible after scroll_to_focused_link \
+             (scroll={}, height={})",
+            app.scroll,
+            app.viewport_height
         );
     }
 
