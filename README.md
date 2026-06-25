@@ -52,12 +52,14 @@ bella/
 ├── .claude/                  ← Claude Code commands + SDLC workflow engines
 ├── crates/
 │   ├── bella-engine/         ← render/layout library (palette, syntax, theme, links, markdown, geometry)
-│   └── bella/                ← TUI binary (clap CLI, ratatui draw loop, scroll engine)
+│   └── bella/                ← TUI binary (clap CLI, ratatui draw loop, events, app state, selection)
 ├── planning/                 ← context, status, master-plan, harness.json, decisions/, specs/
 └── reference/                ← upstream zemse/hackmd source (excluded from workspace)
 ```
 
 ## Keybindings
+
+### Keyboard
 
 | Key | Action |
 |---|---|
@@ -75,6 +77,17 @@ bella/
 | `N` | Previous search match |
 | `Esc` | Clear focus / cancel search |
 | `q` / `Ctrl-C` | Quit |
+
+### Mouse
+
+| Gesture | Action |
+|---|---|
+| Scroll wheel | Scroll up / down (3 lines per tick) |
+| Hover | Highlight link under cursor |
+| Click link | Follow link (local file or browser URL) |
+| Click checkbox | Toggle checkbox visual state |
+| Click + drag | Select text; releases copy selection to system clipboard (arboard) |
+| Double-click | Select word under cursor (450 ms window); copies to system clipboard |
 
 ## Documentation
 
