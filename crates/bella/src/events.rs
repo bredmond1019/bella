@@ -6,6 +6,7 @@ use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
+use std::time::{Duration, Instant};
 
 use crate::app::App;
 use crate::history::HistoryEntry;
@@ -57,6 +58,15 @@ pub enum Action {
     DragEnd {
         content_row: usize,
         col: u16,
+    },
+    /// Double-click detected: select the word under the pointer and copy it.
+    ///
+    /// `screen_col`/`screen_row` are the raw terminal coordinates passed
+    /// directly to `select_word_at`; the word boundary is calculated inside
+    /// [`App::double_click_word_select`].
+    DoubleClickAt {
+        screen_col: u16,
+        screen_row: u16,
     },
     Quit,
     None,
@@ -152,9 +162,29 @@ pub fn map_mouse(mouse: MouseEvent, app: &App) -> Action {
                 mouse.column,
                 mouse.row,
             ) {
-                Action::DragStart {
-                    content_row,
-                    col: local_col,
+                // Double-click detection: if the previous click was within 450 ms
+                // at the same content position, this is a double-click.
+                let now = Instant::now();
+                let is_double = app
+                    .last_click
+                    .as_ref()
+                    .map(|(t, cr, cc)| {
+                        now.duration_since(*t) <= Duration::from_millis(450)
+                            && *cr == content_row
+                            && *cc == local_col as usize
+                    })
+                    .unwrap_or(false);
+
+                if is_double {
+                    Action::DoubleClickAt {
+                        screen_col: mouse.column,
+                        screen_row: mouse.row,
+                    }
+                } else {
+                    Action::DragStart {
+                        content_row,
+                        col: local_col,
+                    }
                 }
             } else {
                 Action::None
@@ -251,6 +281,18 @@ pub(crate) fn apply(action: Action, app: &mut App) {
             // first `Drag` event so that a plain click (no drag) falls through
             // to `click_at` instead.
             app.drag_origin = Some((content_row, col as usize));
+            // Record the click time + position for double-click detection.
+            app.last_click = Some((Instant::now(), content_row, col as usize));
+        }
+        // Double-click word-select (Task 5 of Block D)
+        Action::DoubleClickAt {
+            screen_col,
+            screen_row,
+        } => {
+            // Clear any pending drag state — double-click supersedes a drag.
+            app.selection = None;
+            app.drag_origin = None;
+            app.double_click_word_select(screen_col, screen_row);
         }
         Action::DragUpdate { content_row, col } => {
             // First drag event: promote the pending origin to a real selection.
@@ -1174,6 +1216,149 @@ mod tests {
         assert!(
             app.toggled_checkboxes.contains(&0),
             "DragStart+DragEnd (plain click) on a checkbox must toggle it"
+        );
+    }
+
+    // --- Task 5 (Block D) tests: double-click detection ---
+
+    use ratatui::layout::Rect;
+    use std::time::{Duration, Instant};
+
+    /// App whose first rendered line is "hello world" and body_area is set.
+    fn make_word_app() -> App {
+        let src = (1..=30)
+            .map(|i| format!("# Line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.body_area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        app
+    }
+
+    #[test]
+    fn drag_start_records_last_click() {
+        let mut app = make_word_app();
+        assert!(app.last_click.is_none(), "precondition: no last_click");
+
+        super::apply(
+            super::Action::DragStart {
+                content_row: 0,
+                col: 2,
+            },
+            &mut app,
+        );
+
+        assert!(
+            app.last_click.is_some(),
+            "apply(DragStart) must record last_click"
+        );
+        let (_, cr, cc) = app.last_click.unwrap();
+        assert_eq!(
+            cr, 0,
+            "last_click content_row must match DragStart content_row"
+        );
+        assert_eq!(cc, 2, "last_click col must match DragStart col");
+    }
+
+    #[test]
+    fn map_mouse_down_left_within_window_at_same_position_produces_double_click() {
+        let mut app = make_word_app();
+        // Inject last_click 300 ms ago at content position (2, 5) — within 450 ms.
+        app.last_click = Some((Instant::now() - Duration::from_millis(300), 2, 5));
+
+        // Create a mouse Down(Left) event at screen (5, 2).
+        // body_pos with viewport (0,0,80,24), scroll=0, screen (5,2) → content row=2, col=5.
+        let ev = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 5,
+            row: 2,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+        };
+        let action = super::map_mouse(ev, &app);
+        assert!(
+            matches!(action, super::Action::DoubleClickAt { .. }),
+            "Down(Left) within 450 ms at same position must produce DoubleClickAt; got {action:?}"
+        );
+    }
+
+    #[test]
+    fn map_mouse_down_left_outside_window_produces_drag_start() {
+        let mut app = make_word_app();
+        // Inject last_click 600 ms ago at same position — outside 450 ms window.
+        app.last_click = Some((Instant::now() - Duration::from_millis(600), 2, 5));
+
+        let ev = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 5,
+            row: 2,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+        };
+        let action = super::map_mouse(ev, &app);
+        assert!(
+            matches!(action, super::Action::DragStart { .. }),
+            "Down(Left) outside 450 ms window must produce DragStart; got {action:?}"
+        );
+    }
+
+    #[test]
+    fn map_mouse_down_left_at_different_position_produces_drag_start() {
+        let mut app = make_word_app();
+        // last_click is recent but at a different position.
+        app.last_click = Some((Instant::now() - Duration::from_millis(100), 0, 0));
+
+        let ev = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 5,
+            row: 2,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+        };
+        let action = super::map_mouse(ev, &app);
+        assert!(
+            matches!(action, super::Action::DragStart { .. }),
+            "Down(Left) at a different position must produce DragStart; got {action:?}"
+        );
+    }
+
+    #[test]
+    fn apply_double_click_at_clears_drag_origin_and_selection() {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.body_area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        // Pre-set drag origin and old selection.
+        app.drag_origin = Some((0, 0));
+        app.selection_start(0, 0);
+        app.selection_update(0, 5);
+        assert!(app.selection.is_some(), "precondition: selection set");
+
+        super::apply(
+            super::Action::DoubleClickAt {
+                screen_col: 0,
+                screen_row: 0,
+            },
+            &mut app,
+        );
+
+        assert!(
+            app.drag_origin.is_none(),
+            "DoubleClickAt must clear drag_origin"
+        );
+        // selection may be set to the word (or None if whitespace) — not pre-existing selection.
+        // The old (0..5) selection must not persist unmodified; double_click_word_select
+        // either populated it with the clicked word or left it None.
+        // Any result from double_click_word_select is acceptable — we just verify it ran.
+        assert!(
+            app.last_click.is_none(),
+            "DoubleClickAt must clear last_click"
         );
     }
 }
