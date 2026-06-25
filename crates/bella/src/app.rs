@@ -117,6 +117,12 @@ pub struct App {
     /// Recorded by [`Self::open_from_browser`]; cleared by [`Self::back_to_browser`].
     #[allow(dead_code)]
     pub browser_origin: Option<(PathBuf, usize)>,
+    /// Inner listing rectangle of the browser pane — updated after each
+    /// `draw_browser` call so Task 4's mouse handlers can map clicks to rows.
+    /// Analogous to [`Self::body_area`] in the reader path.
+    // Read by events.rs in Task 4; suppress dead_code until then.
+    #[allow(dead_code)]
+    pub browser_area: Rect,
 }
 
 impl App {
@@ -153,6 +159,7 @@ impl App {
             mode: Mode::Reader,
             browser: None,
             browser_origin: None,
+            browser_area: Rect::default(),
         }
     }
 
@@ -189,6 +196,7 @@ impl App {
             mode: Mode::Browser,
             browser: Some(browser),
             browser_origin: None,
+            browser_area: Rect::default(),
         }
     }
 
