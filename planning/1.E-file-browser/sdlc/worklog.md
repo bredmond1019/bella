@@ -14,3 +14,8 @@ Validated: gating checks (fast tripwire)
 What: Implemented draw_browser in ui.rs (bordered pane with dir title, selection prefix, bold-cyan Dir/ParentDir vs plain Markdown styling, browser_area stored for Task 4 mouse hit-testing) and added browser_area: Rect field to App.
 Decisions: Added #[allow(dead_code)] to browser_area field and draw_browser function since they are wired into the event loop in Task 4, following the same pattern used for mode/browser/browser_origin fields.; Dir and ParentDir entries share the same bold cyan style since both are directory-like navigation targets.; Test for selected vs unselected row difference compares the full terminal row string rather than styles, since the prefix ▶ vs spaces is a content difference; the Dir vs Markdown test compares style starting from column 2 (after the prefix) to isolate the entry kind styling.
 Validated: gating checks (fast tripwire)
+
+## Task 4 — PASSED (1 attempt)
+What: Wired browser key/mouse handlers and run_loop dispatch: map_browser_key, map_browser_mouse, browser Action variants, apply handlers, and mode-aware run_loop
+Decisions: Used let-chain syntax (&&) to collapse nested if-let for clippy compliance; BrowserClickAt selects the row and immediately descends/opens (single-click = select+activate); Backspace in reader mode maps to BrowserBack (back-to-browser round-trip); Mouse scroll in browser scrolls the viewport offset directly without moving the selection cursor; Removed #![allow(dead_code)] from browser.rs and all #[allow(dead_code)] guards from App browser fields/methods since they are now wired
+Validated: gating checks (fast tripwire)

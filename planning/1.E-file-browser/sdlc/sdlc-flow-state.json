@@ -2,10 +2,10 @@
   "spec_slug": "1.E-file-browser",
   "branch": "1.E-file-browser-flow-4",
   "started_at": "2026-06-25T12:54:09Z",
-  "updated_at": "2026-06-25T13:07:01Z",
+  "updated_at": "2026-06-25T13:15:47Z",
   "worktree_path": "/Users/brandon/Dev/agentic-portfolio/bella/trees/1.E-file-browser-flow-4",
   "status": "running",
-  "current_task": 3,
+  "current_task": 4,
   "tasks": {
     "1": {
       "status": "passed",
@@ -59,6 +59,27 @@
       "files_changed": [
         "crates/bella/src/app.rs",
         "crates/bella/src/ui.rs"
+      ],
+      "commit": "",
+      "validated": "gating checks (fast tripwire)"
+    },
+    "4": {
+      "status": "passed",
+      "attempts": 1,
+      "summary": "Wired browser key/mouse handlers and run_loop dispatch: map_browser_key, map_browser_mouse, browser Action variants, apply handlers, and mode-aware run_loop",
+      "issues": [],
+      "fixes": [],
+      "decisions": [
+        "Used let-chain syntax (&&) to collapse nested if-let for clippy compliance",
+        "BrowserClickAt selects the row and immediately descends/opens (single-click = select+activate)",
+        "Backspace in reader mode maps to BrowserBack (back-to-browser round-trip)",
+        "Mouse scroll in browser scrolls the viewport offset directly without moving the selection cursor",
+        "Removed #![allow(dead_code)] from browser.rs and all #[allow(dead_code)] guards from App browser fields/methods since they are now wired"
+      ],
+      "files_changed": [
+        "crates/bella/src/events.rs",
+        "crates/bella/src/app.rs",
+        "crates/bella/src/browser.rs"
       ],
       "commit": "",
       "validated": "gating checks (fast tripwire)"
