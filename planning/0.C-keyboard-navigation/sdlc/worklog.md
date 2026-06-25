@@ -34,3 +34,6 @@ Validated: gating checks (fast tripwire)
 What: All Block C validation commands pass: fmt/clippy clean, 136 tests pass, release build succeeds
 Decisions: Task 7 is pure validation — no source changes needed; all prior tasks (1-6) already implemented the full feature set
 Validated: gating checks (fast tripwire)
+
+## Docs
+Patched: /Users/brandon/Dev/agentic-portfolio/bella/trees/0.C-keyboard-navigation-flow-2/planning/status.md
