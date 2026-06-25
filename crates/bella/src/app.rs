@@ -13,8 +13,18 @@ use bella_engine::{
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 
+use crate::browser::Browser;
 use crate::history::{History, HistoryEntry};
 use crate::selection::{self, Selection};
+
+/// Application mode — distinguishes the two main screens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mode {
+    /// Reading/browsing a markdown document.
+    Reader,
+    /// Navigating the directory browser.
+    Browser,
+}
 
 /// Search state while a `/`-search is active or has matches.
 #[derive(Debug, Clone)]
@@ -94,6 +104,19 @@ pub struct App {
     /// been recorded (or after a double-click fires, so a triple-click begins
     /// a fresh single-click cycle).
     pub last_click: Option<(Instant, usize, usize)>,
+    /// Current application mode.
+    pub mode: Mode,
+    /// Directory browser state (present when `mode == Browser` or when the
+    /// reader was entered from the browser and a back-navigation is possible).
+    pub browser: Option<Browser>,
+    /// Saved browser position for round-trip back: `(dir, selected_index)`.
+    ///
+    /// Recorded by [`Self::open_from_browser`]; cleared by [`Self::back_to_browser`].
+    pub browser_origin: Option<(PathBuf, usize)>,
+    /// Inner listing rectangle of the browser pane — updated after each
+    /// `draw_browser` call so Task 4's mouse handlers can map clicks to rows.
+    /// Analogous to [`Self::body_area`] in the reader path.
+    pub browser_area: Rect,
 }
 
 impl App {
@@ -127,6 +150,102 @@ impl App {
             drag_origin: None,
             selection: None,
             last_click: None,
+            mode: Mode::Reader,
+            browser: None,
+            browser_origin: None,
+            browser_area: Rect::default(),
+        }
+    }
+
+    /// Construct a new `App` in browser mode rooted at `dir`.
+    ///
+    /// `term_height` is the full terminal height; the status line takes 1 row,
+    /// so `viewport_height = term_height.saturating_sub(1)`.
+    pub fn new_browser(dir: PathBuf, width: u16, term_height: u16) -> Self {
+        let viewport_height = term_height.saturating_sub(1);
+        // Reader fields are empty until a file is opened from the browser.
+        let (lines, link_map, checkbox_map, headings) = render_metadata("", width, None);
+        let browser = Browser::new(dir.clone());
+        Self {
+            src: String::new(),
+            lines,
+            link_map,
+            checkbox_map,
+            headings,
+            scroll: 0,
+            viewport_height,
+            width,
+            file: dir,
+            should_quit: false,
+            focused_link: None,
+            hovered_link: None,
+            toggled_checkboxes: HashSet::new(),
+            search: None,
+            status_message: None,
+            history: History::new(),
+            body_area: Rect::default(),
+            drag_origin: None,
+            selection: None,
+            last_click: None,
+            mode: Mode::Browser,
+            browser: Some(browser),
+            browser_origin: None,
+            browser_area: Rect::default(),
+        }
+    }
+
+    /// Open a file from the browser.
+    ///
+    /// Records the current browser state (dir + selected cursor) as the origin
+    /// so that [`Self::back_to_browser`] can restore it.  Then loads the file
+    /// and switches to [`Mode::Reader`].
+    ///
+    /// Returns `Err(String)` if the file cannot be read (caller surfaces it via
+    /// `status_message`).
+    pub fn open_from_browser(&mut self, path: PathBuf) -> Result<(), String> {
+        // Record the browser origin before loading the file.
+        if let Some(b) = &self.browser {
+            self.browser_origin = Some((b.dir.clone(), b.selected));
+        }
+        self.load_file(path)?;
+        self.mode = Mode::Reader;
+        Ok(())
+    }
+
+    /// Return to the browser from the reader.
+    ///
+    /// If a browser origin was recorded (i.e. the reader was opened from the
+    /// browser), rebuilds the `Browser` at the saved directory and restores the
+    /// cursor position.  Switches `mode` to [`Mode::Browser`].
+    ///
+    /// No-op when there is no saved origin (e.g. bella was invoked directly with
+    /// a file argument).
+    pub fn back_to_browser(&mut self) {
+        let Some((dir, selected)) = self.browser_origin.take() else {
+            return;
+        };
+        let mut b = Browser::new(dir);
+        // Restore cursor, clamped to the new entry count to be safe.
+        b.selected = selected.min(b.entries.len().saturating_sub(1));
+        self.browser = Some(b);
+        self.mode = Mode::Browser;
+    }
+
+    /// Descend into `dir`: replace the active browser with one rooted at `dir`.
+    ///
+    /// `mode` remains [`Mode::Browser`].
+    pub fn enter_dir(&mut self, dir: PathBuf) {
+        self.browser = Some(Browser::new(dir));
+    }
+
+    /// Ascend to the parent directory (Backspace key).
+    ///
+    /// Uses the active browser's [`Browser::ascend_target`].  No-op when there
+    /// is no active browser or the current directory has no accessible parent.
+    pub fn ascend(&mut self) {
+        let target = self.browser.as_ref().and_then(|b| b.ascend_target());
+        if let Some(dir) = target {
+            self.browser = Some(Browser::new(dir));
         }
     }
 
@@ -1900,5 +2019,165 @@ mod tests {
         app.last_click = Some((Instant::now(), 0, 0));
         app.load_file(target_path).expect("load_file must succeed");
         assert!(app.last_click.is_none(), "load_file must clear last_click");
+    }
+
+    // --- Task 2 (Block E) tests: browser mode integration ---
+
+    use super::Mode;
+
+    fn temp_browser_dir(label: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!("bella_task2_{label}"));
+        std::fs::create_dir_all(&base).expect("create temp dir");
+        base
+    }
+
+    #[test]
+    fn new_browser_starts_in_browser_mode_with_populated_browser() {
+        let dir = temp_browser_dir("new_browser");
+        let app = App::new_browser(dir.clone(), 80, 25);
+        assert_eq!(
+            app.mode,
+            Mode::Browser,
+            "new_browser must start in Browser mode"
+        );
+        assert!(app.browser.is_some(), "browser must be populated");
+        assert!(
+            app.browser_origin.is_none(),
+            "browser_origin must be None on start"
+        );
+    }
+
+    #[test]
+    fn open_from_browser_switches_to_reader_and_records_origin() {
+        let dir = temp_browser_dir("open_from_browser");
+        // Write a real .md file to open.
+        let md_path = dir.join("hello.md");
+        std::fs::write(&md_path, "# Hello\n\nContent.").expect("write md file");
+
+        let mut app = App::new_browser(dir.clone(), 80, 25);
+        assert_eq!(app.mode, Mode::Browser, "precondition: Browser mode");
+
+        // Record the browser's dir and selected before opening.
+        let browser_dir = app.browser.as_ref().unwrap().dir.clone();
+        let browser_sel = app.browser.as_ref().unwrap().selected;
+
+        app.open_from_browser(md_path.clone())
+            .expect("open_from_browser must succeed");
+
+        assert_eq!(
+            app.mode,
+            Mode::Reader,
+            "open_from_browser must switch to Reader"
+        );
+        assert_eq!(app.file, md_path, "file must be updated to the opened path");
+        // Origin must be recorded.
+        let origin = app
+            .browser_origin
+            .as_ref()
+            .expect("browser_origin must be recorded");
+        assert_eq!(origin.0, browser_dir, "origin dir must match browser's dir");
+        assert_eq!(
+            origin.1, browser_sel,
+            "origin selected must match browser's cursor"
+        );
+    }
+
+    #[test]
+    fn back_to_browser_restores_browser_at_saved_dir_and_cursor() {
+        let dir = temp_browser_dir("back_to_browser");
+        let md_path = dir.join("doc.md");
+        std::fs::write(&md_path, "# Doc").expect("write md");
+
+        let mut app = App::new_browser(dir.clone(), 80, 25);
+        // Manually set the cursor to a non-zero position if there are entries.
+        if let Some(b) = app.browser.as_mut()
+            && b.entries.len() > 1
+        {
+            b.selected = 1;
+        }
+        let expected_sel = app.browser.as_ref().unwrap().selected;
+        let expected_dir = app.browser.as_ref().unwrap().dir.clone();
+
+        // Open file (records origin).
+        app.open_from_browser(md_path).expect("open_from_browser");
+        assert_eq!(app.mode, Mode::Reader, "precondition: now in Reader");
+
+        // Go back.
+        app.back_to_browser();
+        assert_eq!(
+            app.mode,
+            Mode::Browser,
+            "back_to_browser must switch to Browser"
+        );
+        let b = app
+            .browser
+            .as_ref()
+            .expect("browser must be Some after back");
+        assert_eq!(b.dir, expected_dir, "browser dir must be restored");
+        assert_eq!(b.selected, expected_sel, "browser cursor must be restored");
+        assert!(
+            app.browser_origin.is_none(),
+            "browser_origin must be cleared after back"
+        );
+    }
+
+    #[test]
+    fn back_to_browser_is_noop_when_no_origin() {
+        // App opened directly from a file arg (no browser).
+        let src = "# Hello".to_string();
+        let mut app = App::new(src, PathBuf::from("doc.md"), 80, 25);
+        assert!(app.browser_origin.is_none(), "precondition: no origin");
+        // Must not panic or change mode.
+        app.back_to_browser();
+        assert_eq!(
+            app.mode,
+            Mode::Reader,
+            "mode must remain Reader when no origin"
+        );
+    }
+
+    #[test]
+    fn enter_dir_replaces_browser_with_new_root() {
+        let parent = temp_browser_dir("enter_dir_parent");
+        let child = parent.join("child");
+        std::fs::create_dir_all(&child).expect("create child dir");
+
+        let mut app = App::new_browser(parent.clone(), 80, 25);
+        assert_eq!(
+            app.browser.as_ref().unwrap().dir,
+            parent,
+            "precondition: rooted at parent"
+        );
+
+        app.enter_dir(child.clone());
+        assert_eq!(app.mode, Mode::Browser, "mode must remain Browser");
+        let b = app.browser.as_ref().expect("browser must be Some");
+        assert_eq!(b.dir, child, "enter_dir must re-root browser at child");
+    }
+
+    #[test]
+    fn ascend_re_roots_browser_at_parent() {
+        let parent = temp_browser_dir("ascend_parent");
+        let child = parent.join("child_for_ascend");
+        std::fs::create_dir_all(&child).expect("create child dir");
+
+        let mut app = App::new_browser(child.clone(), 80, 25);
+        assert_eq!(
+            app.browser.as_ref().unwrap().dir,
+            child,
+            "precondition: rooted at child"
+        );
+
+        app.ascend();
+        assert_eq!(
+            app.mode,
+            Mode::Browser,
+            "mode must remain Browser after ascend"
+        );
+        let b = app
+            .browser
+            .as_ref()
+            .expect("browser must be Some after ascend");
+        assert_eq!(b.dir, parent, "ascend must re-root browser at parent");
     }
 }

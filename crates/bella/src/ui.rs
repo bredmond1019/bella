@@ -6,10 +6,11 @@ use ratatui::{
     style::Color,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Paragraph},
+    widgets::{Block, Borders, Paragraph},
 };
 
 use crate::app::App;
+use crate::browser::BrowserEntryKind;
 
 /// Draw the full viewer: body (scrolled markdown) + 1-row status line.
 ///
@@ -36,6 +37,78 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
     draw_statusline(frame, status_area, app);
 
     body_area.height
+}
+
+/// Draw the directory browser: a bordered full-screen pane titled with the
+/// current directory path.
+///
+/// Each entry is rendered as a single row:
+/// - `▶ ` prefix on the selected row, `  ` otherwise.
+/// - [`BrowserEntryKind::Dir`] and [`BrowserEntryKind::ParentDir`] entries are
+///   styled bold cyan; [`BrowserEntryKind::Markdown`] entries are plain.
+///
+/// The inner listing [`Rect`] is stored on [`App::browser_area`] after each
+/// draw so that Task 4's mouse handlers can map click coordinates to rows.
+pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
+    let browser = match &app.browser {
+        Some(b) => b,
+        None => return,
+    };
+
+    // Bordered pane titled with the current directory.
+    let title = browser.dir.to_string_lossy().into_owned();
+    let block = Block::default().borders(Borders::ALL).title(title);
+    let inner = block.inner(area);
+
+    // Store the inner area for Task 4 mouse hit-testing.
+    app.browser_area = inner;
+
+    // Render the border first.
+    frame.render_widget(block, area);
+
+    // Borrow browser again now that app.browser_area has been set.
+    let browser = match &app.browser {
+        Some(b) => b,
+        None => return,
+    };
+
+    let scroll = browser.scroll as usize;
+    let visible_height = inner.height as usize;
+    let selected = browser.selected;
+
+    let dir_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let file_style = Style::default();
+
+    for (row, entry_idx) in (scroll..).take(visible_height).enumerate() {
+        let entry = match browser.entries.get(entry_idx) {
+            Some(e) => e,
+            None => break,
+        };
+
+        let is_selected = entry_idx == selected;
+        let prefix = if is_selected { "▶ " } else { "  " };
+
+        let style = match entry.kind {
+            BrowserEntryKind::ParentDir | BrowserEntryKind::Dir => dir_style,
+            BrowserEntryKind::Markdown => file_style,
+        };
+
+        let line = Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(entry.display.clone(), style),
+        ]);
+
+        let row_area = Rect {
+            x: inner.x,
+            y: inner.y + row as u16,
+            width: inner.width,
+            height: 1,
+        };
+
+        frame.render_widget(Paragraph::new(line), row_area);
+    }
 }
 
 fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
@@ -751,5 +824,170 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- Task 3 (Block E) tests: draw_browser ---
+
+    use super::draw_browser;
+    use crate::browser::{BrowserEntry, BrowserEntryKind};
+
+    /// Build an `App` in browser mode for a given dir.
+    fn make_browser_app(dir: std::path::PathBuf, width: u16, height: u16) -> App {
+        App::new_browser(dir, width, height)
+    }
+
+    /// Insert a synthetic entry into the browser (bypasses filesystem).
+    fn push_entry(app: &mut App, display: &str, kind: BrowserEntryKind) {
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.push(BrowserEntry {
+                path: std::path::PathBuf::from(display),
+                display: display.to_string(),
+                kind,
+            });
+        }
+    }
+
+    #[test]
+    fn draw_browser_shows_entry_display_names() {
+        let width: u16 = 80;
+        let height: u16 = 20;
+
+        // Use a real temp dir so App::new_browser succeeds.
+        let dir = std::env::temp_dir().join("bella_ui_browser_names");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_browser_app(dir.clone(), width, height);
+        // Clear auto-populated entries and add controlled ones.
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.clear();
+        }
+        push_entry(&mut app, "docs", BrowserEntryKind::Dir);
+        push_entry(&mut app, "README.md", BrowserEntryKind::Markdown);
+
+        terminal
+            .draw(|f| {
+                draw_browser(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let mut all_text = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                all_text.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+            }
+        }
+
+        assert!(
+            all_text.contains("docs"),
+            "draw_browser must render Dir entry 'docs'; got:\n{all_text}"
+        );
+        assert!(
+            all_text.contains("README.md"),
+            "draw_browser must render Markdown entry 'README.md'; got:\n{all_text}"
+        );
+    }
+
+    #[test]
+    fn selected_row_has_different_prefix_than_unselected() {
+        let width: u16 = 80;
+        let height: u16 = 20;
+
+        let dir = std::env::temp_dir().join("bella_ui_browser_prefix");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_browser_app(dir.clone(), width, height);
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.clear();
+        }
+        push_entry(&mut app, "alpha.md", BrowserEntryKind::Markdown);
+        push_entry(&mut app, "beta.md", BrowserEntryKind::Markdown);
+
+        // Select the first entry (index 0).
+        if let Some(b) = app.browser.as_mut() {
+            b.selected = 0;
+        }
+
+        terminal
+            .draw(|f| {
+                draw_browser(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+
+        // Collect the content of the first two body rows (inside the border: y=1, y=2).
+        let row1: String = (0..width)
+            .map(|x| buf.cell((x, 1)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+        let row2: String = (0..width)
+            .map(|x| buf.cell((x, 2)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+
+        // Row 1 (selected) must contain the selection prefix character.
+        // Row 2 (unselected) must not contain it (or differ from row 1 in prefix area).
+        assert!(
+            row1 != row2,
+            "selected row (row 1) must differ from unselected row (row 2);\
+             \n  row1={row1:?}\n  row2={row2:?}"
+        );
+    }
+
+    #[test]
+    fn dir_row_style_differs_from_markdown_row_style() {
+        // Render a browser with a Dir entry at row 0 and a Markdown entry at row 1
+        // (both unselected — index 2 is selected).  Because Dir uses bold+cyan and
+        // Markdown uses the default style, their cells must differ in style.
+        let width: u16 = 80;
+        let height: u16 = 20;
+
+        let dir = std::env::temp_dir().join("bella_ui_browser_style");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_browser_app(dir.clone(), width, height);
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.clear();
+        }
+        // Entry 0: Dir (unselected)
+        push_entry(&mut app, "subdir", BrowserEntryKind::Dir);
+        // Entry 1: Markdown (unselected)
+        push_entry(&mut app, "notes.md", BrowserEntryKind::Markdown);
+        // Entry 2: Markdown (selected) — a third entry keeps 0 and 1 unselected.
+        push_entry(&mut app, "other.md", BrowserEntryKind::Markdown);
+        if let Some(b) = app.browser.as_mut() {
+            b.selected = 2; // neither Dir nor notes.md is selected
+        }
+
+        terminal
+            .draw(|f| {
+                draw_browser(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+
+        // Dir entry is inside the border at y=1; Markdown at y=2.
+        // At least one cell in the Dir row must have a style different from the
+        // corresponding cell in the Markdown row (bold+cyan vs. default).
+        let any_style_diff = (2..width).any(|x| {
+            // Skip prefix columns (0..2) to avoid comparing identical spaces.
+            buf.cell((x, 1))
+                .zip(buf.cell((x, 2)))
+                .map(|(d, m)| d.style() != m.style())
+                .unwrap_or(false)
+        });
+        assert!(
+            any_style_diff,
+            "Dir entry row (y=1) must have a different style than Markdown row (y=2) \
+             in the text columns; the Dir should be bold+cyan"
+        );
     }
 }

@@ -16,3 +16,4 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 open = "5"
 arboard = "3"
+ignore = "0.4"
