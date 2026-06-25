@@ -6,7 +6,7 @@ description: Decomposed task spec for Bella Block D — mouse support (scroll/ho
 
 # Task Spec — Phase 0, Block D (Mouse)
 
-**Status:** Not started · **Last run:** never
+**Status:** Done · **Last run:** 2026-06-25 (PASS, 6/6 tasks)
 
 ## Goal
 Enable full mouse support — scroll, hover, click-to-follow, checkbox visual toggle, drag-select → clipboard copy, and double-click word-select — making mouse-driven reading work in a real terminal (the v0.1 release).
@@ -84,4 +84,4 @@ cargo build --release
 
 ## Amendment Log
 <!-- Append-only. Pipeline stages append one dated line here when they deviate from the spec. -->
-_No amendments yet._
+2026-06-25 [task 4] ClickAt Action variant (added in Task 3 for click routing) was removed and replaced with a unified DragStart+DragEnd path for plain clicks; the Task 3 test that used ClickAt was updated to use DragStart+DragEnd instead. Spec did not name the Action variants explicitly, but this refactors the click-routing design adopted one task earlier.
