@@ -6,7 +6,7 @@ description: Task spec to create the Bella Cargo workspace and port the cloud-fr
 
 # Task Spec — Phase 0, Block A
 
-**Status:** Not started · **Last run:** never
+**Status:** Done · **Last run:** 2026-06-24
 
 ## Goal
 Get the hard, reusable render/layout IP compiling in isolation behind a clean public `bella-engine` surface — before any app code exists.
