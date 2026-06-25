@@ -304,7 +304,7 @@ pub(crate) fn apply(action: Action, app: &mut App) {
             app.selection_update(content_row, col as usize);
         }
         Action::DragEnd { content_row, col } => {
-            if app.selection.is_some() {
+            if app.selection.is_some() && app.drag_origin.is_some() {
                 // A real drag occurred — extract and copy the selected text.
                 app.selection_finish();
             } else if app.drag_origin.is_some() && content_row != usize::MAX {
@@ -1359,6 +1359,51 @@ mod tests {
         assert!(
             app.last_click.is_none(),
             "DoubleClickAt must clear last_click"
+        );
+    }
+
+    #[test]
+    fn drag_end_after_double_click_does_not_call_selection_finish_again() {
+        // Regression: DoubleClickAt sets app.selection (word selected) AND clears
+        // drag_origin. The subsequent Up(Left) fires DragEnd. Before the fix, DragEnd
+        // saw selection.is_some() and called selection_finish() a second time, copying
+        // the word to the clipboard twice. After the fix it must be a no-op.
+        let src = "hello world".to_string();
+        let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.body_area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+
+        // Simulate DoubleClickAt (clears drag_origin, sets word selection).
+        super::apply(
+            super::Action::DoubleClickAt {
+                screen_col: 0,
+                screen_row: 0,
+            },
+            &mut app,
+        );
+        // After DoubleClickAt: drag_origin is None; selection may be Some (if word found).
+        assert!(app.drag_origin.is_none(), "precondition: DoubleClickAt cleared drag_origin");
+
+        // Record status message state right after double-click.
+        let msg_after_double_click = app.status_message.clone();
+
+        // Simulate the mouse-up that always follows a Down event.
+        super::apply(
+            super::Action::DragEnd {
+                content_row: 0,
+                col: 0,
+            },
+            &mut app,
+        );
+
+        // DragEnd must not change status_message (no second selection_finish).
+        assert_eq!(
+            app.status_message, msg_after_double_click,
+            "DragEnd after DoubleClickAt must not trigger a second selection_finish"
         );
     }
 }
