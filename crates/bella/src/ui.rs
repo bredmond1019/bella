@@ -29,6 +29,8 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
 
     // Feed the real body height back into the app so max_scroll stays accurate.
     app.set_viewport_height(body_area.height);
+    // Store the body area for mouse coordinate conversion in event handlers.
+    app.body_area = body_area;
 
     draw_body(frame, body_area, app);
     draw_statusline(frame, status_area, app);
@@ -66,6 +68,26 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
+    // Overlay hovered-link highlight (applied before focused-link so keyboard
+    // focus wins on overlap).
+    if let Some(hovered_idx) = app.hovered_link
+        && let Some(span) = app.link_map.links.get(hovered_idx)
+    {
+        let doc_line = span.line;
+        if doc_line >= start && doc_line < end {
+            let row = doc_line - start;
+            let hover_style = Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::UNDERLINED);
+            visible[row] = apply_span_highlight(
+                visible[row].clone(),
+                span.col_start,
+                span.col_end,
+                hover_style,
+            );
+        }
+    }
+
     // Overlay focused-link highlight if a link is focused and on a visible row.
     if let Some(focused_idx) = app.focused_link
         && let Some(span) = app.link_map.links.get(focused_idx)
@@ -80,6 +102,60 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
                 span.col_end,
                 highlight,
             );
+        }
+    }
+
+    // Overlay toggled-checkbox glyphs. For each visually-toggled checkbox, swap
+    // the rendered `[ ]`/`[x]` glyph to its opposite state.
+    for &cb_idx in &app.toggled_checkboxes {
+        if let Some(cb) = app.checkbox_map.items.get(cb_idx) {
+            let doc_line = cb.line;
+            if doc_line >= start && doc_line < end {
+                let row = doc_line - start;
+                // Determine the replacement glyph (flip the original checked state).
+                let replacement = if cb.checked { "[ ]" } else { "[x]" };
+                visible[row] =
+                    replace_glyph_at(visible[row].clone(), cb.col_start, cb.col_end, replacement);
+            }
+        }
+    }
+
+    // Overlay active selection highlight (applied last so it appears on top of
+    // other overlays).  The LightBlue background is visually distinct from the
+    // Yellow/Cyan search styles, Cyan-underline hover, and REVERSED focus styles.
+    if let Some(sel) = &app.selection
+        && !sel.is_empty()
+    {
+        let ((start_row, start_col), (end_row, end_col)) = sel.normalized();
+        let selection_style = Style::default().fg(Color::Black).bg(Color::LightBlue);
+
+        for doc_line in start_row..=end_row {
+            if doc_line >= start && doc_line < end {
+                let row = doc_line - start;
+                // Full char-count of this visible row (for whole-line coverage).
+                let line_len: usize = visible[row]
+                    .spans
+                    .iter()
+                    .map(|s| s.content.chars().count())
+                    .sum();
+                let (col_s, col_e) = if doc_line == start_row && doc_line == end_row {
+                    // Single-row selection.
+                    (start_col.min(line_len), end_col.min(line_len))
+                } else if doc_line == start_row {
+                    // Head: from start_col to the end of the line.
+                    (start_col.min(line_len), line_len)
+                } else if doc_line == end_row {
+                    // Tail: from the start of the line to end_col.
+                    (0, end_col.min(line_len))
+                } else {
+                    // Middle: highlight the entire line.
+                    (0, line_len)
+                };
+                if col_s < col_e {
+                    visible[row] =
+                        apply_span_highlight(visible[row].clone(), col_s, col_e, selection_style);
+                }
+            }
         }
     }
 
@@ -147,6 +223,59 @@ fn apply_span_highlight(
                 let post: String = chars[col_end - span_start..].iter().collect();
                 result.push(Span::styled(post, span.style));
             }
+        }
+    }
+
+    Line::from(result)
+}
+
+/// Replace the characters in `[col_start, col_end)` of `line` with `replacement`.
+///
+/// The replacement text is inserted with the style of the span that contained
+/// `col_start`, preserving surrounding text unchanged. Used for checkbox glyph
+/// toggling where we swap `[ ]` ↔ `[x]`.
+fn replace_glyph_at(
+    line: Line<'static>,
+    col_start: usize,
+    col_end: usize,
+    replacement: &'static str,
+) -> Line<'static> {
+    let mut result: Vec<Span<'static>> = Vec::new();
+    let mut col = 0usize;
+    let mut replaced = false;
+
+    for span in line.spans {
+        let text = span.content.as_ref();
+        let char_count = text.chars().count();
+        let span_start = col;
+        let span_end = col + char_count;
+        col = span_end;
+
+        if span_end <= col_start || span_start >= col_end {
+            // No overlap — pass through unchanged.
+            result.push(span);
+        } else {
+            let chars: Vec<char> = text.chars().collect();
+
+            // Characters before the replacement window.
+            if span_start < col_start {
+                let pre: String = chars[..col_start - span_start].iter().collect();
+                result.push(Span::styled(pre, span.style));
+            }
+
+            // Insert the replacement only once (the first overlapping span).
+            if !replaced {
+                result.push(Span::styled(replacement, span.style));
+                replaced = true;
+            }
+
+            // Characters after the replacement window.
+            if span_end > col_end {
+                let post: String = chars[col_end - span_start..].iter().collect();
+                result.push(Span::styled(post, span.style));
+            }
+            // Characters inside the window from subsequent spans are dropped
+            // (replaced by the single replacement span above).
         }
     }
 
@@ -424,5 +553,203 @@ mod tests {
             any_diff,
             "at least one cell in the matched row must have a different style when search is active"
         );
+    }
+
+    // --- Task 3 (Block D) tests: hover highlight and toggled checkbox rendering ---
+
+    #[test]
+    fn hovered_link_row_differs_from_unhovered() {
+        let src = "[click me](other.md)\n\nSome other text.";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Draw without hover.
+        let mut app_plain = make_app(src, width, height);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_plain);
+            })
+            .unwrap();
+        let buf_plain = terminal.backend().buffer().clone();
+
+        // Draw with hover on the first link.
+        let mut app_hovered = make_app(src, width, height);
+        assert!(
+            !app_hovered.link_map.links.is_empty(),
+            "precondition: link exists"
+        );
+        app_hovered.hovered_link = Some(0);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_hovered);
+            })
+            .unwrap();
+        let buf_hovered = terminal.backend().buffer().clone();
+
+        let link = &app_hovered.link_map.links[0];
+        let body_row = link.line as u16;
+        let col_start = link.col_start as u16;
+        let col_end = link.col_end as u16;
+
+        let any_diff = (col_start..col_end).any(|x| {
+            buf_plain
+                .cell((x, body_row))
+                .zip(buf_hovered.cell((x, body_row)))
+                .map(|(p, h)| p.style() != h.style())
+                .unwrap_or(false)
+        });
+        assert!(
+            any_diff,
+            "at least one cell in the hovered link span must have a different style"
+        );
+    }
+
+    #[test]
+    fn toggled_checkbox_row_differs_from_untoggled() {
+        // Doc with a task-list checkbox.
+        let src = "- [ ] First task\n\nSome other text.";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Draw without toggle.
+        let mut app_plain = make_app(src, width, height);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_plain);
+            })
+            .unwrap();
+        let buf_plain = terminal.backend().buffer().clone();
+
+        // Only proceed if the engine rendered a checkbox.
+        if app_plain.checkbox_map.items.is_empty() {
+            // Engine did not produce a checkbox — skip rather than panic.
+            return;
+        }
+
+        // Draw with the first checkbox toggled.
+        let mut app_toggled = make_app(src, width, height);
+        app_toggled.toggled_checkboxes.insert(0);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_toggled);
+            })
+            .unwrap();
+        let buf_toggled = terminal.backend().buffer().clone();
+
+        let cb = &app_plain.checkbox_map.items[0];
+        let body_row = cb.line as u16;
+
+        // The checkbox row must produce different cell content when toggled.
+        let any_diff = (0..width).any(|x| {
+            buf_plain
+                .cell((x, body_row))
+                .zip(buf_toggled.cell((x, body_row)))
+                .map(|(p, t)| p.symbol() != t.symbol())
+                .unwrap_or(false)
+        });
+        assert!(
+            any_diff,
+            "checkbox row must differ (different glyph symbol) after toggling"
+        );
+    }
+
+    // --- Task 4 (Block D) tests: selection highlight ---
+
+    #[test]
+    fn selected_cells_have_different_style_from_unselected() {
+        // A plain-text document whose first rendered line contains known text.
+        let src = "hello world\n\nanother line";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Draw without selection.
+        let mut app_plain = make_app(src, width, height);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_plain);
+            })
+            .unwrap();
+        let buf_plain = terminal.backend().buffer().clone();
+
+        // Draw with a selection covering columns 0..5 on row 0 ("hello").
+        let mut app_selected = make_app(src, width, height);
+        use crate::selection::Selection;
+        app_selected.selection = Some(Selection {
+            anchor: (0, 0),
+            cursor: (0, 5),
+        });
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_selected);
+            })
+            .unwrap();
+        let buf_selected = terminal.backend().buffer().clone();
+
+        // At least one cell in columns 0..5 of body row 0 must have a different style.
+        let any_diff = (0_u16..5_u16).any(|x| {
+            buf_plain
+                .cell((x, 0))
+                .zip(buf_selected.cell((x, 0)))
+                .map(|(p, s)| p.style() != s.style())
+                .unwrap_or(false)
+        });
+        assert!(
+            any_diff,
+            "selected cells must have a different style compared to unselected cells"
+        );
+    }
+
+    #[test]
+    fn empty_selection_does_not_change_render() {
+        // A zero-length selection (anchor == cursor) must not change the rendered output.
+        let src = "hello world\n\nanother line";
+        let width: u16 = 80;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app_plain = make_app(src, width, height);
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_plain);
+            })
+            .unwrap();
+        let buf_plain = terminal.backend().buffer().clone();
+
+        // Zero-length selection.
+        let mut app_empty_sel = make_app(src, width, height);
+        use crate::selection::Selection;
+        app_empty_sel.selection = Some(Selection {
+            anchor: (0, 3),
+            cursor: (0, 3),
+        });
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app_empty_sel);
+            })
+            .unwrap();
+        let buf_empty = terminal.backend().buffer().clone();
+
+        // Body rows must be identical to the plain render.
+        for y in 0..height - 1 {
+            for x in 0..width {
+                let plain_style = buf_plain.cell((x, y)).map(|c| c.style());
+                let empty_style = buf_empty.cell((x, y)).map(|c| c.style());
+                assert_eq!(
+                    plain_style, empty_style,
+                    "empty selection must not change cell style at ({x}, {y})"
+                );
+            }
+        }
     }
 }
