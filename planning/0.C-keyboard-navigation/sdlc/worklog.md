@@ -24,3 +24,8 @@ Validated: gating checks (fast tripwire)
 What: Implement in-document search (/, n, N, Esc) with query input mode, case-insensitive match highlighting, match cycling with viewport scrolling, and search prompt in the status row
 Decisions: Esc in normal mode cancels active search via the existing ClearFocus action (checked in apply), so no new key binding is needed; map_search_key is a separate pure function for search input mode; run_loop dispatches via it when app.search.input_mode is true, keeping map_key unaware of app state; commit_search on a blank query clears search entirely rather than showing zero results; Current match highlighted in Cyan, other matches in Yellow to make the active match visually distinct; Used let-chain (&&) in draw_body to collapse nested if per clippy::collapsible_if requirement
 Validated: gating checks (fast tripwire)
+
+## Task 6 — PASSED (1 attempt)
+What: Task 6: wired back/forward history navigation into App and the event loop — `history: History` field added, `go_back`/`go_forward` methods, `[`/`]` key bindings, and history push on link follow.
+Decisions: History cursor model requires pushing BOTH the previous and new positions on follow (not just the previous): the cursor must sit on the new entry so history.back() returns the prior one.; go_back/go_forward load the file via load_file() then override scroll to the saved value (load_file resets scroll to 0).; Tests that verify scroll restoration require a document long enough that max_scroll >= the target scroll value.
+Validated: gating checks (fast tripwire)

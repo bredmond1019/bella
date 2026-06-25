@@ -2,10 +2,10 @@
   "spec_slug": "0.C-keyboard-navigation",
   "branch": "0.C-keyboard-navigation-flow-2",
   "started_at": "2026-06-25T08:12:05Z",
-  "updated_at": "2026-06-25T08:38:01Z",
+  "updated_at": "2026-06-25T08:46:48Z",
   "worktree_path": "/Users/brandon/Dev/agentic-portfolio/bella/trees/0.C-keyboard-navigation-flow-2",
   "status": "running",
-  "current_task": 5,
+  "current_task": 6,
   "tasks": {
     "1": {
       "status": "passed",
@@ -97,6 +97,24 @@
         "crates/bella/src/app.rs",
         "crates/bella/src/events.rs",
         "crates/bella/src/ui.rs"
+      ],
+      "commit": "",
+      "validated": "gating checks (fast tripwire)"
+    },
+    "6": {
+      "status": "passed",
+      "attempts": 1,
+      "summary": "Task 6: wired back/forward history navigation into App and the event loop — `history: History` field added, `go_back`/`go_forward` methods, `[`/`]` key bindings, and history push on link follow.",
+      "issues": [],
+      "fixes": [],
+      "decisions": [
+        "History cursor model requires pushing BOTH the previous and new positions on follow (not just the previous): the cursor must sit on the new entry so history.back() returns the prior one.",
+        "go_back/go_forward load the file via load_file() then override scroll to the saved value (load_file resets scroll to 0).",
+        "Tests that verify scroll restoration require a document long enough that max_scroll >= the target scroll value."
+      ],
+      "files_changed": [
+        "crates/bella/src/app.rs",
+        "crates/bella/src/events.rs"
       ],
       "commit": "",
       "validated": "gating checks (fast tripwire)"
