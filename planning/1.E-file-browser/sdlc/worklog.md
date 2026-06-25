@@ -29,3 +29,6 @@ Patched: /Users/brandon/Dev/agentic-portfolio/bella/trees/1.E-file-browser-flow-
 
 ## Wrap-up — PASS
 Next: Phase 2, Block F — Config + themes + live reload
+
+## PR
+https://github.com/bredmond1019/bella/pull/3
