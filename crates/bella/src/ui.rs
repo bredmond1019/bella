@@ -41,8 +41,6 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
 
 /// Draw the directory browser: a bordered full-screen pane titled with the
 /// current directory path.
-// Called from events.rs run_loop in Task 4; suppress dead_code until then.
-#[allow(dead_code)]
 ///
 /// Each entry is rendered as a single row:
 /// - `▶ ` prefix on the selected row, `  ` otherwise.
