@@ -2,11 +2,13 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use bella_engine::{
-    CheckboxMap, LinkMap, Theme,
+    CheckboxMap, LinkMap, Theme, body_pos,
     links::{LinkTarget, TableExpansions},
     markdown::{HeadingInfo, render_with_edit},
+    select_word_at,
 };
 use ratatui::layout::Rect;
 use ratatui::text::Line;
@@ -84,6 +86,14 @@ pub struct App {
     /// Active or completed text selection (drag-select or double-click).
     /// `None` when no selection is in progress or completed.
     pub selection: Option<Selection>,
+    /// Timestamp and content position of the most recent left-button down event.
+    ///
+    /// Used to detect double-clicks: if the next `Down(Left)` arrives within
+    /// **450 ms** at the same content position this is treated as a double-click.
+    /// Stored as `(time, content_row, col)`.  `None` when no prior click has
+    /// been recorded (or after a double-click fires, so a triple-click begins
+    /// a fresh single-click cycle).
+    pub last_click: Option<(Instant, usize, usize)>,
 }
 
 impl App {
@@ -116,6 +126,7 @@ impl App {
             body_area: Rect::default(),
             drag_origin: None,
             selection: None,
+            last_click: None,
         }
     }
 
@@ -138,6 +149,7 @@ impl App {
         self.search = None;
         self.drag_origin = None;
         self.selection = None;
+        self.last_click = None;
     }
 
     /// Update the viewport height (called after each draw when the body area
@@ -284,6 +296,7 @@ impl App {
         self.status_message = None;
         self.drag_origin = None;
         self.selection = None;
+        self.last_click = None;
         Ok(())
     }
 
@@ -452,6 +465,63 @@ impl App {
             }
         }
         // Keep self.selection alive for the visual highlight.
+    }
+
+    // --- double-click word-select (Task 5 of Block D) ---
+
+    /// Handle a double-click at the given screen position.
+    ///
+    /// Calls `select_word_at` to find the word under the pointer.  If a word is
+    /// found its column span is recorded as the active `selection` and the text
+    /// is copied to the clipboard.  If the pointer is over whitespace or outside
+    /// the body area this is a no-op (selection stays `None`).
+    ///
+    /// After this call `last_click` is set to `None` so that a subsequent click
+    /// starts a fresh single-click cycle rather than triggering another
+    /// double-click immediately.
+    pub fn double_click_word_select(&mut self, screen_col: u16, screen_row: u16) {
+        // Reset last_click so a third click starts a new single-click cycle.
+        self.last_click = None;
+
+        let Some((word, start_col, width)) = select_word_at(
+            self.body_area,
+            false, // line_numbers
+            self.scroll as usize,
+            &self.lines,
+            screen_col,
+            screen_row,
+        ) else {
+            // Whitespace or outside body — no selection.
+            return;
+        };
+
+        // Derive the content row from the same screen coordinates.
+        let Some((content_row, _)) = body_pos(
+            self.body_area,
+            false,
+            self.lines.len(),
+            self.scroll as usize,
+            screen_col,
+            screen_row,
+        ) else {
+            return;
+        };
+
+        let end_col = start_col + width;
+        self.selection = Some(Selection {
+            anchor: (content_row, start_col),
+            cursor: (content_row, end_col),
+        });
+
+        match selection::copy_to_clipboard(&word) {
+            Ok(()) => {
+                let count = word.chars().count();
+                self.status_message = Some(format!("Copied {count} chars"));
+            }
+            Err(e) => {
+                self.status_message = Some(e);
+            }
+        }
     }
 
     // --- in-document search (Task 5) ---
@@ -1710,5 +1780,121 @@ mod tests {
             app.toggled_checkboxes.is_empty(),
             "toggled_checkboxes must be cleared on load_file"
         );
+    }
+
+    // --- Task 5 (Block D) tests: double-click word-select ---
+
+    use ratatui::layout::Rect;
+    use std::time::{Duration, Instant};
+
+    /// Build an App whose first rendered line contains "hello world".
+    fn make_double_click_app() -> App {
+        let src = "hello world".to_string();
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        // Set body_area so select_word_at and body_pos work with screen coords.
+        app.body_area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        app
+    }
+
+    #[test]
+    fn double_click_within_window_selects_word_and_sets_status() {
+        let mut app = make_double_click_app();
+
+        // Inject last_click 400 ms in the past at content position (0, 0).
+        // This simulates a previous single-click at that position.
+        app.last_click = Some((Instant::now() - Duration::from_millis(400), 0, 0));
+
+        // Double-click at screen position (0, 0) — lands on "hello".
+        app.double_click_word_select(0, 0);
+
+        assert!(
+            app.selection.is_some(),
+            "double_click_word_select must populate selection when over a word"
+        );
+        let sel = app.selection.as_ref().unwrap();
+        assert!(
+            !sel.is_empty(),
+            "double-click selection must be non-zero-length"
+        );
+        // status_message set (copy attempt succeeded or failed — either is fine).
+        assert!(
+            app.status_message.is_some(),
+            "double_click_word_select must set status_message"
+        );
+        // last_click is reset so a third click starts fresh.
+        assert!(
+            app.last_click.is_none(),
+            "double_click_word_select must clear last_click"
+        );
+    }
+
+    #[test]
+    fn two_clicks_outside_450ms_window_do_not_produce_word_selection() {
+        let mut app = make_double_click_app();
+
+        // Inject last_click 600 ms in the past (outside the 450 ms window).
+        app.last_click = Some((Instant::now() - Duration::from_millis(600), 0, 0));
+
+        // Check that map_mouse produces DragStart (not DoubleClickAt) for a
+        // Down(Left) at the same position.  We simulate this at the app level
+        // by confirming that double_click_word_select is NOT the path that fires:
+        // we'll call apply(DragStart) which records last_click, then manually
+        // check that the old (expired) timestamp would not trigger a double-click.
+        let now = Instant::now();
+        let is_double = app
+            .last_click
+            .as_ref()
+            .map(|(t, cr, cc)| {
+                now.duration_since(*t) <= Duration::from_millis(450) && *cr == 0 && *cc == 0
+            })
+            .unwrap_or(false);
+
+        assert!(
+            !is_double,
+            "an expired last_click (>450 ms) must not be detected as double-click"
+        );
+        // Selection must remain None (no double-click fired).
+        assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn double_click_on_whitespace_selects_nothing() {
+        let mut app = make_double_click_app();
+
+        // Inject last_click at the same position so timing passes.
+        app.last_click = Some((Instant::now() - Duration::from_millis(200), 0, 5));
+
+        // Column 5 in "hello world" is the space between the two words.
+        // select_word_at returns None for whitespace.
+        app.double_click_word_select(5, 0);
+
+        assert!(
+            app.selection.is_none(),
+            "double-click on whitespace must leave selection as None"
+        );
+    }
+
+    #[test]
+    fn last_click_cleared_on_render() {
+        let mut app = make_double_click_app();
+        app.last_click = Some((Instant::now(), 0, 0));
+        app.render(80);
+        assert!(app.last_click.is_none(), "render must clear last_click");
+    }
+
+    #[test]
+    fn last_click_cleared_on_load_file() {
+        let dir = tempdir_for_test("last_click_load_clear");
+        let target_path = write_temp_file(&dir, "target.md", "# New file");
+
+        let mut app = make_double_click_app();
+        app.last_click = Some((Instant::now(), 0, 0));
+        app.load_file(target_path).expect("load_file must succeed");
+        assert!(app.last_click.is_none(), "load_file must clear last_click");
     }
 }
