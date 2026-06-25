@@ -29,3 +29,6 @@ Validated: gating checks (fast tripwire)
 What: Validation task: all four validation commands pass — fmt, clippy, 195 tests (157 bella + 37 bella-engine + 1 integration), release build
 Decisions: Task 6 is purely a validation gate with no source changes — nothing to commit; the working tree was already clean from Tasks 1-5
 Validated: gating checks (fast tripwire)
+
+## Docs
+Patched: /Users/brandon/Dev/agentic-portfolio/bella/trees/0.D-mouse-support-flow/README.md, /Users/brandon/Dev/agentic-portfolio/bella/trees/0.D-mouse-support-flow/planning/status.md
