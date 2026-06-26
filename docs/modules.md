@@ -2,6 +2,12 @@
 type: Reference
 title: Module Reference
 description: Per-module reference for the bella-engine and bella crates — purpose, key types, and public surface.
+doc_id: modules
+layer: [console]
+project: bella
+status: active
+keywords: [module reference, bella-engine, bella crate, public API, Rust modules]
+related: [architecture, features]
 ---
 
 # Module Reference

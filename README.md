@@ -2,6 +2,12 @@
 type: Index
 title: Bella
 description: A beautiful terminal markdown viewer and editor with full mouse support — local-only, no cloud.
+doc_id: bella-readme
+layer: [console]
+project: bella
+status: active
+keywords: [terminal markdown viewer, TUI, ratatui, mouse support, local-only, Rust]
+related: [bella-docs-index, bella-planning-index]
 ---
 
 # Bella

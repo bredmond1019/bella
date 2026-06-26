@@ -2,6 +2,12 @@
 type: Guide
 title: Development Guide
 description: Prerequisites, build steps, test layers, and the SDLC pipeline for Bella contributors.
+doc_id: development
+layer: [console]
+project: bella
+status: active
+keywords: [build instructions, cargo, tests, development setup, SDLC pipeline, Rust]
+related: [bella-docs-index, harness-examples]
 ---
 
 # Development Guide

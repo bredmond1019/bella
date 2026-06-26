@@ -2,6 +2,12 @@
 type: Architecture
 title: Bella Architecture
 description: Two-crate design, render pipeline, event loop, coordinate system, and mode model.
+doc_id: architecture
+layer: [console]
+project: bella
+status: active
+keywords: [two-crate architecture, bella-engine, render pipeline, event loop, coordinate system]
+related: [modules, D2-engine-app-crate-split]
 ---
 
 # Architecture — Bella

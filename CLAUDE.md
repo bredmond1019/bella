@@ -14,7 +14,21 @@ A beautiful terminal markdown viewer and editor with full mouse support — loca
 ## Standing rules
 
 1. **Every block/task ships with tests** covering its core functionality. No exceptions.
-2. **Maintain OKF frontmatter** on every markdown file.
+2. **OKF frontmatter is required on every new `.md` file** under `docs/` and `planning/`.
+   Open each file with a YAML block containing the three required fields and, where known, all
+   six optional fields:
+   - **Required:** `type` (Decision · Index · Plan · Architecture · Reference · Guide · Log ·
+     ProjectStatus · LocalContext · Handoff · …), `title`, `description`
+   - **Optional:** `doc_id` (kebab-case, defaults to filename stem), `layer` (closed list:
+     `brain` · `engine` · `factory` · `console` · `surface` · `infra` · `business` · `content` ·
+     `meta`), `project` (`bella` for this repo; omit only for genuinely cross-cutting docs),
+     `status` (`active` · `draft` · `deprecated` · `superseded` · `archived`), `keywords`
+     (3–7 concrete topic terms), `related` (list of `doc_id` values from real in-repo cross-refs)
+   - **Retained only on Log / ProjectStatus docs:** `timestamp`
+   - Canonical guide: `docs/okf-frontmatter.md` in the company-brain repo; governing decision: D27.
+   - **Adding a file to a directory requires updating that directory's `index.md`** (add a row or
+     entry for the new file). If the update changes the scope of a parent directory's `index.md`,
+     update that too — propagate up the chain as needed.
 3. **Sequence, not calendar** — work the order in `master-plan.md`; pick up where you left off.
 4. **Decisions are append-only** — never edit a settled decision; supersede it with a new
    atomic file in `planning/decisions/` and link back.

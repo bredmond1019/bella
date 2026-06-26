@@ -2,6 +2,12 @@
 type: Reference
 title: Feature Reference
 description: All keybindings and mouse gestures with descriptions of what happens internally.
+doc_id: features
+layer: [console]
+project: bella
+status: active
+keywords: [keybindings, mouse gestures, reader mode, browser mode, keyboard shortcuts]
+related: [architecture, modules]
 ---
 
 # Feature Reference
