@@ -13,7 +13,7 @@ A beautiful terminal markdown viewer and editor with full mouse support — loca
 
 ## Standing rules
 
-1. **Every block/task ships with tests** covering its core functionality. No exceptions.
+1. **Every new function, module, or behaviour change ships with tests.** No exceptions — this applies to ad-hoc fixes and one-off changes just as much as formal blocks/tasks. If you add or change code, add or update the tests that cover it.
 2. **OKF frontmatter is required on every new `.md` file** under `docs/` and `planning/`.
    Open each file with a YAML block containing the three required fields and, where known, all
    six optional fields:
