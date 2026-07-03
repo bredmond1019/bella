@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::browser::BrowserEntryKind;
+use bella_engine::browser::BrowserEntryKind;
 
 /// Draw the full viewer: body (scrolled markdown) + 1-row status line.
 ///
@@ -829,7 +829,7 @@ mod tests {
     // --- Task 3 (Block E) tests: draw_browser ---
 
     use super::draw_browser;
-    use crate::browser::{BrowserEntry, BrowserEntryKind};
+    use bella_engine::browser::{BrowserEntry, BrowserEntryKind};
 
     /// Build an `App` in browser mode for a given dir.
     fn make_browser_app(dir: std::path::PathBuf, width: u16, height: u16) -> App {

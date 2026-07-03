@@ -14,3 +14,4 @@ unicode-width = "0.2"
 serde = { version = "1", features = ["derive"] }
 dirs = "6"
 toml = "1"
+ignore = "0.4"

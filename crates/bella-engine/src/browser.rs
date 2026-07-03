@@ -43,6 +43,8 @@ pub struct Browser {
     pub selected: usize,
     /// Index of the first visible entry (scroll offset into `entries`).
     pub scroll: u16,
+    /// Optional absolute path above which navigation is blocked.
+    pub root_boundary: Option<PathBuf>,
 }
 
 impl Browser {
@@ -59,6 +61,7 @@ impl Browser {
             entries,
             selected: 0,
             scroll: 0,
+            root_boundary: None,
         }
     }
 
@@ -114,7 +117,11 @@ impl Browser {
     }
 
     /// Return `dir.parent()` — the target for Backspace / ascend.
+    /// If `root_boundary` is set, returns `None` if `dir` equals `root_boundary`.
     pub fn ascend_target(&self) -> Option<PathBuf> {
+        if self.root_boundary.as_ref() == Some(&self.dir) {
+            return None;
+        }
         self.dir.parent().map(|p| p.to_path_buf())
     }
 }
@@ -558,5 +565,21 @@ mod tests {
             find_entry(&b.entries, "secret.md").is_none(),
             "secret.md must be hidden by .gitignore"
         );
+    }
+
+    #[test]
+    fn ascend_target_respects_root_boundary() {
+        let dir = temp_dir("root_boundary");
+        let sub = create_dir(&dir, "child");
+
+        // At child, boundary is parent. Should be able to ascend to parent.
+        let mut b1 = Browser::new(sub.clone());
+        b1.root_boundary = Some(dir.clone());
+        assert_eq!(b1.ascend_target(), Some(dir.clone()));
+
+        // At root boundary, ascend_target should be None.
+        let mut b2 = Browser::new(dir.clone());
+        b2.root_boundary = Some(dir.clone());
+        assert_eq!(b2.ascend_target(), None);
     }
 }

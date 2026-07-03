@@ -5,7 +5,7 @@
 //! in `app`, `ui`, and `events`.
 
 mod app;
-mod browser;
+
 mod events;
 pub mod history;
 mod selection;

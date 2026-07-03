@@ -9,9 +9,9 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::time::{Duration, Instant};
 
 use crate::app::{App, Mode};
-use crate::browser::BrowserEntryKind;
 use crate::history::HistoryEntry;
 use crate::ui;
+use bella_engine::browser::BrowserEntryKind;
 
 /// Action produced by the key mapper.
 #[derive(Debug, PartialEq, Eq)]

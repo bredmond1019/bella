@@ -1,6 +1,7 @@
 // bella-engine — render/layout engine, attributed MIT derivative of zemse/hackmd @ 7650cdc.
 // Public surface for the bella app crate and integration tests.
 
+pub mod browser;
 pub mod geometry;
 pub mod links;
 pub mod markdown;

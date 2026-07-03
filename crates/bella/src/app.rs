@@ -13,9 +13,9 @@ use bella_engine::{
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 
-use crate::browser::Browser;
 use crate::history::{History, HistoryEntry};
 use crate::selection::{self, Selection};
+use bella_engine::browser::Browser;
 
 /// Application mode — distinguishes the two main screens.
 #[derive(Debug, Clone, PartialEq, Eq)]
