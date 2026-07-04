@@ -473,6 +473,11 @@ impl Builder {
                     self.heading_buf.push_str(&s);
                 }
             }
+            // Intentionally dropped: raw HTML (including HTML comments, e.g. `<!-- ... -->`)
+            // must never surface as literal rendered text. This keeps sentinel fences used in
+            // status/spec docs out of the visible render. Load-bearing for the bella-engine
+            // <-> bastion cross-repo contract (CLAUDE.md rule 6 / D3) — see
+            // crates/bella-engine/tests/html_comments.rs for the regression coverage.
             Event::Html(_) | Event::InlineHtml(_) => {}
             Event::FootnoteReference(name) => {
                 let style = self.cur_style().fg(self.theme.muted);
