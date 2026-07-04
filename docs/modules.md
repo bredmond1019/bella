@@ -47,7 +47,7 @@ Pure screen-to-content coordinate conversion. No App dependency; every parameter
 
 ### `markdown.rs`
 
-The render pipeline. 2556 lines — the largest file in the project.
+The render pipeline. 2561 lines — the largest file in the project.
 
 **Key types:**
 
@@ -68,6 +68,8 @@ The render pipeline. 2556 lines — the largest file in the project.
 Pipeline: pulldown-cmark event stream → block tree → layout pass (word-wrap, link span extraction, table geometry). Edit mode replaces the smallest inline element containing the cursor with raw source text. Link spans that cross wrap boundaries are split — each physical line gets a separate `LinkSpan` entry.
 
 Enabled extensions: `TABLES`, `STRIKETHROUGH`, `TASKLISTS`, `FOOTNOTES`, `SMART_PUNCTUATION`, `WIKILINKS`.
+
+Raw HTML — including HTML comments (`<!-- ... -->`) — is dropped from the visible render (`Event::Html`/`Event::InlineHtml` produce no output), so sentinel comments in status/spec docs never surface as literal text. Regression coverage: `crates/bella-engine/tests/html_comments.rs`.
 
 ---
 

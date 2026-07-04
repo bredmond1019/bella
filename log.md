@@ -2,11 +2,21 @@
 type: Log
 title: Bella Development Log
 description: Chronological log of work completed for Bella.
+timestamp: "2026-07-04T14:11:16Z"
 ---
 
 # Log — Bella
 
 *Append-only working log. One dated entry per session. Newest entries at the top.*
+
+---
+
+## [2026-07-04]
+
+### BE.4.A — Hide HTML comments in bella-engine render
+- **What:** `bella-engine`'s markdown render pipeline now explicitly drops raw HTML and HTML comments (`<!-- ... -->`) — `Event::Html`/`Event::InlineHtml` produce no output, so sentinel comments in status/spec docs never surface as literal rendered text. Shipped with a dedicated regression test file `crates/bella-engine/tests/html_comments.rs` (2 tests). Delivered via the `/sdlc-task` lean engine (implement → fast-test → commit, in-place on `main`; both tasks passed 2/2), then `/close-out`: full gating suite (cargo fmt/clippy/test/build) all green, 52+ tests pass, and `docs/modules.md` patched (corrected `markdown.rs` line count 2556→2561; noted the HTML/comment drop behavior).
+- **Why:** Load-bearing for the `bella-engine` ↔ `bastion` cross-repo contract (CLAUDE.md rule 6 / D3) — sentinel HTML comments embedded in docs must not leak into the visible render in bastion's TUI.
+- **Refs:** `planning/BE.4.A/tasks.md`, `crates/bella-engine/tests/html_comments.rs`
 
 ---
 
