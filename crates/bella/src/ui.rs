@@ -400,7 +400,9 @@ mod tests {
 
     /// Build an app from a multi-line markdown document.
     fn make_app(src: &str, width: u16, height: u16) -> App {
-        App::new(src.to_owned(), PathBuf::from("test.md"), width, height)
+        let mut app = App::new(src.to_owned(), PathBuf::from("test.md"), width, height);
+        app.block_until_ready();
+        app
     }
 
     #[test]

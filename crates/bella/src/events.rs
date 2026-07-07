@@ -583,7 +583,9 @@ mod tests {
             .map(|i| format!("# Line {i}"))
             .collect::<Vec<_>>()
             .join("\n\n");
-        App::new(src, PathBuf::from("test.md"), 80, 11)
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 11);
+        app.block_until_ready();
+        app
     }
 
     #[test]
@@ -670,6 +672,7 @@ mod tests {
         // Build an app with links.
         let src = "[A](a.md)\n\n[B](b.md)".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        app.block_until_ready();
         assert!(!app.link_map.links.is_empty(), "precondition: links exist");
         super::apply(Action::FocusNext, &mut app);
         assert_eq!(
@@ -683,6 +686,7 @@ mod tests {
     fn apply_focus_prev_wraps_backward() {
         let src = "[A](a.md)\n\n[B](b.md)".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        app.block_until_ready();
         let n = app.link_map.links.len();
         super::apply(Action::FocusPrev, &mut app);
         assert_eq!(
@@ -696,6 +700,7 @@ mod tests {
     fn apply_clear_focus_removes_focus() {
         let src = "[A](a.md)".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        app.block_until_ready();
         app.focused_link = Some(0);
         super::apply(Action::ClearFocus, &mut app);
         assert_eq!(app.focused_link, None, "ClearFocus must clear focused_link");
@@ -712,6 +717,7 @@ mod tests {
     fn apply_follow_with_no_focused_link_is_noop() {
         let src = "[A](a.md)".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        app.block_until_ready();
         // No focused link — Follow should be a no-op (no panic, no change).
         let file_before = app.file.clone();
         super::apply(Action::Follow, &mut app);
@@ -726,6 +732,7 @@ mod tests {
         let src = "[web](https://example.com)".to_string();
         let file = std::path::PathBuf::from("test.md");
         let mut app = App::new(src, file.clone(), 80, 11);
+        app.block_until_ready();
         assert!(!app.link_map.links.is_empty(), "precondition: link exists");
         app.focused_link = Some(0);
         super::apply(Action::Follow, &mut app);
@@ -746,6 +753,7 @@ mod tests {
         std::fs::write(&main_path, &src).expect("write main");
 
         let mut app = App::new(src, main_path.clone(), 80, 11);
+        app.block_until_ready();
         assert!(!app.link_map.links.is_empty(), "precondition: link exists");
         app.focused_link = Some(0);
 
@@ -805,6 +813,7 @@ mod tests {
     fn apply_search_start_enters_search_mode() {
         let src = "hello world".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        app.block_until_ready();
         super::apply(Action::SearchStart, &mut app);
         assert!(
             app.search.is_some(),
@@ -820,6 +829,7 @@ mod tests {
     fn apply_search_char_appends_to_query() {
         let src = "hello world".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        app.block_until_ready();
         super::apply(Action::SearchStart, &mut app);
         super::apply(Action::SearchChar('h'), &mut app);
         super::apply(Action::SearchChar('i'), &mut app);
@@ -830,6 +840,7 @@ mod tests {
     fn apply_search_cancel_clears_search() {
         let src = "hello world".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        app.block_until_ready();
         super::apply(Action::SearchStart, &mut app);
         super::apply(Action::SearchChar('h'), &mut app);
         super::apply(Action::SearchCancel, &mut app);
@@ -840,6 +851,7 @@ mod tests {
     fn apply_search_commit_leaves_input_mode() {
         let src = "hello world\n\nanother line".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         super::apply(Action::SearchStart, &mut app);
         super::apply(Action::SearchChar('h'), &mut app);
         super::apply(Action::SearchCommit, &mut app);
@@ -854,6 +866,7 @@ mod tests {
     fn esc_in_normal_mode_cancels_active_search() {
         let src = "hello world".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
+        app.block_until_ready();
         // Put the app in a post-commit search state (input_mode = false).
         super::apply(Action::SearchStart, &mut app);
         super::apply(Action::SearchChar('h'), &mut app);
@@ -914,6 +927,7 @@ mod tests {
         std::fs::write(&main_path, &src).expect("write main");
 
         let mut app = App::new(src, main_path.clone(), 80, 11);
+        app.block_until_ready();
         assert!(!app.link_map.links.is_empty(), "precondition: link exists");
         app.focused_link = Some(0);
 
@@ -1151,6 +1165,7 @@ mod tests {
     fn apply_hover_at_sets_hovered_link() {
         let src = "[alpha](a.md)\n\nOther text.".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         assert!(!app.link_map.links.is_empty(), "precondition: link exists");
 
         let link = app.link_map.links[0].clone();
@@ -1172,6 +1187,7 @@ mod tests {
     fn apply_hover_at_sentinel_clears_hovered_link() {
         let src = "[alpha](a.md)".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.hovered_link = Some(0);
 
         super::apply(
@@ -1193,6 +1209,7 @@ mod tests {
     fn apply_drag_start_sets_drag_origin_and_clears_selection() {
         let src = "hello world".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         // Pre-set a selection to verify it gets cleared.
         app.selection_start(0, 0);
         app.selection_update(0, 5);
@@ -1221,6 +1238,7 @@ mod tests {
     fn apply_drag_update_creates_and_extends_selection() {
         let src = "hello world".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
 
         // Simulate Down then first Drag.
         super::apply(
@@ -1255,6 +1273,7 @@ mod tests {
     fn apply_drag_end_after_drag_finishes_selection_and_clears_origin() {
         let src = "hello world".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
 
         // Full drag sequence: Down → Drag → Up.
         super::apply(
@@ -1297,6 +1316,7 @@ mod tests {
     fn apply_drag_end_without_drag_does_not_create_selection() {
         let src = "Just plain text.".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
 
         // Down then Up with no Drag.
         super::apply(
@@ -1336,6 +1356,7 @@ mod tests {
         std::fs::write(&main_path, &src).unwrap();
 
         let mut app = App::new(src, main_path.clone(), 80, 11);
+        app.block_until_ready();
         assert!(!app.link_map.links.is_empty(), "precondition: link exists");
         let link = app.link_map.links[0].clone();
 
@@ -1368,6 +1389,7 @@ mod tests {
         // A plain click (DragStart → DragEnd, no Drag) on a checkbox must toggle it.
         let src = "- [ ] Task one\n\n- [x] Task two".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         if app.checkbox_map.items.is_empty() {
             // Engine did not produce a checkbox — skip.
             return;
@@ -1411,6 +1433,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n\n");
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.body_area = Rect {
             x: 0,
             y: 0,
@@ -1508,6 +1531,7 @@ mod tests {
     fn apply_double_click_at_clears_drag_origin_and_selection() {
         let src = "hello world".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.body_area = Rect {
             x: 0,
             y: 0,
@@ -1550,6 +1574,7 @@ mod tests {
         // the word to the clipboard twice. After the fix it must be a no-op.
         let src = "hello world".to_string();
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.body_area = Rect {
             x: 0,
             y: 0,
@@ -1798,6 +1823,7 @@ mod tests {
         // Reader opened directly with a file arg — back must be a no-op.
         let src = "# Hello".to_string();
         let mut app = App::new(src, PathBuf::from("doc.md"), 80, 25);
+        app.block_until_ready();
         assert_eq!(app.mode, Mode::Reader, "precondition: Reader mode");
 
         super::apply(Action::BrowserBack, &mut app);

@@ -7,15 +7,35 @@ use std::time::Instant;
 use bella_engine::{
     CheckboxMap, LinkMap, Theme, body_pos,
     links::{LinkTarget, TableExpansions},
-    markdown::{HeadingInfo, render_with_edit},
+    markdown::{HeadingInfo, Rendered, render_with_edit},
     select_word_at,
 };
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use crate::history::{History, HistoryEntry};
+use crate::render_worker::{RenderWorker, is_latest};
 use crate::selection::{self, Selection};
 use bella_engine::browser::Browser;
+
+/// Rendering lifecycle for the current document/width: whether the
+/// background worker's result for the current generation has landed yet.
+///
+/// `app.lines`/`link_map`/`checkbox_map`/`headings` hold a placeholder
+/// ("Loading…") while `Loading`, and the real rendered content once `Ready`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderState {
+    /// A render request is in flight; `app.lines` holds a placeholder.
+    Loading,
+    /// The worker delivered a result for the current generation; `app.lines`
+    /// (and friends) hold real rendered content.
+    Ready,
+}
+
+/// Placeholder display lines shown while a render is in flight.
+fn loading_lines() -> Vec<Line<'static>> {
+    vec![Line::from("Loading…")]
+}
 
 /// Application mode — distinguishes the two main screens.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +137,16 @@ pub struct App {
     /// `draw_browser` call so Task 4's mouse handlers can map clicks to rows.
     /// Analogous to [`Self::body_area`] in the reader path.
     pub browser_area: Rect,
+    /// Background render worker — offloads markdown parse/render off the
+    /// caller's thread.
+    pub render_worker: RenderWorker,
+    /// Generation token of the most recently requested render. A drained
+    /// [`crate::render_worker::RenderResult`] is only applied when its
+    /// generation matches this value; anything older is a stale, superseded
+    /// render and is discarded.
+    pub render_generation: u64,
+    /// Whether the render for `render_generation` has landed yet.
+    pub render_state: RenderState,
 }
 
 impl App {
@@ -126,15 +156,22 @@ impl App {
     /// so `viewport_height = term_height.saturating_sub(1)`.
     pub fn new(src: String, file: PathBuf, width: u16, term_height: u16) -> Self {
         let viewport_height = term_height.saturating_sub(1);
+        let mut render_worker = RenderWorker::spawn();
         let base_dir = file.parent().map(Path::to_path_buf);
-        let (lines, link_map, checkbox_map, headings) =
-            render_metadata(&src, width, base_dir.as_deref());
+        let render_generation = render_worker.request_render(
+            src.clone(),
+            base_dir,
+            width,
+            Theme::dark(),
+            None,
+            TableExpansions::new(),
+        );
         Self {
             src,
-            lines,
-            link_map,
-            checkbox_map,
-            headings,
+            lines: loading_lines(),
+            link_map: LinkMap::default(),
+            checkbox_map: CheckboxMap::default(),
+            headings: Vec::new(),
             scroll: 0,
             viewport_height,
             width,
@@ -154,6 +191,9 @@ impl App {
             browser: None,
             browser_origin: None,
             browser_area: Rect::default(),
+            render_worker,
+            render_generation,
+            render_state: RenderState::Loading,
         }
     }
 
@@ -163,7 +203,9 @@ impl App {
     /// so `viewport_height = term_height.saturating_sub(1)`.
     pub fn new_browser(dir: PathBuf, width: u16, term_height: u16) -> Self {
         let viewport_height = term_height.saturating_sub(1);
-        // Reader fields are empty until a file is opened from the browser.
+        // Reader fields are empty until a file is opened from the browser. The
+        // document is empty, so there is nothing worth offloading — render it
+        // synchronously and start the worker already `Ready`.
         let (lines, link_map, checkbox_map, headings) = render_metadata("", width, None);
         let browser = Browser::new(dir.clone());
         Self {
@@ -191,6 +233,9 @@ impl App {
             browser: Some(browser),
             browser_origin: None,
             browser_area: Rect::default(),
+            render_worker: RenderWorker::spawn(),
+            render_generation: 0,
+            render_state: RenderState::Ready,
         }
     }
 
@@ -250,16 +295,25 @@ impl App {
     }
 
     /// Re-render at a new `width` (called on terminal resize).
+    ///
+    /// Kicks off a background render and switches to [`RenderState::Loading`]
+    /// immediately rather than blocking on the parse; the caller (the event
+    /// loop) drains the result via [`Self::poll_render`] once it lands.
     pub fn render(&mut self, width: u16) {
         self.width = width;
         let base_dir = self.file.parent().map(Path::to_path_buf);
-        let (lines, link_map, checkbox_map, headings) =
-            render_metadata(&self.src, width, base_dir.as_deref());
-        self.lines = lines;
-        self.link_map = link_map;
-        self.checkbox_map = checkbox_map;
-        self.headings = headings;
-        // Re-clamp scroll in case the new render is shorter.
+        self.render_generation = self.render_worker.request_render(
+            self.src.clone(),
+            base_dir,
+            width,
+            Theme::dark(),
+            None,
+            TableExpansions::new(),
+        );
+        self.render_state = RenderState::Loading;
+        self.lines = loading_lines();
+        // Re-clamp scroll defensively; it is re-clamped again once the real
+        // render lands and line count is known.
         self.scroll = self.scroll.min(self.max_scroll());
         // Reset navigation state — line indices change on resize.
         self.focused_link = None;
@@ -269,6 +323,57 @@ impl App {
         self.drag_origin = None;
         self.selection = None;
         self.last_click = None;
+    }
+
+    /// Non-blocking drain of the render worker: if a result matching
+    /// [`Self::render_generation`] is available, apply it (swap in `lines`,
+    /// `link_map`, `checkbox_map`, `headings`, mark [`RenderState::Ready`])
+    /// and return `true`. Stale results (superseded by a later resize/load)
+    /// are discarded without changing `render_state`. Returns `false` when
+    /// no fresh, matching result is available yet.
+    // Not yet called from `run_loop` — that wiring lands in a follow-up task
+    // that switches the event loop to `crossterm::event::poll` and drains
+    // this each tick. Allowed dead code until then.
+    #[allow(dead_code)]
+    pub fn poll_render(&mut self) -> bool {
+        let Some(result) = self.render_worker.try_recv_latest() else {
+            return false;
+        };
+        if !is_latest(&result, self.render_generation) {
+            return false;
+        }
+        self.apply_rendered(result.rendered);
+        true
+    }
+
+    /// Swap a freshly-arrived [`Rendered`] result into the app's display
+    /// state and mark the current render as [`RenderState::Ready`].
+    fn apply_rendered(&mut self, rendered: Rendered) {
+        self.lines = rendered.lines;
+        self.link_map = rendered.link_map;
+        self.checkbox_map = rendered.checkbox_map;
+        self.headings = rendered.headings;
+        self.render_state = RenderState::Ready;
+        // Re-clamp scroll now that the real line count is known.
+        self.scroll = self.scroll.min(self.max_scroll());
+    }
+
+    /// Block until the render for the current generation lands and apply it.
+    ///
+    /// Used by tests (and any non-interactive caller) that need synchronous
+    /// rendering semantics without a poll loop. Not used by the TUI event
+    /// loop, which stays non-blocking via [`Self::poll_render`].
+    #[cfg(test)]
+    pub(crate) fn block_until_ready(&mut self) {
+        while self.render_state != RenderState::Ready {
+            match self.render_worker.recv_blocking() {
+                Ok(result) if is_latest(&result, self.render_generation) => {
+                    self.apply_rendered(result.rendered);
+                }
+                Ok(_stale) => continue,
+                Err(_) => break, // worker gone; avoid spinning forever
+            }
+        }
     }
 
     /// Update the viewport height (called after each draw when the body area
@@ -401,12 +506,19 @@ impl App {
         self.src = src;
         self.file = path;
         let base_dir = self.file.parent().map(Path::to_path_buf);
-        let (lines, link_map, checkbox_map, headings) =
-            render_metadata(&self.src, self.width, base_dir.as_deref());
-        self.lines = lines;
-        self.link_map = link_map;
-        self.checkbox_map = checkbox_map;
-        self.headings = headings;
+        self.render_generation = self.render_worker.request_render(
+            self.src.clone(),
+            base_dir,
+            self.width,
+            Theme::dark(),
+            None,
+            TableExpansions::new(),
+        );
+        self.render_state = RenderState::Loading;
+        self.lines = loading_lines();
+        self.link_map = LinkMap::default();
+        self.checkbox_map = CheckboxMap::default();
+        self.headings = Vec::new();
         self.scroll = 0;
         self.focused_link = None;
         self.hovered_link = None;
@@ -492,7 +604,12 @@ impl App {
             self.status_message = Some(msg);
         } else {
             self.history.back();
-            self.scroll = scroll.min(self.max_scroll());
+            // `load_file` just kicked off an async render, so `max_scroll()`
+            // still reflects the *previous* document (or the `Loading`
+            // placeholder) — clamping against it now would wrongly truncate
+            // a valid scroll position. Store the target as-is; `apply_rendered`
+            // re-clamps once the real content for this file lands.
+            self.scroll = scroll;
         }
     }
 
@@ -508,7 +625,8 @@ impl App {
             self.status_message = Some(msg);
         } else {
             self.history.forward();
-            self.scroll = scroll.min(self.max_scroll());
+            // See the comment in `go_back`: clamp on arrival, not here.
+            self.scroll = scroll;
         }
     }
 
@@ -770,6 +888,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n\n");
         let mut app = App::new(src, PathBuf::from("test.md"), 80, viewport + 1);
+        app.block_until_ready();
         // Force exact viewport height (the +1 above accounts for status row).
         app.viewport_height = viewport;
         app
@@ -827,7 +946,8 @@ mod tests {
         // A doc with a relative link and an external URL must produce a non-empty link_map.
         let src = "See [local](other.md) and [web](https://example.com).".to_string();
         let file = PathBuf::from("/some/dir/readme.md");
-        let app = App::new(src, file, 80, 25);
+        let mut app = App::new(src, file, 80, 25);
+        app.block_until_ready();
         assert!(
             !app.link_map.links.is_empty(),
             "link_map must be populated for a doc containing links"
@@ -845,7 +965,8 @@ mod tests {
         // be present in the link_map (engine threads base_dir into link resolution).
         let src = "[local](other.md)".to_string();
         let file = PathBuf::from("/projects/docs/index.md");
-        let app = App::new(src, file.clone(), 80, 25);
+        let mut app = App::new(src, file.clone(), 80, 25);
+        app.block_until_ready();
         // The app stores the file path correctly.
         assert_eq!(app.file, file, "app.file must match the provided path");
         // And the render did not discard link metadata.
@@ -855,7 +976,8 @@ mod tests {
     #[test]
     fn navigation_state_defaults_to_none() {
         let src = "[link](other.md)".to_string();
-        let app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         assert!(
             app.focused_link.is_none(),
             "focused_link must default to None"
@@ -867,6 +989,7 @@ mod tests {
     fn render_resets_nav_state() {
         let src = "[link](other.md)".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         // Manually set navigation state.
         app.focused_link = Some(0);
         // Re-render (e.g. on resize) must reset nav state.
@@ -881,7 +1004,8 @@ mod tests {
     #[test]
     fn headings_populated_for_doc_with_headings() {
         let src = "# Heading One\n\nSome text.\n\n## Heading Two\n".to_string();
-        let app = App::new(src, PathBuf::from("doc.md"), 80, 25);
+        let mut app = App::new(src, PathBuf::from("doc.md"), 80, 25);
+        app.block_until_ready();
         assert!(
             !app.headings.is_empty(),
             "headings must be populated for a doc with headings"
@@ -894,7 +1018,8 @@ mod tests {
     #[test]
     fn link_map_empty_for_plain_doc() {
         let src = "Just plain text, no links here.".to_string();
-        let app = App::new(src, PathBuf::from("plain.md"), 80, 25);
+        let mut app = App::new(src, PathBuf::from("plain.md"), 80, 25);
+        app.block_until_ready();
         assert!(
             app.link_map.links.is_empty(),
             "link_map must be empty for a doc with no links"
@@ -906,7 +1031,9 @@ mod tests {
     fn make_link_app() -> App {
         // Doc with two links on separate lines so we can test cycling.
         let src = "[Alpha](a.md)\n\n[Beta](b.md)".to_string();
-        App::new(src, PathBuf::from("test.md"), 80, 25)
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
+        app
     }
 
     #[test]
@@ -968,6 +1095,7 @@ mod tests {
     fn focus_next_noop_without_links() {
         let src = "Just plain text.".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.focus_next();
         assert_eq!(
             app.focused_link, None,
@@ -979,6 +1107,7 @@ mod tests {
     fn focus_prev_noop_without_links() {
         let src = "Just plain text.".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.focus_prev();
         assert_eq!(
             app.focused_link, None,
@@ -1005,6 +1134,7 @@ mod tests {
         lines.push("[deep link](deep.md)".to_string());
         let src = lines.join("\n\n");
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 11);
+        app.block_until_ready();
         app.viewport_height = 10;
 
         // Focus the last (deep) link — it's well below the viewport.
@@ -1036,7 +1166,8 @@ mod tests {
             let mut f = std::fs::File::create(&file_path).expect("create temp file");
             f.write_all(src.as_bytes()).expect("write temp file");
         }
-        let app = App::new(src, file_path.clone(), 80, 25);
+        let mut app = App::new(src, file_path.clone(), 80, 25);
+        app.block_until_ready();
         // The engine received the parent dir as base_dir — confirm the link was picked up.
         assert!(!app.link_map.links.is_empty(), "link must be found");
         // Clean up.
@@ -1064,6 +1195,7 @@ mod tests {
         let main_path = write_temp_file(&dir, "main.md", "[go](target.md)");
         let src = std::fs::read_to_string(&main_path).unwrap();
         let mut app = App::new(src, main_path.clone(), 80, 25);
+        app.block_until_ready();
 
         // Precondition: links present and first link is a LocalFile.
         assert!(!app.link_map.links.is_empty(), "precondition: link exists");
@@ -1071,6 +1203,7 @@ mod tests {
 
         let original_file = app.file.clone();
         let result = app.follow_focused();
+        app.block_until_ready();
 
         // Navigation happened — result contains previous location.
         assert!(
@@ -1115,6 +1248,7 @@ mod tests {
         let src = lines.join("\n\n");
 
         let mut app = App::new(src, PathBuf::from("doc.md"), 80, 11);
+        app.block_until_ready();
         app.viewport_height = 10;
 
         // Precondition: an anchor link exists.
@@ -1155,6 +1289,7 @@ mod tests {
         let src = "[web](https://example.com)".to_string();
         let file = PathBuf::from("readme.md");
         let mut app = App::new(src.clone(), file.clone(), 80, 25);
+        app.block_until_ready();
 
         assert!(!app.link_map.links.is_empty(), "precondition: link exists");
         app.focused_link = Some(0);
@@ -1180,6 +1315,7 @@ mod tests {
     fn follow_missing_file_sets_status_message_and_returns_none() {
         let src = "[missing](nonexistent_file_that_does_not_exist.md)".to_string();
         let mut app = App::new(src, PathBuf::from("doc.md"), 80, 25);
+        app.block_until_ready();
 
         assert!(!app.link_map.links.is_empty(), "precondition: link exists");
         app.focused_link = Some(0);
@@ -1201,6 +1337,7 @@ mod tests {
         let src = "[link](other.md)".to_string();
         let file = PathBuf::from("doc.md");
         let mut app = App::new(src, file.clone(), 80, 25);
+        app.block_until_ready();
         // No focused link.
         assert!(app.focused_link.is_none());
 
@@ -1219,11 +1356,13 @@ mod tests {
         let target_path = write_temp_file(&dir, "loaded.md", target_content);
 
         let mut app = App::new("Original".to_string(), PathBuf::from("orig.md"), 80, 25);
+        app.block_until_ready();
         app.scroll = 5;
         app.focused_link = Some(0);
 
         app.load_file(target_path.clone())
             .expect("load_file must succeed");
+        app.block_until_ready();
 
         assert_eq!(app.file, target_path, "file must be updated");
         assert_eq!(app.scroll, 0, "scroll must be reset");
@@ -1252,7 +1391,9 @@ mod tests {
 
     /// Build an App from a source string with a generous viewport (no scroll needed).
     fn make_search_app(src: &str) -> App {
-        App::new(src.to_owned(), PathBuf::from("test.md"), 80, 50)
+        let mut app = App::new(src.to_owned(), PathBuf::from("test.md"), 80, 50);
+        app.block_until_ready();
+        app
     }
 
     #[test]
@@ -1455,6 +1596,7 @@ mod tests {
         lines.push("# Section Target".to_string());
         let src = lines.join("\n\n");
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 11);
+        app.block_until_ready();
         app.viewport_height = 10;
 
         app.start_search();
@@ -1492,7 +1634,8 @@ mod tests {
 
     #[test]
     fn history_field_defaults_empty() {
-        let app = App::new("hello".to_string(), PathBuf::from("doc.md"), 80, 25);
+        let mut app = App::new("hello".to_string(), PathBuf::from("doc.md"), 80, 25);
+        app.block_until_ready();
         assert!(
             !app.history.can_back(),
             "history must be empty on construction"
@@ -1516,6 +1659,7 @@ mod tests {
 
         let src = std::fs::read_to_string(&main_path).unwrap();
         let mut app = App::new(src, main_path.clone(), 80, 11);
+        app.block_until_ready();
         app.viewport_height = 10;
 
         // Verify scroll=3 is within range.
@@ -1560,6 +1704,7 @@ mod tests {
         let (main_path, target_path) = make_two_temp_files("go_forward");
         let src = std::fs::read_to_string(&main_path).unwrap();
         let mut app = App::new(src, main_path.clone(), 80, 25);
+        app.block_until_ready();
 
         // Simulate a follow: push prev (main) and new (target) to the history.
         use crate::history::HistoryEntry;
@@ -1582,6 +1727,7 @@ mod tests {
     #[test]
     fn go_back_at_start_is_noop() {
         let mut app = App::new("hello".to_string(), PathBuf::from("doc.md"), 80, 25);
+        app.block_until_ready();
         let file_before = app.file.clone();
         // No history — go_back must be a no-op.
         app.go_back();
@@ -1595,6 +1741,7 @@ mod tests {
     #[test]
     fn go_forward_at_end_is_noop() {
         let mut app = App::new("hello".to_string(), PathBuf::from("doc.md"), 80, 25);
+        app.block_until_ready();
         let file_before = app.file.clone();
         // No forward history.
         app.go_forward();
@@ -1612,6 +1759,7 @@ mod tests {
         let (main_path, target_path) = make_two_temp_files("truncate_fwd");
         let src = std::fs::read_to_string(&main_path).unwrap();
         let mut app = App::new(src, main_path.clone(), 80, 25);
+        app.block_until_ready();
 
         use crate::history::HistoryEntry;
 
@@ -1651,7 +1799,9 @@ mod tests {
     fn make_checkbox_app() -> App {
         // The engine renders `- [ ] Item` as a task-list item with a checkbox glyph.
         let src = "- [ ] First task\n- [x] Second task".to_string();
-        App::new(src, PathBuf::from("test.md"), 80, 25)
+        let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
+        app
     }
 
     #[test]
@@ -1659,6 +1809,7 @@ mod tests {
         // Doc with a link so hover can hit it.
         let src = "[alpha](a.md)\n\nOther text.".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         assert!(!app.link_map.links.is_empty(), "precondition: link exists");
 
         // The link should be on line 0, starting at col 0.
@@ -1681,6 +1832,7 @@ mod tests {
     fn hover_at_clears_hovered_link_when_off_link() {
         let src = "[alpha](a.md)\n\nOther text.".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.hovered_link = Some(0);
 
         // Hover on a row/col that has no link.
@@ -1730,6 +1882,7 @@ mod tests {
         let src = std::fs::read_to_string(&main_path).unwrap();
 
         let mut app = App::new(src, main_path.clone(), 80, 25);
+        app.block_until_ready();
         assert!(!app.link_map.links.is_empty(), "precondition: link exists");
 
         let link = &app.link_map.links[0];
@@ -1753,6 +1906,7 @@ mod tests {
     fn click_at_on_empty_area_is_noop() {
         let src = "Just plain text, no links.".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         let file_before = app.file.clone();
 
         let result = app.click_at(0, 0);
@@ -1766,6 +1920,7 @@ mod tests {
     fn selection_start_creates_selection_at_position() {
         let src = "hello world".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         assert!(app.selection.is_none(), "precondition: no selection");
 
         app.selection_start(0, 3);
@@ -1779,6 +1934,7 @@ mod tests {
     fn selection_update_moves_cursor() {
         let src = "hello world".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.selection_start(0, 3);
         app.selection_update(0, 8);
 
@@ -1792,6 +1948,7 @@ mod tests {
     fn selection_update_noop_when_no_selection() {
         let src = "hello world".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         // No selection — must not panic.
         app.selection_update(0, 5);
         assert!(app.selection.is_none());
@@ -1802,6 +1959,7 @@ mod tests {
         // Use a rendered document whose first line contains known text.
         let src = "hello world".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         // Select characters 0..5 on line 0 ("hello").
         app.selection_start(0, 0);
         app.selection_update(0, 5);
@@ -1824,6 +1982,7 @@ mod tests {
     fn selection_finish_noop_on_empty_selection() {
         let src = "hello world".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.selection_start(0, 3);
         // Don't update — selection is zero-length.
         app.selection_finish();
@@ -1838,6 +1997,7 @@ mod tests {
     fn selection_finish_noop_when_no_selection() {
         let src = "hello world".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         // Must not panic when there is no selection.
         app.selection_finish();
         assert!(app.status_message.is_none());
@@ -1847,6 +2007,7 @@ mod tests {
     fn selection_cleared_on_render() {
         let src = "hello world".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.selection_start(0, 0);
         app.selection_update(0, 5);
         assert!(app.selection.is_some(), "precondition: selection set");
@@ -1862,6 +2023,7 @@ mod tests {
 
         let src = "hello world".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.selection_start(0, 0);
         app.selection_update(0, 5);
         assert!(app.selection.is_some(), "precondition: selection set");
@@ -1880,6 +2042,7 @@ mod tests {
 
         let src = "hello world".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         app.drag_origin = Some((0, 5));
 
         app.load_file(target_path).expect("load_file must succeed");
@@ -1914,6 +2077,7 @@ mod tests {
     fn make_double_click_app() -> App {
         let src = "hello world".to_string();
         let mut app = App::new(src, PathBuf::from("test.md"), 80, 25);
+        app.block_until_ready();
         // Set body_area so select_word_at and body_pos work with screen coords.
         app.body_area = Rect {
             x: 0,
@@ -2126,6 +2290,7 @@ mod tests {
         // App opened directly from a file arg (no browser).
         let src = "# Hello".to_string();
         let mut app = App::new(src, PathBuf::from("doc.md"), 80, 25);
+        app.block_until_ready();
         assert!(app.browser_origin.is_none(), "precondition: no origin");
         // Must not panic or change mode.
         app.back_to_browser();
