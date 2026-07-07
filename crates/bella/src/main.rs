@@ -8,6 +8,7 @@ mod app;
 
 mod events;
 pub mod history;
+mod render_worker;
 mod selection;
 mod ui;
 
