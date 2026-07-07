@@ -71,6 +71,12 @@ impl SearchState {
     }
 }
 
+impl Default for SearchState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Central application state passed through the event loop.
 pub struct App {
     /// Raw markdown source.

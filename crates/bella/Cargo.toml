@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 description = "Beautiful terminal markdown viewer — local-only, no cloud"
 
+[lib]
+name = "bella"
+path = "src/lib.rs"
+
 [[bin]]
 name = "bella"
 path = "src/main.rs"

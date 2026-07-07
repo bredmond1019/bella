@@ -4,15 +4,9 @@
 //! hands off to the event loop.  `main.rs` itself stays thin; logic lives
 //! in `app`, `ui`, and `events`.
 
-mod app;
-
-mod events;
-pub mod history;
-mod render_worker;
-mod selection;
-mod ui;
-
 use std::path::PathBuf;
+
+use bella::{app, events};
 
 use anyhow::{Context, Result};
 use clap::Parser;
