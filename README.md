@@ -12,6 +12,8 @@ related: [bella-docs-index, bella-planning-index]
 
 # Bella
 
+> Part of the **Bastion** ecosystem — see the [bastion-os](https://github.com/bredmond1019/bastion-os) front door for the full architecture.
+
 A beautiful terminal markdown viewer and editor with full mouse support — local-only, no cloud.
 
 ## Prerequisites
@@ -136,11 +138,7 @@ bella/
 
 ## Roadmap / Known limitations
 
-Upcoming phases in the Bastion Consolidation Program ([master-plan](https://github.com/bredmond1019/bastion-os/tree/main)):
-
-- **Editor Mode (`BE.3.H`)**: Reactivating the edit-sync functionality and adding full mouse support for editing.
-- **Config & Theming (`BE.2.F`)**: Adding live reload, configurations, and themes.
-- **Bastion Absorption (`BE.3.J`)**: Ultimately, Bella will stop being a standalone app and be absorbed into the unified `bastion` Console binary (`bastion bella`) to form Mission Control.
+- **No known blocking limitations.** Markdown parsing runs off the TUI event loop on a worker thread, keeping the interface responsive on large files. Future work: incremental re-render and richer syntax coverage.
 
 ---
 
