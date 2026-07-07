@@ -22,7 +22,7 @@ A beautiful terminal markdown viewer and editor with full mouse support — loca
 
 ```bash
 # 1. Clone the repo
-git clone <repo-url> bella && cd bella
+git clone https://github.com/bredmond1019/bella && cd bella
 
 # 2. Build all crates
 cargo build
