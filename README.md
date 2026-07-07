@@ -134,6 +134,14 @@ bella/
 | [planning/harness.json](planning/harness.json) | SDLC validation/UI-test config (see `harness.examples.md`) |
 | [planning/decisions/index.md](planning/decisions/index.md) | Architectural decision records (D1–…) |
 
+## Roadmap / Known limitations
+
+Upcoming phases in the Bastion Consolidation Program ([master-plan](https://github.com/bredmond1019/bastion-os/tree/main)):
+
+- **Editor Mode (`BE.3.H`)**: Reactivating the edit-sync functionality and adding full mouse support for editing.
+- **Config & Theming (`BE.2.F`)**: Adding live reload, configurations, and themes.
+- **Bastion Absorption (`BE.3.J`)**: Ultimately, Bella will stop being a standalone app and be absorbed into the unified `bastion` Console binary (`bastion bella`) to form Mission Control.
+
 ---
 
 *Initialized 2026-06-24 from `base-template` (commit `45bda73d575ceba2ae0216f67a10a5334de3f5b4`).*
