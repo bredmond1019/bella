@@ -480,7 +480,14 @@ pub(crate) fn apply(action: Action, app: &mut App) {
     }
 }
 
-/// Synchronous event loop.  Draws, then blocks on the next terminal event.
+/// Poll timeout for each iteration of [`run_loop`]. Short enough that a
+/// render in flight never makes the loop feel unresponsive to keys, long
+/// enough to avoid a busy-spin.
+const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(50);
+
+/// Event loop. Draws, then polls for the next terminal event with a timeout
+/// (rather than blocking on it) so a background markdown render never stalls
+/// input handling; each tick also drains any render result that has landed.
 pub fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     mut app: App,
@@ -502,6 +509,17 @@ pub fn run_loop(
 
         if app.should_quit {
             break;
+        }
+
+        // Drain any render result that has landed since the last tick so a
+        // `Loading…` state gets replaced as soon as possible, without ever
+        // blocking the loop on the render itself.
+        app.poll_render();
+
+        if !event::poll(EVENT_POLL_TIMEOUT)? {
+            // No terminal event within the timeout; loop back around to
+            // redraw (picks up any render that just landed) and poll again.
+            continue;
         }
 
         match event::read()? {

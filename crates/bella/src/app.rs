@@ -331,10 +331,10 @@ impl App {
     /// and return `true`. Stale results (superseded by a later resize/load)
     /// are discarded without changing `render_state`. Returns `false` when
     /// no fresh, matching result is available yet.
-    // Not yet called from `run_loop` — that wiring lands in a follow-up task
-    // that switches the event loop to `crossterm::event::poll` and drains
-    // this each tick. Allowed dead code until then.
-    #[allow(dead_code)]
+    ///
+    /// Called every tick of `run_loop`, which polls for terminal events with
+    /// a timeout rather than blocking, so a render in flight never stalls
+    /// input handling.
     pub fn poll_render(&mut self) -> bool {
         let Some(result) = self.render_worker.try_recv_latest() else {
             return false;
