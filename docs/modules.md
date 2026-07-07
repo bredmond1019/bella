@@ -239,8 +239,12 @@ Central state container. 2183 lines — the largest app-crate file.
 | `mode` | `Mode` | Current UI mode |
 | `browser` | `Option<Browser>` | Browser state (Browser mode) |
 | `browser_origin` | `Option<(PathBuf, usize)>` | Saved browser dir + cursor for round-trip |
+| `render_worker` | `RenderWorker` | Background thread that runs `bella_engine::render_with_edit` off the event-loop thread |
+| `render_generation` | `u64` | Token of the most recently requested render; used to discard stale results |
+| `render_state` | `RenderState` | `Loading` (placeholder shown) or `Ready` (real content applied) for `render_generation` |
 
 **Key invariants:**
+- `render()`, `load_file()`, and `App::new()` kick off an async render via `render_worker.request_render(...)` and set `render_state = Loading` with placeholder `lines`; they never block on the render itself. `poll_render()` (called each tick of `run_loop`) drains the worker's channel and applies the result once it matches `render_generation`, discarding stale (superseded) ones.
 - `render()` resets all overlay state (focused link, hovered link, search, selection, drag) because display line indices change.
 - `last_click` is cleared after a successful double-click so triple-click starts fresh.
 - `drag_origin` guards `selection_finish()` — set on Down, cleared by double-click, consumed by Up. Prevents double-calling finish on double-click sequences.
@@ -313,6 +317,33 @@ Event loop, key/mouse mappers, and action dispatcher.
 | `map_browser_mouse(mouse, app) -> Action` | Browser mouse mapper (pure) |
 | `apply(action, app)` | Dispatch action → App state mutations |
 | `run_loop(terminal, app) -> Result<()>` | Main event loop |
+
+`run_loop` polls for terminal events with a timeout (`EVENT_POLL_TIMEOUT`, 50ms) rather than blocking on `event::read()`, and calls `app.poll_render()` each tick to drain any background render result that has landed. This keeps input responsive while `render_worker.rs` (see below) parses a document off-thread.
+
+---
+
+### `render_worker.rs`
+
+Background render thread: offloads `bella_engine::render_with_edit` off the event-loop thread so a large document never stalls input handling. Owns no TUI state and does not touch `bella-engine`.
+
+**Key types:**
+
+| Type | Description |
+|---|---|
+| `RenderWorker` | Owns the request/response `mpsc` channels to the background thread |
+| `RenderResult` | `generation: u64`, `rendered: Rendered` — a delivered render tagged with its request's generation |
+
+**Key functions:**
+
+| Function | What it does |
+|---|---|
+| `RenderWorker::spawn() -> Self` | Spawn the background thread; returns immediately |
+| `request_render(source, base_dir, width, theme, edit, tables) -> u64` | Send a render request; returns a monotonically increasing generation token, never blocks |
+| `try_recv_latest() -> Option<RenderResult>` | Non-blocking drain; returns only the highest-generation result currently buffered, discarding older ones |
+| `recv_blocking() -> Result<RenderResult, RecvError>` | Blocking receive of the next result (test-only synchronous waiting) |
+| `is_latest(result, generation) -> bool` | Whether `result` matches the given generation (i.e. is not stale) |
+
+The worker thread processes requests strictly in FIFO order over a single `std::thread`; the caller (`App`) is responsible for comparing each delivered `RenderResult`'s generation against its own `render_generation` and discarding stale ones (see `app.rs` above).
 
 ---
 

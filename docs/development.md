@@ -142,10 +142,12 @@ bella/
 │       ├── Cargo.toml
 │       └── src/
 │           ├── main.rs         ← CLI + terminal lifecycle
+│           ├── lib.rs          ← library re-exports (shared by bin + integration tests)
 │           ├── app.rs          ← App state + all navigation logic
 │           ├── browser.rs      ← directory listing model
 │           ├── events.rs       ← event loop + mappers + Action dispatcher
 │           ├── history.rs      ← back/forward stack
+│           ├── render_worker.rs ← background render thread (async markdown parse/render)
 │           ├── selection.rs    ← text selection + clipboard
 │           └── ui.rs           ← ratatui draw functions
 ├── planning/                   ← context, status, master-plan, specs, decisions

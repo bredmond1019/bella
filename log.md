@@ -2,12 +2,21 @@
 type: Log
 title: Bella Development Log
 description: Chronological log of work completed for Bella.
-timestamp: "2026-07-04T14:11:16Z"
+timestamp: "2026-07-07T12:41:45Z"
 ---
 
 # Log — Bella
 
 *Append-only working log. One dated entry per session. Newest entries at the top.*
+
+---
+
+## [2026-07-07]
+
+### Shipped ticket-async-markdown-render — background render worker, non-blocking event loop
+- **What:** Ran `/sdlc-task` on the ticket `ticket-async-markdown-render` (`planning/ticket-async-markdown-render/tasks.md`) — moved bella's synchronous markdown parse/render off the event loop onto a background `std::thread` (new `crates/bella/src/render_worker.rs`), added a `Loading`/`Ready` `RenderState` to `App`, and switched `run_loop` to a non-blocking 50ms poll loop instead of blocking on `event::read()`. This was queued as a portfolio-release high-value item (item A2) to unblock the TUI so large files no longer freeze it. All 5 tasks passed (commits `13865db`, `bb503b8`, `affca17`, `fbae58a`, `66ce188`). Then ran a full `/close-out`: gating suite green (fmt/clippy/test/build --release + emoji gate), coverage scan found no blocking gaps, low-level code review found no issues, and docs were patched (`docs/development.md`, `docs/modules.md`) to cover the new `render_worker.rs` module and `App` fields; `docs/architecture.md`'s Render Pipeline/Event Loop sections were flagged NEEDS_REVIEW (architecture-level, not surgically fixed).
+- **Why:** Shipped ticket-async-markdown-render (background render worker, non-blocking event loop) via `/sdlc-task`; closed out with full gating suite, coverage check, code review, and doc patch — the TUI blocked on synchronous render for large files, which was queued as high-value portfolio-release item A2.
+- **Refs:** `planning/ticket-async-markdown-render/tasks.md`, `crates/bella/src/render_worker.rs`, `crates/bella/tests/render_async.rs`
 
 ---
 
