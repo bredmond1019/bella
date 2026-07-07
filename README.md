@@ -138,7 +138,11 @@ bella/
 
 ## Roadmap / Known limitations
 
-- **No known blocking limitations.** Markdown parsing runs off the TUI event loop on a worker thread, keeping the interface responsive on large files. Future work: incremental re-render and richer syntax coverage.
+Markdown parsing already runs off the TUI event loop on a worker thread, so large files stay responsive. Planned work:
+
+- **Editor mode:** Reactivate edit-sync and add full mouse support for editing.
+- **Config & theming:** Live reload, user configuration, and themes.
+- **Console absorption:** Bella is planned to fold into the unified `bastion` Console binary (`bastion bella`) rather than remain a standalone app.
 
 ---
 
