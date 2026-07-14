@@ -24,6 +24,6 @@ trees/
 *.sqlite
 *.db
 state.json
-planning/
+/planning
 node_modules/
 target/
