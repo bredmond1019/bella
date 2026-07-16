@@ -5,6 +5,7 @@ A beautiful terminal markdown viewer and editor with full mouse support — loca
 ## Before you start
 
 - **Strategic context:** `planning/context.md` (read first) → `planning/status.md` (current state)
+- **Symlink warning:** the `planning/` directory is actually a local symlink pointing to the company brain repo's `_planning/` vault (e.g. `core/_planning/bella/`). The brain repo is responsible for tracking all planning files under Git. Do not track `planning/` in this project's public Git repository (it is gitignored).
 - **Plan:** `planning/master-plan.md` — the phase/block sequence
 - **Pipeline config:** `planning/harness.json` — the validation commands + UI-test config the
   SDLC engines run (see `planning/harness.examples.md` for ready-made stack profiles)
