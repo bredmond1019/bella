@@ -5,6 +5,7 @@ A beautiful terminal markdown viewer and editor with full mouse support — loca
 ## Before you start
 
 - **Strategic context:** `planning/context.md` (read first) → `planning/status.md` (current state)
+- **Symlink warning:** the `planning/` directory is actually a local symlink pointing to the company brain repo's `_planning/` vault (e.g. `core/_planning/bella/`). The brain repo is responsible for tracking all planning files under Git. Do not track `planning/` in this project's public Git repository (it is gitignored).
 - **Plan:** `planning/master-plan.md` — the phase/block sequence
 - **Pipeline config:** `planning/harness.json` — the validation skills + UI-test config the
   SDLC engines run (see `planning/harness.examples.md` for ready-made stack profiles)
@@ -36,8 +37,13 @@ A beautiful terminal markdown viewer and editor with full mouse support — loca
    yet (local-only personal tool). The render/layout engine is derived from
    `github.com/zemse/hackmd` (MIT) — treat that as the only authoritative upstream; flag any
    other handle or profile link as unverified before publishing it.
-6. <!-- Add project-specific standing rules here (prompt handling, registries, deployment
-   boundaries, code style, etc.). -->
+6. **`bella-engine`'s public surface is a cross-repo contract with `bastion`.** `bastion` depends on
+   `bella-engine` as a Cargo path dependency (see `planning/decisions/D3-bella-engine-shared-with-bastion.md`)
+   with no version pin and no cross-repo CI. Before merging any change to `bella-engine/src/lib.rs`'s
+   re-exports, or to public items in `browser.rs`/`theme.rs`/`markdown.rs`, run `cargo build && cargo
+   test` in `core/bastion` and fix or coordinate any break. `bella` (the standalone binary crate)
+   stays independent — it is meant to also ship as its own open-source project, separate from
+   bastion's ops framing (D3).
 
 ## Known bugs
 
