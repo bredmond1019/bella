@@ -44,6 +44,12 @@ A beautiful terminal markdown viewer and editor with full mouse support — loca
    test` in `core/bastion` and fix or coordinate any break. `bella` (the standalone binary crate)
    stays independent — it is meant to also ship as its own open-source project, separate from
    bastion's ops framing (D3).
+7. **Use `cargo nextest run`, never plain `cargo test`, for any test run you invoke yourself
+   during a task** (scoped: `cargo nextest run -p <crate> <module::path>`; full fast pass:
+   `cargo nextest run --lib --bins --workspace`). The one exception is the task explicitly designated to
+   own full-suite validation for a spec — that task runs the real `cargo test` / `cargo build
+   --release` gates, per `planning/harness.json`'s `command` (not `fastCommand`). See "Build /
+   test / run" below for the full rationale.
 
 ## Known bugs
 
@@ -55,7 +61,8 @@ None known at initialization.
 # Rust Cargo workspace (crates/bella-engine + crates/bella).
 cargo build                                  # build all crates (debug)
 cargo build --release                        # release build
-cargo test                                   # run the suite (authoritative)
+cargo nextest run --lib --bins --workspace          # fast — use this, not plain `cargo test`
+cargo test                                   # full suite (authoritative)
 cargo clippy --all-targets -- -D warnings    # lint gate
 cargo fmt --check                            # format gate
 cargo run -p bella -- <file|dir>             # run the viewer
@@ -64,6 +71,20 @@ cargo run -p bella -- <file|dir>             # run the viewer
 > **Stack note:** the SDLC harness/skills default to npm/Next assumptions. This is a Rust
 > project — `planning/harness.json` is already set to the `rust` profile (fmt/clippy/test/build).
 
+> **Always prefer `cargo nextest run --lib --bins --workspace` over plain `cargo test` in this repo.**
+> This is wired as the `fastCommand` on the `test` check in `planning/harness.json`, which the
+> SDLC engines use for per-task (`testDepth: "fast"`) runs — reach for it manually too whenever
+> iterating outside the harness. Requires `cargo-nextest` on PATH (`brew install cargo-nextest`);
+> `cargo test` remains the authoritative full-suite gate.
+>
+> **Scope even narrower while mid-task**: `cargo nextest run -p <crate> <module::path>` for just
+> the touched crate/module. Only the task(s) explicitly owning full-suite validation for a spec
+> should run the full `cargo test` / `cargo build --release` gates.
+>
+> **`sccache` is wired in via `.cargo/config.toml`** (`rustc-wrapper = "sccache"`) — caches
+> compiled object code across builds so repeated compiles within an SDLC spec reuse work instead
+> of recompiling from scratch. Requires `sccache` on PATH (`brew install sccache`).
+>
 > The SDLC pipeline reads its validation suite from `planning/harness.json` (not from this
 > block). Keep the `<test>`/`<build>` commands here in sync with that file's
 > `validation.checks[]` so humans and the pipeline run the same thing.
