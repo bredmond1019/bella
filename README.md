@@ -147,3 +147,23 @@ Markdown parsing already runs off the TUI event loop on a worker thread, so larg
 ---
 
 *Initialized 2026-06-24 from `base-template` (commit `45bda73d575ceba2ae0216f67a10a5334de3f5b4`).*
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](./LICENSE-APACHE) · <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](./LICENSE-MIT) · <http://opensource.org/licenses/MIT>)
+
+at your option — **with one exception**. The `bella-engine` crate is a derivative of
+[zemse/hackmd](https://github.com/zemse/hackmd) (commit `7650cdc`) and stays **MIT only**, with the
+upstream copyright notice preserved; see
+[`crates/bella-engine/ATTRIBUTION.md`](./crates/bella-engine/ATTRIBUTION.md) for the ported files.
+The `reference/` directory holds unmodified upstream source and is excluded from the workspace.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
+this work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without
+any additional terms or conditions.
+
+Built for one operator and released because it may be useful to others — there is no support
+obligation, no issue-response SLA, and no stability promise. See HQ decisions D40 and D75.
