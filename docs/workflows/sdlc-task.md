@@ -7,7 +7,7 @@ layer: [factory]
 project: bella
 status: active
 keywords: [sdlc-task, lean SDLC engine, single unit, implement test loop, worktree]
-related: [sdlc-run, sdlc-flow, sdlc-block, commands, bella-workflows-index]
+related: [sdlc-flow, commands, bella-workflows-index]
 ---
 
 # `/sdlc-task` — lean single-unit SDLC engine

@@ -7,7 +7,7 @@ layer: [factory]
 project: bella
 status: active
 keywords: [sdlc-flow, shared worktree, PR terminal, feature work, end-review, test loop]
-related: [sdlc-run, sdlc-task, sdlc-block, commands, bella-workflows-index]
+related: [sdlc-task, commands, bella-workflows-index]
 ---
 
 # `/sdlc-flow` — shared-worktree, PR-terminating SDLC engine
