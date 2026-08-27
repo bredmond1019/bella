@@ -11,6 +11,29 @@ timestamp: "2026-07-07T12:41:45Z"
 
 ---
 
+## [2026-08-27]
+
+### Build/security cleanup — no feature work
+- **What:** Removed the dead `rustc-wrapper = "sccache"` from `.cargo/config.toml` (0 cache hits
+  measured); added workspace-root `[profile.dev]` (`line-tables-only` + unpacked split-debuginfo).
+  `cargo clean` reclaimed 1.9GiB (`target/` 1.8G -> 1.1G). Then applied four RustSec fixes via plain
+  `cargo update -p` (no `Cargo.toml` edit): `crossbeam-epoch` (`RUSTSEC-2026-0204`), `lru`
+  (`RUSTSEC-2026-0253`), `anyhow` (`RUSTSEC-2026-0190`), and `quick-xml` 0.39.4->0.41.0 (the real
+  finding — `RUSTSEC-2026-0195`/`0194`, 7.5/high DoS on crafted XML/plist input) by bumping `plist`
+  1.9.0->1.10.0, staying inside `syntect`'s existing `plist = "^1.3"` range. `cargo audit` is now
+  clean except two unmaintained warnings (`bincode`, `yaml-rust`, both via `syntect`, no patched
+  version exists upstream) — tracked in HQ's `docs/rust-dependency-audit.md`.
+- **Why:** Same fleet-wide build-speed/security pass run across every `core/*` Rust repo this
+  session; `bella` pulls in `bella-engine`'s `syntect` dependency, which is what surfaced the
+  high-severity `quick-xml` finding.
+- **Refs:** commits below, HQ's `docs/rust-dependency-audit.md` and `docs/infrastructure.md`'s
+  "Rust build artifacts" section.
+
+```
+736cb58 perf(build): remove dead sccache wrapper, add profile.dev link-time fix
+d6d3aac security(deps): bump crossbeam-epoch, lru, anyhow, plist for RustSec fixes
+```
+
 ## [2026-07-07]
 
 ### Shipped ticket-async-markdown-render — background render worker, non-blocking event loop
