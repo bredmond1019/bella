@@ -2,3 +2,9 @@
 members = ["crates/*"]
 exclude = ["reference"]
 resolver = "2"
+
+[profile.dev]
+# Keep panic/backtrace line numbers; drop full DWARF type descriptions (biggest link-time cost).
+debug = "line-tables-only"
+# Skip macOS's dsymutil debug-info-bundling pass; leave debug info split across .o files instead.
+split-debuginfo = "unpacked"
