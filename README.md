@@ -1,152 +1,172 @@
----
-type: Index
-title: Bella
-description: A beautiful terminal markdown viewer and editor with full mouse support — local-only, no cloud.
-doc_id: bella-readme
-layer: [console]
-project: bella
-status: active
-keywords: [terminal markdown viewer, TUI, ratatui, mouse support, local-only, Rust]
-related: [bella-docs-index, bella-planning-index]
----
-
 # Bella
 
-> Part of the **Bastion** ecosystem — see the [bastion-os](https://github.com/bredmond1019/bastion-os) front door for the full architecture.
+A terminal markdown viewer with full mouse support — scroll, click links, drag-select text and
+copy to your system clipboard, all from inside a `ratatui` TUI. Local-only: it reads files off
+disk and opens a system browser tab for external links; nothing else talks to the network.
 
-A beautiful terminal markdown viewer and editor with full mouse support — local-only, no cloud.
+> Part of the **Bastion** ecosystem — see the [bastion-os](https://github.com/bredmond1019/bastion-os)
+> front door for the wider architecture. Bella itself works standalone; nothing below requires it.
 
-## Prerequisites
+## What this is for
 
-- Rust toolchain (stable, edition 2024) — install via [rustup](https://rustup.rs/)
+You want to read (or browse a folder of) markdown files without leaving the terminal — with
+proper link-following, in-document search, and mouse selection, instead of `less`/`cat`-ing raw
+markdown source. Point it at a file, or at nothing, and it opens a file browser.
 
-## Setup
+## Quickstart
+
+Run these in a shell:
 
 ```bash
-# 1. Clone the repo
+# 1. Clone and build
 git clone https://github.com/bredmond1019/bella && cd bella
-
-# 2. Build all crates
-cargo build
-```
-
-## Running locally
-
-```bash
-# Release build
 cargo build --release
 
-# Run the viewer
-cargo run -p bella -- <file|dir>
+# 2. Open a specific file
+cargo run --release -p bella -- README.md
+
+# 3. Or browse a directory (defaults to the current directory if you omit the argument)
+cargo run --release -p bella
+cargo run --release -p bella -- some/dir
 ```
 
-## Tests
+Press `q` or `Ctrl-C` to quit from either mode.
+
+To install the `bella` binary onto your `PATH` instead of running it via `cargo run`:
 
 ```bash
-cargo test
+cargo install --path crates/bella
 ```
 
-## Lint / format
+### Prerequisites
 
-```bash
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
-```
-
-## Directory map
-
-```
-bella/
-├── .claude/                  ← Claude Code commands + SDLC workflow engines
-├── crates/
-│   ├── bella-engine/         ← render/layout library (palette, syntax, theme, links, markdown, geometry)
-│   └── bella/                ← TUI binary (clap CLI, ratatui draw loop, events, app state, browser, selection)
-├── planning/                 ← context, status, master-plan, harness.json, decisions/, specs/
-└── reference/                ← upstream zemse/hackmd source (excluded from workspace)
-```
+| Requirement | Why | If missing |
+|---|---|---|
+| Rust stable toolchain, edition 2024 | Building the workspace | Install via [rustup](https://rustup.rs/) |
+| A terminal emulator with mouse support | Hover/click/drag gestures | Most modern emulators work (iTerm2, WezTerm, kitty, Alacritty, Ghostty); without one, keyboard navigation still works fully |
+| A system clipboard provider | Drag-select / double-click copy | On Linux without a display server, clipboard writes fail; the error shows in the status line for one frame and clears — everything else still works |
 
 ## Keybindings
 
-### Keyboard — Reader mode
+### Reader mode (a file is open)
 
 | Key | Action |
 |---|---|
-| `j` / `↓` | Scroll down |
-| `k` / `↑` | Scroll up |
-| `g` | Go to top |
-| `G` | Go to bottom |
+| `j` / `↓` | Scroll down 1 line |
+| `k` / `↑` | Scroll up 1 line |
+| `Ctrl-d` | Scroll down half a page |
+| `Ctrl-u` | Scroll up half a page |
+| `PageDown` | Scroll down a full page |
+| `PageUp` | Scroll up a full page |
+| `g` / `Home` | Go to top |
+| `G` / `End` | Go to bottom |
 | `Tab` | Focus next link |
 | `Shift-Tab` | Focus previous link |
-| `Enter` | Follow focused link (local file or browser URL) |
+| `Enter` | Follow the focused link (local file, in-file anchor, or system browser) |
 | `[` | History back |
 | `]` | History forward |
-| `/` | Start search |
-| `n` | Next search match |
-| `N` | Previous search match |
-| `Esc` | Clear focus / cancel search |
-| `Backspace` | Return to file browser |
+| `/` | Start in-document search |
+| `n` / `N` | Next / previous search match |
+| `Esc` | Clear link focus, or cancel an in-progress search |
+| `Backspace` | Return to the file browser |
 | `q` / `Ctrl-C` | Quit |
 
-### Keyboard — Browser mode
+### Browser mode (no file open — navigating a directory)
 
 | Key | Action |
 |---|---|
 | `j` / `↓` | Move cursor down |
 | `k` / `↑` | Move cursor up |
-| `Enter` | Open file or descend into directory |
-| `Backspace` | Ascend to parent directory |
+| `Enter` | Open the selected file, or descend into the selected directory |
+| `Backspace` | Ascend to the parent directory |
 | `q` / `Ctrl-C` | Quit |
 
-### Mouse — Reader mode
+### Mouse — reader mode
 
 | Gesture | Action |
 |---|---|
-| Scroll wheel | Scroll up / down (3 lines per tick) |
-| Hover | Highlight link under cursor |
-| Click link | Follow link (local file or browser URL) |
-| Click checkbox | Toggle checkbox visual state |
-| Click + drag | Select text; releases copy selection to system clipboard (arboard) |
-| Double-click | Select word under cursor (450 ms window); copies to system clipboard |
+| Scroll wheel | Scroll up / down, 3 lines per tick |
+| Hover | Highlight the link under the pointer |
+| Click a link | Follow it |
+| Click a checkbox | Toggle its visual state (display-only — does not edit the source file) |
+| Click + drag | Select text; releasing copies the selection to the system clipboard |
+| Double-click | Select the word under the pointer (within a 450 ms window) and copy it |
 
-### Mouse — Browser mode
+### Mouse — browser mode
 
 | Gesture | Action |
 |---|---|
-| Scroll wheel | Scroll the entry list up / down |
-| Click entry | Select and immediately open the file or descend into the directory |
+| Scroll wheel | Scroll the entry list |
+| Click an entry | Select it, then immediately open the file or descend into the directory |
 
-## Documentation
+Full reference with the internal call chain behind every gesture:
+[`docs/features.md`](docs/features.md).
 
-### Technical docs
+## Directory map
 
-| Doc | Contents |
-|---|---|
-| [docs/architecture.md](docs/architecture.md) | Two-crate design, render pipeline, event loop, coordinate system, Mode model |
-| [docs/modules.md](docs/modules.md) | Per-module reference: purpose, key types, public functions |
-| [docs/development.md](docs/development.md) | Prerequisites, build/test/lint steps, adding keybindings, SDLC pipeline |
-| [docs/features.md](docs/features.md) | All keybindings and mouse gestures with internal descriptions |
+```
+bella/
+└── crates/
+    ├── bella-engine/   ← render/layout library: markdown parsing, syntax highlighting,
+    │                      link resolution, theme/palette, checkbox + table geometry
+    └── bella/          ← TUI binary: clap CLI, ratatui draw loop, event dispatch,
+                           app state, file browser, text selection
+```
 
-### Planning docs
+`bella-engine` has zero terminal or I/O dependencies — every function takes explicit parameters
+and returns plain data, so it can be (and is) unit-tested without a live terminal. See
+[`docs/architecture.md`](docs/architecture.md) for the full render pipeline and the reasoning
+behind the two-crate split.
 
-| Doc | Contents |
-|---|---|
-| `planning/context.md` | Orientation + governing principles |
-| `planning/master-plan.md` | Strategy + phase specifications |
-| `planning/status.md` | Current progress |
-| `planning/harness.json` | SDLC validation/UI-test config (see `harness.examples.md`) |
-| `planning/decisions/index.md` | Architectural decision records (D1–…) |
+## Theming
 
-## Roadmap / Known limitations
+Bella ships **Catppuccin** Mocha (dark) and Latte (light) palettes and auto-detects which to use
+from your terminal's `COLORFGBG` environment variable; colour depth (truecolor vs. 256-colour) is
+probed separately via `COLORTERM`/`TERM_PROGRAM`/`TERM`. You can override both explicitly with an
+optional config file:
 
-Markdown parsing already runs off the TUI event loop on a worker thread, so large files stay responsive. Planned work:
+```toml
+# ~/.config/md/config.toml
+theme = "dark"   # or "light"
+width = 100
+```
 
-- **Editor mode:** Reactivate edit-sync and add full mouse support for editing.
-- **Config & theming:** Live reload, user configuration, and themes.
-- **Console absorption:** Bella is planned to fold into the unified `bastion` Console binary (`bastion bella`) rather than remain a standalone app.
+## Development
 
----
+```bash
+cargo test                              # full test suite
+cargo clippy --all-targets -- -D warnings   # lint gate
+cargo fmt --check                       # format check
+```
 
-*Initialized 2026-06-24 from `base-template` (commit `45bda73d575ceba2ae0216f67a10a5334de3f5b4`).*
+Prerequisites, test-layer breakdown, and the full contributor workflow:
+[`docs/development.md`](docs/development.md).
+
+## Troubleshooting
+
+| Symptom | Likely cause | What to check |
+|---|---|---|
+| Mouse clicks/drags do nothing | Terminal emulator doesn't forward mouse events, or you're over SSH without mouse passthrough | Try a different emulator; keyboard-only navigation always works |
+| Copy-on-select silently does nothing | No clipboard provider available (e.g. headless Linux) | Look for the one-frame error in the status line; this is expected in that environment |
+| Colours look wrong / washed out | Terminal not reporting truecolor support | Set `COLORTERM=truecolor` if your emulator supports it |
+| Wrong theme picked automatically | `COLORFGBG` not set or reports light/dark backwards | Override with `~/.config/md/config.toml` (`theme = "dark"` / `"light"`) |
+
+## Roadmap / known limitations
+
+- **Editing:** Bella is a viewer today — there is no edit mode. An editor mode with full mouse
+  support is planned.
+- **Config & theming:** live reload and richer theme options are planned beyond the current
+  `config.toml` override.
+- **Console absorption:** Bella is planned to eventually fold into a unified operator-console
+  binary rather than remain a standalone app; the standalone binary will keep working either way.
+
+## See also
+
+- [`docs/architecture.md`](docs/architecture.md) — two-crate design, render pipeline, event loop, coordinate system
+- [`docs/modules.md`](docs/modules.md) — per-module reference: purpose, key types, public functions
+- [`docs/development.md`](docs/development.md) — prerequisites, build/test/lint, contributor workflow
+- [`docs/features.md`](docs/features.md) — every keybinding and mouse gesture with the internal call chain
+- [`crates/bella-engine/ATTRIBUTION.md`](crates/bella-engine/ATTRIBUTION.md) — which files were ported from `zemse/hackmd`, and what changed
 
 ## License
 
@@ -159,11 +179,10 @@ at your option — **with one exception**. The `bella-engine` crate is a derivat
 [zemse/hackmd](https://github.com/zemse/hackmd) (commit `7650cdc`) and stays **MIT only**, with the
 upstream copyright notice preserved; see
 [`crates/bella-engine/ATTRIBUTION.md`](./crates/bella-engine/ATTRIBUTION.md) for the ported files.
-The `reference/` directory holds unmodified upstream source and is excluded from the workspace.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
 this work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without
 any additional terms or conditions.
 
 Built for one operator and released because it may be useful to others — there is no support
-obligation, no issue-response SLA, and no stability promise. See HQ decisions D40 and D75.
+obligation, no issue-response SLA, and no stability promise.
