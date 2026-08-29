@@ -7,10 +7,21 @@ layer: [console]
 project: bella
 status: active
 keywords: [module reference, bella-engine, bella crate, public API, Rust modules]
-related: [architecture, features]
+related: [capabilities, architecture, features]
 ---
 
 # Module Reference
+
+**What lives in each source file.** Use this when you know roughly what you need to change and want
+to find the file, or when you are reviewing a module's public surface. It is a map, not a tutorial —
+for the shape of the system read [`architecture.md`](architecture.md) first, and for what bella can
+actually do read [`capabilities.md`](capabilities.md).
+
+> **`bella-engine`'s public surface is a cross-repo contract.** `bastion` depends on this crate as
+> an unpinned Cargo path dependency, with no cross-repo CI to catch a break. Before changing
+> anything re-exported from `lib.rs`, or any public item in `browser.rs`, `theme.rs` or
+> `markdown.rs`, build and test `bastion` as well. Rationale:
+> `planning/decisions/D3-bella-engine-shared-with-bastion.md`.
 
 ## `bella-engine` crate
 
@@ -26,6 +37,31 @@ Crate root. Re-exports the stable public surface consumed by the `bella` app cra
 | `CheckboxMap`, `LinkMap`, `LinkTarget`, `TableMap` | `links` |
 | `Rendered`, `render_with_edit` | `markdown` |
 | `Theme` | `theme` |
+
+---
+
+### `browser.rs`
+
+Pure directory listing model.
+
+**Key types:**
+
+| Type | Description |
+|---|---|
+| `BrowserEntryKind` | `ParentDir`, `Dir`, `Markdown` |
+| `BrowserEntry` | `path`, `display`, `kind` |
+| `Browser` | `dir`, `entries`, `selected` (cursor), `scroll: u16` |
+
+**Key functions:**
+
+| Function | What it does |
+|---|---|
+| `Browser::new(dir) -> Self` | List directory (ignore crate, gitignore-aware, max_depth 1, dotfiles skipped) |
+| `Browser::move_cursor(delta, viewport_h)` | Wrap-around cursor with scroll-clamping |
+| `Browser::descend() -> Option<PathBuf>` | Dir/ParentDir → path, else None |
+| `Browser::ascend_target() -> Option<PathBuf>` | Parent of current dir |
+
+Entry order: `..` (if parent exists) → subdirs (case-insensitive alpha) → `.md`/`.mdx` files (case-insensitive alpha). Non-markdown files are hidden. Invariant: `selected < entries.len()` (or 0 when empty); scroll kept so `scroll <= selected < scroll + viewport_h`.
 
 ---
 
@@ -141,6 +177,10 @@ Syntax highlighting via syntect.
 
 ### `theme.rs`
 
+> **Only `Theme::dark()` is reachable from the binary.** `resolve()`, `detect_terminal_theme()`,
+> `light()` and `mission_control()` are tested but uncalled; `mission_control` has no name mapped to
+> it in `resolve` at all.
+
 Catppuccin-based color themes.
 
 **Key types:**
@@ -153,9 +193,10 @@ Catppuccin-based color themes.
 
 | Function | What it does |
 |---|---|
-| `Theme::dark() -> Self` | Catppuccin Mocha |
-| `Theme::light() -> Self` | Catppuccin Latte |
-| `resolve(name, cfg) -> Theme` | Pick by name or auto-detect via `COLORFGBG` |
+| `Theme::dark() -> Self` | Catppuccin Mocha — **the only one the binary constructs** |
+| `Theme::light() -> Self` | Catppuccin Latte — reachable only through `resolve` |
+| `Theme::mission_control() -> Self` | A third palette; **no name in `resolve` maps to it** |
+| `resolve(name, cfg) -> Theme` | Pick by name or auto-detect via `COLORFGBG`. No call site. |
 
 Auto-detect: `COLORFGBG` bg value 7–15 → light, 0–6 → dark.
 
@@ -163,7 +204,13 @@ Auto-detect: `COLORFGBG` bg value 7–15 → light, 0–6 → dark.
 
 ### `md_config.rs`
 
-Optional user config from `~/.config/md/config.toml`.
+Optional user config from `<config-dir>/md/config.toml`, where `<config-dir>` is whatever the
+`dirs` crate resolves for the platform — `~/Library/Application Support` on macOS, `~/.config` on
+Linux.
+
+> **Dead code today.** `load()` has no call site anywhere in the workspace, so the file is never
+> read and none of its three keys take effect. Same for `theme::resolve` below. See
+> [`capabilities.md`](capabilities.md) § "Not wired up".
 
 **Key types:**
 
@@ -249,31 +296,6 @@ Central state container. 2183 lines — the largest app-crate file.
 - `last_click` is cleared after a successful double-click so triple-click starts fresh.
 - `drag_origin` guards `selection_finish()` — set on Down, cleared by double-click, consumed by Up. Prevents double-calling finish on double-click sequences.
 - Checkbox toggles are visual-only; never written to disk.
-
----
-
-### `browser.rs`
-
-Pure directory listing model.
-
-**Key types:**
-
-| Type | Description |
-|---|---|
-| `BrowserEntryKind` | `ParentDir`, `Dir`, `Markdown` |
-| `BrowserEntry` | `path`, `display`, `kind` |
-| `Browser` | `dir`, `entries`, `selected` (cursor), `scroll: u16` |
-
-**Key functions:**
-
-| Function | What it does |
-|---|---|
-| `Browser::new(dir) -> Self` | List directory (ignore crate, gitignore-aware, max_depth 1, dotfiles skipped) |
-| `Browser::move_cursor(delta, viewport_h)` | Wrap-around cursor with scroll-clamping |
-| `Browser::descend() -> Option<PathBuf>` | Dir/ParentDir → path, else None |
-| `Browser::ascend_target() -> Option<PathBuf>` | Parent of current dir |
-
-Entry order: `..` (if parent exists) → subdirs (case-insensitive alpha) → `.md`/`.mdx` files (case-insensitive alpha). Non-markdown files are hidden. Invariant: `selected < entries.len()` (or 0 when empty); scroll kept so `scroll <= selected < scroll + viewport_h`.
 
 ---
 

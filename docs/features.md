@@ -7,10 +7,18 @@ layer: [console]
 project: bella
 status: active
 keywords: [keybindings, mouse gestures, reader mode, browser mode, keyboard shortcuts]
-related: [architecture, modules]
+related: [capabilities, architecture, modules]
 ---
 
 # Feature Reference
+
+**This page is the wiring diagram, not the user guide.** Every keybinding and mouse gesture is
+listed with the `Action` it produces and the `App` method that handles it — the reference you want
+when you are changing behaviour, not when you are trying to use bella.
+
+If you just want to know what bella can do and how to invoke it, read
+[`capabilities.md`](capabilities.md) instead. If you are adding a keybinding, the four places you
+have to touch are listed in [`development.md`](development.md#adding-a-new-keybinding).
 
 ## Reader Mode
 
@@ -108,16 +116,30 @@ Clicks below the last entry are ignored (no out-of-range selection).
 
 ## Colour and Theme
 
-Bella uses **Catppuccin** colour themes. Auto-detection reads `COLORFGBG`: bg value 7–15 → Latte (light), 0–6 → Mocha (dark). The terminal emulator's colour depth is detected separately via `COLORTERM`/`TERM_PROGRAM`/`TERM` environment probes; RGB colours are downgraded to the nearest xterm-256 entry on terminals that don't support truecolor.
+**Bella is dark-only today.** `app.rs` and `render_worker.rs` construct `Theme::dark()` (Catppuccin
+Mocha) directly at every render site; there is no code path that selects a different palette.
 
-An optional config file at `~/.config/md/config.toml` can override the theme and terminal width:
+The pieces of a theming system exist in `bella-engine` but have **no call site in the binary** —
+verified by grepping every `.rs` file in the workspace:
 
-```toml
-theme = "dark"   # or "light"
-width = 100
-```
+| Item | Where | State |
+|---|---|---|
+| `theme::resolve(name, cfg)` | `theme.rs` | Maps `"light"` / `"dark"` / anything-else to a `Theme`. Never called. |
+| `detect_terminal_theme()` | `theme.rs` | Reads `COLORFGBG` (bg 7–15 → Latte, 0–6 → Mocha). Only reachable through `resolve`, so never called. |
+| `Theme::light()` | `theme.rs` | Catppuccin Latte. Only reachable through `resolve`. |
+| `Theme::mission_control()` | `theme.rs` | A third palette **no name maps to** — `resolve` cannot return it. |
+| `md_config::load()` | `md_config.rs` | Reads `theme`, `width`, `line_numbers` from `<config-dir>/md/config.toml`. Never called, so the file is never read. |
 
----
+Two consequences worth stating plainly:
+
+- **The config file does nothing.** Its path is `dirs::config_dir()`-relative, so it would be
+  `~/Library/Application Support/md/config.toml` on macOS and `~/.config/md/config.toml` on Linux —
+  but neither is opened.
+- **Colour *depth* detection is real and does work.** That is a separate mechanism in
+  [`palette.rs`](../crates/bella-engine/src/palette.rs), probing `COLORTERM` → `TERM_PROGRAM` →
+  `TERM` and downgrading RGB to the nearest xterm-256 entry. It runs on every render.
+
+Wiring this up is tracked as a limitation in the README's roadmap section.
 
 ## Text Selection and Clipboard
 

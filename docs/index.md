@@ -1,31 +1,46 @@
 ---
 type: Index
 title: Docs Index
-description: Navigation index for Bella's docs/ directory.
+description: Navigation index for Bella's docs/ directory, grouped by what you are trying to do.
 doc_id: bella-docs-index
 layer: [console]
 project: bella
 status: active
-keywords: [bella docs, navigation index, architecture, modules, development, features]
-related: [architecture, modules, development, features, bella-workflows-index]
+keywords: [bella docs, navigation index, capabilities, architecture, development]
+related: [capabilities, architecture, modules, development, features, bella-workflows-index]
 ---
 
 # Docs — Bella
 
-| Doc | Contents |
-|---|---|
-| [architecture.md](architecture.md) | Two-crate design, render pipeline, event loop, coordinate system, Mode model |
-| [modules.md](modules.md) | Per-module reference: purpose, key types, public functions |
-| [development.md](development.md) | Prerequisites, build/test/lint steps, adding keybindings, SDLC pipeline |
-| [features.md](features.md) | All keybindings and mouse gestures with internal descriptions |
+Start with [`capabilities.md`](capabilities.md) if you want to *use* bella, and
+[`architecture.md`](architecture.md) if you want to *change* it.
 
-## SDLC workflows (docs/workflows/)
+## Using bella
 
-| Doc | Contents |
+| Doc | One line |
 |---|---|
-| [workflows/index.md](workflows/index.md) | Engine ladder overview + committed-state model |
-| workflows/sdlc-run.md | `sdlc-run` — full spec, in-place on main |
-| [workflows/sdlc-task.md](workflows/sdlc-task.md) | `sdlc-task` — lean single-unit implement→test→fix→commit |
-| [workflows/sdlc-flow.md](workflows/sdlc-flow.md) | `sdlc-flow` — shared worktree, per-task loop, one PR |
-| workflows/sdlc-block.md | `sdlc-block` — block-level roadmap orchestrator, branch train |
-| [workflows/commands.md](workflows/commands.md) | Ad-hoc planning + utility commands reference |
+| [capabilities.md](capabilities.md) | Every capability and how to invoke it — derived from source |
+| [features.md](features.md) | The same gestures, each traced to its `Action` and `App` method |
+
+## Changing bella
+
+| Doc | One line |
+|---|---|
+| [architecture.md](architecture.md) | Crate split, render pipeline, async render worker, event loop, modes |
+| [modules.md](modules.md) | Per-module purpose, key types, and public functions |
+| [development.md](development.md) | Build, test, lint, and how to add a keybinding |
+
+## Running the SDLC harness
+
+The automated pipelines that drive a spec from `tasks.md` to merged code.
+
+| Doc | One line |
+|---|---|
+| [workflows/index.md](workflows/index.md) | Which engine to reach for, and the shared committed-state model |
+| [workflows/sdlc-task.md](workflows/sdlc-task.md) | One small unit: implement → test → fix → commit |
+| [workflows/sdlc-flow.md](workflows/sdlc-flow.md) | A full spec on one branch, ending in a PR |
+| [workflows/commands.md](workflows/commands.md) | The ad-hoc planning and utility slash commands |
+
+> **Only two engines are installed in this repo** — `sdlc-task` and `sdlc-flow`. The `sdlc-run` and
+> `sdlc-block` engines described in the ladder exist in `base-template` but have no `.js` engine and
+> no command file here, so they cannot be invoked from bella.

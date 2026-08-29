@@ -7,10 +7,40 @@ layer: [console]
 project: bella
 status: active
 keywords: [two-crate architecture, bella-engine, render pipeline, async render worker, event loop, coordinate system]
-related: [modules, D2-engine-app-crate-split]
+related: [capabilities, modules, D2-engine-app-crate-split]
 ---
 
 # Architecture — Bella
+
+**How bella is put together and why.** Read this before changing anything structural — the crate
+boundary, the render pipeline, or the event loop. For what bella *does*, see
+[`capabilities.md`](capabilities.md); for what each module contains, see [`modules.md`](modules.md).
+
+## Orientation
+
+Three moving parts, and one of them runs on its own thread:
+
+```mermaid
+flowchart TD
+    K["Your keystroke<br/>or mouse event"] --> M["events.rs mappers<br/>(pure functions)"]
+    M --> A["Action"]
+    A --> AP["events::apply<br/>mutates App"]
+    AP --> D["ui::draw_reader<br/>paints the frame"]
+    D --> K
+    AP -.->|"file load / resize"| RW["render_worker<br/>background thread"]
+    RW -.->|"bella-engine renders"| P["Rendered { lines, link_map, … }"]
+    P -.->|"tagged with a generation"| PR["App::poll_render<br/>every tick"]
+    PR --> D
+```
+
+In sentences: **(1)** a key or mouse event is turned into an `Action` by a pure mapper function.
+**(2)** `events::apply` mutates `App`. **(3)** `ui::draw_reader` paints the next frame. Separately,
+**(4)** anything that changes the document — a file load or a terminal resize — hands the work to a
+background thread rather than doing it inline, and **(5)** `App::poll_render` picks up the finished
+render on a later tick. Steps 4 and 5 are why a large document never freezes the `q` key.
+
+The two crates split along that same line: **`bella-engine` is step 4's actual rendering work and
+touches no terminal at all; `bella` is every other box in the diagram.**
 
 ## Two-Crate Split
 

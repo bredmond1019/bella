@@ -23,6 +23,12 @@ slash-command lifecycle they automate.
 
 ---
 
+> **Two of the five rungs below are not installed in bella.** Only `sdlc-task.js` and
+> `sdlc-flow.js` exist in `.claude/workflows/`, and there is no `sdlc-run` or `sdlc-block` command
+> file — so those two cannot be invoked from this repo. They are documented here because the
+> engines are authored in `base-template` and this page is kept identical everywhere. Check
+> `ls .claude/workflows/*.js` before reaching for one.
+
 ## The pipeline ladder
 
 ```
@@ -186,4 +192,5 @@ each engine's committed state file — check the state JSON for real figures fro
 
 - harness-json.md — the `planning/harness.json` config the engines read.
 - [`.claude/commands/README.md`](../../.claude/commands/README.md) — the command catalog.
-- [`planning/decisions/`](../../planning/decisions/index.md) — the ADRs behind each behavior (D6–D43).
+- `planning/decisions/index.md` — the ADRs behind each behaviour (D6–D43). Not a link: `planning/`
+  is a symlink into the private brain vault and is gitignored here, so a relative link 404s on GitHub.

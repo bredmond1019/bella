@@ -99,8 +99,9 @@ cargo install --path crates/bella
 | Scroll wheel | Scroll the entry list |
 | Click an entry | Select it, then immediately open the file or descend into the directory |
 
-Full reference with the internal call chain behind every gesture:
-[`docs/features.md`](docs/features.md).
+Every capability with how to invoke it, including what markdown bella does and does not render:
+[`docs/capabilities.md`](docs/capabilities.md). The same gestures with the internal call chain
+behind each: [`docs/features.md`](docs/features.md).
 
 ## Directory map
 
@@ -120,16 +121,14 @@ behind the two-crate split.
 
 ## Theming
 
-Bella ships **Catppuccin** Mocha (dark) and Latte (light) palettes and auto-detects which to use
-from your terminal's `COLORFGBG` environment variable; colour depth (truecolor vs. 256-colour) is
-probed separately via `COLORTERM`/`TERM_PROGRAM`/`TERM`. You can override both explicitly with an
-optional config file:
+Bella renders with the **Catppuccin Mocha** (dark) palette. Colour *depth* is detected from your
+environment — `COLORTERM`, then `TERM_PROGRAM`, then `TERM` — and RGB values are downgraded to the
+nearest xterm-256 colour on terminals without truecolor support.
 
-```toml
-# ~/.config/md/config.toml
-theme = "dark"   # or "light"
-width = 100
-```
+> **Light mode is not selectable yet.** A Latte (light) palette and a `config.toml` loader both
+> exist in `bella-engine`, but nothing in the binary calls them — the app constructs the dark theme
+> directly. Treat light mode and the config file as unshipped; see
+> [`docs/capabilities.md`](docs/capabilities.md) § "Not wired up" for the exact state of each.
 
 ## Development
 
@@ -149,19 +148,22 @@ Prerequisites, test-layer breakdown, and the full contributor workflow:
 | Mouse clicks/drags do nothing | Terminal emulator doesn't forward mouse events, or you're over SSH without mouse passthrough | Try a different emulator; keyboard-only navigation always works |
 | Copy-on-select silently does nothing | No clipboard provider available (e.g. headless Linux) | Look for the one-frame error in the status line; this is expected in that environment |
 | Colours look wrong / washed out | Terminal not reporting truecolor support | Set `COLORTERM=truecolor` if your emulator supports it |
-| Wrong theme picked automatically | `COLORFGBG` not set or reports light/dark backwards | Override with `~/.config/md/config.toml` (`theme = "dark"` / `"light"`) |
+| Everything renders dark on a light terminal | Expected — bella is dark-only today | There is no light-mode switch yet; see [`docs/capabilities.md`](docs/capabilities.md) § "Not wired up" |
+| Raw HTML in a document renders as nothing | Expected — HTML events are dropped by the renderer | Use markdown equivalents; see [`docs/capabilities.md`](docs/capabilities.md) § "Markdown bella renders" |
+| An image shows as `[image: path]` | Expected — images are placeholders, not rendered | No terminal image protocol is implemented |
 
 ## Roadmap / known limitations
 
 - **Editing:** Bella is a viewer today — there is no edit mode. An editor mode with full mouse
   support is planned.
-- **Config & theming:** live reload and richer theme options are planned beyond the current
-  `config.toml` override.
+- **Config & theming:** the `config.toml` loader and the light palette are written but not wired
+  into the binary. Wiring them up — plus live reload and richer theme options — is planned.
 - **Console absorption:** Bella is planned to eventually fold into a unified operator-console
   binary rather than remain a standalone app; the standalone binary will keep working either way.
 
 ## See also
 
+- [`docs/capabilities.md`](docs/capabilities.md) — every capability and how to invoke it, derived from source
 - [`docs/architecture.md`](docs/architecture.md) — two-crate design, render pipeline, event loop, coordinate system
 - [`docs/modules.md`](docs/modules.md) — per-module reference: purpose, key types, public functions
 - [`docs/development.md`](docs/development.md) — prerequisites, build/test/lint, contributor workflow
