@@ -2,12 +2,56 @@
 type: Log
 title: Bella Development Log
 description: Chronological log of work completed for Bella.
-timestamp: "2026-07-07T12:41:45Z"
+timestamp: "2026-08-29T22:45:00Z"
 ---
 
 # Log — Bella
 
 *Append-only working log. One dated entry per session. Newest entries at the top.*
+
+---
+
+## [2026-08-29]
+
+### Planned the modeless mouse-driven editor (BE.6) — 3 blocks, lane, HQ roadmap
+- **What:** Authored the `modeless-editor` initiative: `BE.6.A` (edit-mode toggle + cursor,
+  read-only, plus the missing engine tests), `BE.6.B` (mutation + atomic save), `BE.6.C`
+  (selection, clipboard, undo/redo). Registered all three in `state.json` under a new Phase 6,
+  wrote the lane record, and moved it into HQ's `planning/roadmaps/modeless-editor/`.
+- **Why:** The operator wants to edit markdown in place with the mouse and arrow keys — not vim
+  (modal controls they dislike) and not VS Code (heavy; now used only to read markdown). The
+  existing `BE.3.H` spec is a port of hackmd's **modal vim-style** editor (`:w`/`:wq`/`:q!`), so it
+  was superseded rather than salvaged and stays `wontfix`. Re-specced modeless, this is *cheaper*
+  than the vim port — the whole command-line and motion layer drops out.
+- **The finding the cut is built around:** `bella-engine`'s edit path (`EditCtx`, `row_source`,
+  `cursor_xy`, `substitute_inline_at_cursor`, `make_raw_block`) is fully written with **zero tests
+  and zero production call sites** — the edit branch has never executed, and it shapes `Rendered`,
+  a cross-repo contract with bastion. `BE.6.A` proves it before anything is spent on top, and an
+  operator gate (`OP.editor-go-no-go`) sits between block 1 and 2 so the chain stops for a
+  fund/don't-fund call on real evidence.
+- **Two corrections found while doing it:** `/plan --lane` writes the lane record to the repo's
+  `planning/<slug>/`, but `/begin-orchestration` resolves a roadmap slug against **`BRAIN_ROOT`** —
+  so it would not have resolved; moved to HQ. And an HQ doc citing a bella `doc_id` needs the
+  `bella:` prefix (caught as `E_GRAPH_DANGLING_RELATED`).
+- **Refs:** `planning/modeless-editor/plan.md`, `planning/blocks/BE.6.*.json`,
+  `agentic-portfolio/planning/roadmaps/modeless-editor/`
+
+### Docs cleanup pass — capability catalogue + source-contradicted claims corrected
+- **What:** Added `docs/capabilities.md` (every capability and how to invoke it, derived from the
+  clap definition, the `Action` enum and the `pulldown-cmark` handlers — not from doc titles).
+  Rewrote `docs/index.md` to one-line task-grouped rows. Added Quickstarts (1 -> 3 of 5) and
+  mermaid diagrams (0 -> 2), plus plain-English openers on architecture/development/features/
+  modules. Commit `7118dbb`.
+- **Why:** A `write-repo-doc` pass. Five defect classes, and the docs asserted features the binary
+  does not have: `theme::resolve`, `detect_terminal_theme`, `Theme::light`,
+  `Theme::mission_control` and `md_config::load` have **zero call sites** — every render site calls
+  `Theme::dark()`, so bella is dark-only and `config.toml` does nothing. README, `features.md` and
+  `modules.md` all described `COLORFGBG` auto-detection and a working config file. Also fixed:
+  `browser.rs` documented in the wrong crate; a config path stated as `~/.config/md/` when
+  `dirs::config_dir()` makes it platform-dependent; `docs/index.md` advertising `sdlc-run` and
+  `sdlc-block`, which have no engine or command file here; and a link into the gitignored
+  `planning/` vault that 404s on GitHub.
+- **Refs:** `docs/capabilities.md` section "Not wired up"
 
 ---
 
