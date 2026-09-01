@@ -2,12 +2,36 @@
 type: Log
 title: Bella Development Log
 description: Chronological log of work completed for Bella.
-timestamp: "2026-08-29T22:45:00Z"
+timestamp: "2026-09-01T19:15:00Z"
 ---
 
 # Log — Bella
 
 *Append-only working log. One dated entry per session. Newest entries at the top.*
+
+---
+
+## [2026-09-01]
+
+### Ported bastiel's cool-aurora theme, wired the status bar, built visual-QA tooling
+- **What:** Built `scripts/tui_capture.sh` (tmux-driven text capture) and wired up VHS
+  (`scripts/vhs/*.tape`, pixel-level PNG/GIF capture) since no tooling existed to visually verify
+  a ratatui TUI. Wrote a calibrated `polish-standard.md`, fixed its actionable findings as two
+  tickets (browser status bar + viewport, in-app keybinding hint — both closed). Ported bastiel's
+  cool-aurora palette onto `Theme::dark()`, and found + fixed that the status bar never read the
+  theme at all (`Color::Black`/`Color::White` hardcoded, `status_fg`/`status_bg` were dead
+  fields) — added `App.theme` and regression tests. Captured a reference screenshot set at
+  `planning/artifacts/screenshots/`. Found and recorded a real markdown rendering bug (a list
+  item whose only child is a singleton nested sublist collapses onto one line) — not fixed,
+  carried in `state.json` and `CLAUDE.md`. Closed out with the full gating suite, a coverage fill,
+  and a doc-health sweep (`docs/features.md`, `architecture.md`, `modules.md`, `development.md`
+  no longer say "Catppuccin" for the live theme).
+- **Why:** Operator wanted bella's visual identity aligned with `business/bastiel` (the practice's
+  flagship web app) and asked for a durable way to visually verify the TUI going forward, since
+  reviewing a terminal app currently required either a human at a real terminal or trusting
+  automated tests that only assert cell content, not appearance.
+- **Refs:** `planning/polish-standard/polish-standard.md`, `planning/artifacts/screenshots/README.md`,
+  bella commits `4946698`..`2b4e088`.
 
 ---
 

@@ -105,7 +105,7 @@ cargo run -p bella -- <file|dir>             # run the viewer
 > the touched crate/module. Only the task(s) explicitly owning full-suite validation for a spec
 > should run the full `cargo test` / `cargo build --release` gates.
 >
-> **`sccache` is deliberately NOT wired in.** It was removed fleet-wide after measuring zero
+> **`sccache` is deliberately NOT wired in — sccache was removed fleet-wide** after measuring zero
 > cache hits: sccache refuses to cache incremental compilations and cargo passes
 > `-C incremental=...` for the dev/test profile, so every rustc call fell through to plain rustc
 > plus a useless wrapper hop. See the comment at the top of `.cargo/config.toml`, and
