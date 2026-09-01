@@ -81,6 +81,16 @@ cargo test -p bella -- test_scroll_clamp
 
 All mappers (`map_key`, `map_browser_key`, `map_search_key`, `map_mouse`, `map_browser_mouse`) are pure functions with no terminal dependency — they are exercised directly in unit tests without any mocking.
 
+### Visual QA (manual/agent review)
+
+Automated tests assert cell *content*, not appearance — for an actual visual check (spacing,
+color, layout), two scripts under `scripts/`:
+
+| Tool | What it does | Use it for |
+|---|---|---|
+| `scripts/tui_capture.sh <file\|dir> [key ...]` | Drives bella in a detached tmux session (via `bastion new`/`capture`/`kill`) and dumps the rendered screen as text | Fast structural checks — is a section present, did navigation land where expected |
+| `scripts/vhs/*.tape` (run with `vhs <tape>`, requires `brew install vhs`) | Scripts a real pty session and renders it to PNG/GIF | Pixel-level review — theme colors, alignment, wrapping. `reference-wide.tape`/`reference-narrow.tape` regenerate the baseline set in `planning/artifacts/screenshots/` (see that directory's `README.md`) |
+
 ## Lint / Format
 
 ```bash
@@ -159,7 +169,7 @@ bella/
 │   │       ├── md_config.rs    ← config.toml loader (written, but NOT wired — see capabilities.md)
 │   │       ├── palette.rs      ← color-depth detection + RGB downgrade
 │   │       ├── syntax.rs       ← syntect highlighting
-│   │       └── theme.rs        ← Catppuccin themes
+│   │       └── theme.rs        ← color themes (bastiel cool-aurora default)
 │   └── bella/
 │       ├── Cargo.toml
 │       └── src/

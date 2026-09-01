@@ -181,7 +181,9 @@ Syntax highlighting via syntect.
 > `light()` and `mission_control()` are tested but uncalled; `mission_control` has no name mapped to
 > it in `resolve` at all.
 
-Catppuccin-based color themes.
+Color themes — `Theme::dark()` carries bastiel's "cool-aurora" brand palette (ported from
+`business/bastiel/src/app/globals.css` in the company-brain repo); `light()` is Catppuccin Latte,
+unrelated and untouched by that port.
 
 **Key types:**
 
@@ -193,9 +195,9 @@ Catppuccin-based color themes.
 
 | Function | What it does |
 |---|---|
-| `Theme::dark() -> Self` | Catppuccin Mocha — **the only one the binary constructs** |
+| `Theme::dark() -> Self` | Bastiel cool-aurora — **the only one the binary constructs** |
 | `Theme::light() -> Self` | Catppuccin Latte — reachable only through `resolve` |
-| `Theme::mission_control() -> Self` | A third palette; **no name in `resolve` maps to it** |
+| `Theme::mission_control() -> Self` | A third palette (indigo/violet/cyan, coordinated with bastion's console); **no name in `resolve` maps to it** |
 | `resolve(name, cfg) -> Theme` | Pick by name or auto-detect via `COLORFGBG`. No call site. |
 
 Auto-detect: `COLORFGBG` bg value 7–15 → light, 0–6 → dark.
