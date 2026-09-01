@@ -49,7 +49,26 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
 ///
 /// The inner listing [`Rect`] is stored on [`App::browser_area`] after each
 /// draw so that Task 4's mouse handlers can map click coordinates to rows.
+///
+/// Reserves a 1-row status line at the bottom (mirroring [`draw_reader`]'s
+/// body+status-line split) so browser mode always shows the current
+/// directory and selection position, instead of leaving the space below a
+/// short entry list blank.
 pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
+    if app.browser.is_none() {
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),    // bordered entry list
+            Constraint::Length(1), // status line
+        ])
+        .split(area);
+    let list_area = chunks[0];
+    let status_area = chunks[1];
+
     let browser = match &app.browser {
         Some(b) => b,
         None => return,
@@ -58,13 +77,13 @@ pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
     // Bordered pane titled with the current directory.
     let title = browser.dir.to_string_lossy().into_owned();
     let block = Block::default().borders(Borders::ALL).title(title);
-    let inner = block.inner(area);
+    let inner = block.inner(list_area);
 
     // Store the inner area for Task 4 mouse hit-testing.
     app.browser_area = inner;
 
     // Render the border first.
-    frame.render_widget(block, area);
+    frame.render_widget(block, list_area);
 
     // Borrow browser again now that app.browser_area has been set.
     let browser = match &app.browser {
@@ -109,6 +128,31 @@ pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
 
         frame.render_widget(Paragraph::new(line), row_area);
     }
+
+    draw_browser_statusline(frame, status_area, browser);
+}
+
+/// Render browser mode's status line: current directory, selection position,
+/// and a compact keybinding hint. Styled to match [`draw_statusline`]'s
+/// existing Black-on-White status bar for reader mode.
+fn draw_browser_statusline(
+    frame: &mut Frame,
+    area: Rect,
+    browser: &bella_engine::browser::Browser,
+) {
+    let dir = browser.dir.to_string_lossy();
+    let total = browser.entries.len();
+    let position = if total == 0 {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", browser.selected + 1, total)
+    };
+    let text = format!(" bella · {dir} · {position} · j/k nav · Enter open · q quit");
+    let line = Line::from(vec![Span::styled(
+        text,
+        Style::default().fg(Color::Black).bg(Color::White),
+    )]);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
@@ -938,6 +982,64 @@ mod tests {
             row1 != row2,
             "selected row (row 1) must differ from unselected row (row 2);\
              \n  row1={row1:?}\n  row2={row2:?}"
+        );
+    }
+
+    #[test]
+    fn draw_browser_shows_status_line() {
+        // Wide enough that a real (possibly long) tmp-dir absolute path plus
+        // the position/hint text is never truncated — this test asserts on
+        // content, not on truncation behavior.
+        let width: u16 = 200;
+        let height: u16 = 20;
+
+        let dir = std::env::temp_dir().join("bella_ui_browser_status_line");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_browser_app(dir.clone(), width, height);
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.clear();
+        }
+        push_entry(&mut app, "alpha.md", BrowserEntryKind::Markdown);
+        push_entry(&mut app, "beta.md", BrowserEntryKind::Markdown);
+        push_entry(&mut app, "gamma.md", BrowserEntryKind::Markdown);
+        if let Some(b) = app.browser.as_mut() {
+            b.selected = 1;
+        }
+
+        terminal
+            .draw(|f| {
+                draw_browser(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+
+        // Bottom row (y = height - 1) must be the status line.
+        let bottom: String = (0..width)
+            .map(|x| buf.cell((x, height - 1)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+
+        assert!(
+            bottom.contains(dir.to_string_lossy().as_ref()),
+            "browser status line must show the current directory; got:\n{bottom:?}"
+        );
+        assert!(
+            bottom.contains("2/3"),
+            "browser status line must show the selected/total position (2/3); got:\n{bottom:?}"
+        );
+
+        // The border must now stop one row above the bottom (status row is
+        // outside the bordered box) — the bottom-left corner glyph moves up.
+        let old_bottom_left = buf.cell((0, height - 1)).map(|c| c.symbol());
+        assert_ne!(
+            old_bottom_left,
+            Some("└"),
+            "bordered box must shrink to make room for the status line, \
+             not draw its border through the status row"
         );
     }
 
