@@ -616,6 +616,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn draw_reader_status_line_uses_theme_colors() {
+        // Regression for the theme-wiring fix: draw_statusline used to hardcode
+        // Color::Black/White regardless of App.theme. Assert the rendered status
+        // cell's style actually matches app.theme, not a fixed pair of colors.
+        let src = "# Hello World\n\nSome text.";
+        let width: u16 = 40;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_app(src, width, height);
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let style = buf.cell((0, height - 1)).unwrap().style();
+        assert_eq!(
+            style.fg,
+            Some(app.theme.status_fg),
+            "status line fg must come from app.theme.status_fg"
+        );
+        assert_eq!(
+            style.bg,
+            Some(app.theme.status_bg),
+            "status line bg must come from app.theme.status_bg"
+        );
+    }
+
     // --- Task 5 tests: search prompt and highlighting ---
 
     #[test]
@@ -1073,6 +1107,46 @@ mod tests {
             Some("└"),
             "bordered box must shrink to make room for the status line, \
              not draw its border through the status row"
+        );
+    }
+
+    #[test]
+    fn draw_browser_status_line_uses_theme_colors() {
+        // Regression for the theme-wiring fix: draw_browser_statusline used to
+        // hardcode Color::Black/White regardless of App.theme. Assert the
+        // rendered status cell's style actually matches app.theme.
+        let width: u16 = 80;
+        let height: u16 = 20;
+
+        let dir = std::env::temp_dir().join("bella_ui_browser_status_line_theme");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_browser_app(dir.clone(), width, height);
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.clear();
+        }
+        push_entry(&mut app, "alpha.md", BrowserEntryKind::Markdown);
+
+        terminal
+            .draw(|f| {
+                draw_browser(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let style = buf.cell((0, height - 1)).unwrap().style();
+        assert_eq!(
+            style.fg,
+            Some(app.theme.status_fg),
+            "browser status line fg must come from app.theme.status_fg"
+        );
+        assert_eq!(
+            style.bg,
+            Some(app.theme.status_bg),
+            "browser status line bg must come from app.theme.status_bg"
         );
     }
 
