@@ -418,7 +418,9 @@ fn draw_statusline(frame: &mut Frame, area: Rect, app: &App) {
         let file_name = app.file.file_name().and_then(|n| n.to_str()).unwrap_or("?");
         let total = app.lines.len();
         let current = (app.scroll as usize + app.viewport_height as usize).min(total);
-        format!(" bella · {file_name} · {current}/{total}")
+        format!(
+            " bella · {file_name} · {current}/{total}  j/k scroll · / search · [ ] history · q quit"
+        )
     };
     let line = Line::from(vec![Span::styled(
         text,
@@ -580,6 +582,34 @@ mod tests {
         assert_ne!(
             row0_before, row0_after,
             "first body row should change after scrolling"
+        );
+    }
+
+    #[test]
+    fn draw_reader_status_line_shows_keybinding_hint() {
+        let src = "# Hello World\n\nSome text.";
+        let width: u16 = 120;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_app(src, width, height);
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let status_row: String = (0..width)
+            .map(|x| buf.cell((x, height - 1)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+
+        assert!(
+            status_row.contains("q quit"),
+            "reader status line must show a keybinding hint (e.g. 'q quit'); got:\n{status_row:?}"
         );
     }
 
