@@ -100,9 +100,11 @@ cargo run -p bella -- <file|dir>             # run the viewer
 > the touched crate/module. Only the task(s) explicitly owning full-suite validation for a spec
 > should run the full `cargo test` / `cargo build --release` gates.
 >
-> **`sccache` is wired in via `.cargo/config.toml`** (`rustc-wrapper = "sccache"`) — caches
-> compiled object code across builds so repeated compiles within an SDLC spec reuse work instead
-> of recompiling from scratch. Requires `sccache` on PATH (`brew install sccache`).
+> **`sccache` is deliberately NOT wired in.** It was removed fleet-wide after measuring zero
+> cache hits: sccache refuses to cache incremental compilations and cargo passes
+> `-C incremental=...` for the dev/test profile, so every rustc call fell through to plain rustc
+> plus a useless wrapper hop. See the comment at the top of `.cargo/config.toml`, and
+> `[profile.dev]` in the workspace root `Cargo.toml` for the link-time setting that did help.
 >
 > The SDLC pipeline reads its validation suite from `planning/harness.json` (not from this
 > block). Keep the `<test>`/`<build>` commands here in sync with that file's
