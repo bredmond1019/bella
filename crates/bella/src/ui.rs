@@ -129,16 +129,17 @@ pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
         frame.render_widget(Paragraph::new(line), row_area);
     }
 
-    draw_browser_statusline(frame, status_area, browser);
+    draw_browser_statusline(frame, status_area, browser, &app.theme);
 }
 
 /// Render browser mode's status line: current directory, selection position,
 /// and a compact keybinding hint. Styled to match [`draw_statusline`]'s
-/// existing Black-on-White status bar for reader mode.
+/// theme-driven status bar for reader mode.
 fn draw_browser_statusline(
     frame: &mut Frame,
     area: Rect,
     browser: &bella_engine::browser::Browser,
+    theme: &bella_engine::Theme,
 ) {
     let dir = browser.dir.to_string_lossy();
     let total = browser.entries.len();
@@ -150,7 +151,7 @@ fn draw_browser_statusline(
     let text = format!(" bella · {dir} · {position} · j/k nav · Enter open · q quit");
     let line = Line::from(vec![Span::styled(
         text,
-        Style::default().fg(Color::Black).bg(Color::White),
+        Style::default().fg(theme.status_fg).bg(theme.status_bg),
     )]);
     frame.render_widget(Paragraph::new(line), area);
 }
@@ -424,7 +425,9 @@ fn draw_statusline(frame: &mut Frame, area: Rect, app: &App) {
     };
     let line = Line::from(vec![Span::styled(
         text,
-        Style::default().fg(Color::Black).bg(Color::White),
+        Style::default()
+            .fg(app.theme.status_fg)
+            .bg(app.theme.status_bg),
     )]);
     let paragraph = Paragraph::new(line);
     frame.render_widget(paragraph, area);

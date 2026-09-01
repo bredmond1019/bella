@@ -60,7 +60,7 @@ tmux send-keys -t "$SESSION" Enter
 # Give the initial build/render time to settle before driving keys.
 sleep "${TUI_CAPTURE_BUILD_SETTLE:-2}"
 
-for key in "${KEYS[@]}"; do
+for key in "${KEYS[@]+"${KEYS[@]}"}"; do
     tmux send-keys -t "$SESSION" "$key"
     sleep "$SETTLE_SECS"
 done

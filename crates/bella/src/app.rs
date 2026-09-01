@@ -153,6 +153,11 @@ pub struct App {
     pub render_generation: u64,
     /// Whether the render for `render_generation` has landed yet.
     pub render_state: RenderState,
+    /// Active color theme — drives chrome the render worker doesn't own
+    /// (status line fg/bg in `ui.rs`). Body content is themed per-render via
+    /// [`Theme::dark`] passed to `request_render`; this field exists so
+    /// always-on chrome can reference the same values without re-deriving them.
+    pub theme: Theme,
 }
 
 impl App {
@@ -200,6 +205,7 @@ impl App {
             render_worker,
             render_generation,
             render_state: RenderState::Loading,
+            theme: Theme::dark(),
         }
     }
 
@@ -242,6 +248,7 @@ impl App {
             render_worker: RenderWorker::spawn(),
             render_generation: 0,
             render_state: RenderState::Ready,
+            theme: Theme::dark(),
         }
     }
 
