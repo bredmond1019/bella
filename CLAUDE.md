@@ -72,7 +72,12 @@ stays `null` — a normal, expected state, never a defect to chase.
 
 ## Known bugs
 
-None known at initialization.
+- **A list item whose only child block is a single nested sublist collapses onto one line**,
+  losing the newline/indent between levels (e.g. `- A\n  - B\n    - C` renders as
+  `ABC` on one line). A sibling at the same nesting level does NOT trigger it — `- A\n  - B1\n  -
+  B2` renders each on its own line correctly. Reproduced live via `scripts/tui_capture.sh`, not a
+  VHS artifact — see `planning/artifacts/screenshots/README.md` for the repro and screenshots.
+  Likely a `bella-engine` `markdown.rs` list-block-joining gap. Not yet ticketed.
 
 ## Build / test / run
 
