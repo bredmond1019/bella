@@ -6,8 +6,11 @@ use std::time::Instant;
 
 use bella_engine::{
     CheckboxMap, LinkMap, Theme, body_pos,
-    links::{LinkTarget, TableExpansions},
-    markdown::{HeadingInfo, Rendered, render_with_edit},
+    links::{LinkTarget, TableExpansions, TableMap},
+    markdown::{
+        BlockInfo, HeadingInfo, Rendered, display_row_to_source_line, render_with_edit,
+        source_line_to_display_row,
+    },
     select_word_at,
 };
 use ratatui::layout::Rect;
@@ -89,6 +92,12 @@ pub struct App {
     pub checkbox_map: CheckboxMap,
     /// Heading metadata extracted from the last render.
     pub headings: Vec<HeadingInfo>,
+    /// Per-block source-range / display-range mapping from the last render.
+    /// Kept so a resize can resolve the current top display row to a
+    /// source-line anchor (via [`bella_engine::markdown::display_row_to_source_line`])
+    /// before the re-render invalidates it, and restore the equivalent
+    /// display row afterward (BE.7.D).
+    pub blocks: Vec<BlockInfo>,
     /// Current top display row (scroll offset).
     pub scroll: u16,
     /// Height of the content viewport (body area, excluding status line).
@@ -153,6 +162,12 @@ pub struct App {
     pub render_generation: u64,
     /// Whether the render for `render_generation` has landed yet.
     pub render_state: RenderState,
+    /// Source-line anchor resolved from `scroll` just before a re-render was
+    /// requested (see [`Self::render`]), consumed by [`Self::apply_rendered`]
+    /// once that render's result lands. `None` when the in-flight render
+    /// isn't a resize-anchored one (e.g. the initial render), so scroll is
+    /// just re-clamped instead of restored by anchor.
+    pending_scroll_anchor: Option<usize>,
     /// Active color theme — drives chrome the render worker doesn't own
     /// (status line fg/bg in `ui.rs`). Body content is themed per-render via
     /// [`Theme::dark`] passed to `request_render`; this field exists so
@@ -192,6 +207,7 @@ impl App {
             link_map: LinkMap::default(),
             checkbox_map: CheckboxMap::default(),
             headings: Vec::new(),
+            blocks: Vec::new(),
             scroll: 0,
             viewport_height,
             width,
@@ -214,6 +230,7 @@ impl App {
             render_worker,
             render_generation,
             render_state: RenderState::Loading,
+            pending_scroll_anchor: None,
             theme: Theme::dark(),
             corpus_root,
         }
@@ -237,6 +254,7 @@ impl App {
             link_map,
             checkbox_map,
             headings,
+            blocks: Vec::new(),
             scroll: 0,
             viewport_height,
             width,
@@ -259,6 +277,7 @@ impl App {
             render_worker: RenderWorker::spawn(),
             render_generation: 0,
             render_state: RenderState::Ready,
+            pending_scroll_anchor: None,
             theme: Theme::dark(),
             corpus_root,
         }
@@ -340,6 +359,27 @@ impl App {
     /// immediately rather than blocking on the parse; the caller (the event
     /// loop) drains the result via [`Self::poll_render`] once it lands.
     pub fn render(&mut self, width: u16) {
+        // Resolve the current top display row to a source-line anchor
+        // *before* the re-render invalidates `self.blocks`/`self.lines` —
+        // a raw display row means nothing once the line count changes on
+        // resize (BE.7.D). `apply_rendered` restores by this anchor once
+        // the new render lands, discarding it for any render this one
+        // supersedes (the existing generation-token check in `poll_render`
+        // already guarantees a stale/out-of-order result never reaches
+        // `apply_rendered`).
+        //
+        // Only re-resolve when there is no render already in flight. If a
+        // previous `render()` call hasn't landed yet (chained resizes, e.g.
+        // a dragged terminal window firing several in a row), `self.scroll`
+        // has already been collapsed against this in-flight request's own
+        // "Loading…" placeholder line count by the defensive clamp below —
+        // recomputing from it here would anchor to the wrong (clamped) row.
+        // The anchor captured for the FIRST request in the chain is still
+        // the right one: it is what the user was actually looking at, and
+        // it survives untouched until a real result lands.
+        if self.render_state == RenderState::Ready {
+            self.pending_scroll_anchor = self.resolve_scroll_anchor();
+        }
         self.width = width;
         let base_dir = self.file.parent().map(Path::to_path_buf);
         self.render_generation = self.render_worker.request_render(
@@ -352,8 +392,8 @@ impl App {
         );
         self.render_state = RenderState::Loading;
         self.lines = loading_lines();
-        // Re-clamp scroll defensively; it is re-clamped again once the real
-        // render lands and line count is known.
+        // Re-clamp scroll defensively in the interim; once the real render
+        // lands, `apply_rendered` restores it by the anchor above instead.
         self.scroll = self.scroll.min(self.max_scroll());
         // Reset navigation state — line indices change on resize.
         self.focused_link = None;
@@ -363,6 +403,42 @@ impl App {
         self.drag_origin = None;
         self.selection = None;
         self.last_click = None;
+    }
+
+    /// Build a minimal [`Rendered`] wrapping only `self.blocks`, for the
+    /// display-row <-> source-line lookups in `bella_engine::markdown`,
+    /// which read nothing but `Rendered::blocks`. Avoids keeping a second,
+    /// full copy of the last render around just for anchor resolution.
+    fn blocks_as_rendered(&self) -> Rendered {
+        Rendered {
+            lines: Vec::new(),
+            link_map: LinkMap::default(),
+            checkbox_map: CheckboxMap::default(),
+            table_map: TableMap::default(),
+            images: Vec::new(),
+            width: self.width,
+            blocks: self.blocks.clone(),
+            headings: Vec::new(),
+            cursor_xy: None,
+            row_source: Vec::new(),
+            frontmatter: None,
+        }
+    }
+
+    /// Resolve the current top display row (`self.scroll`) to the nearest
+    /// source line, using the *current* (pre-re-render) `self.blocks`.
+    /// `None` when there is no rendered content yet (e.g. an empty
+    /// document), in which case `apply_rendered` just re-clamps as before.
+    fn resolve_scroll_anchor(&self) -> Option<usize> {
+        let rendered = self.blocks_as_rendered();
+        display_row_to_source_line(&rendered, &self.src, self.scroll as usize)
+    }
+
+    /// Resolve a source line back to the nearest display row, using the
+    /// *just-applied* (post-re-render) `self.blocks`.
+    fn anchor_to_display_row(&self, line: usize) -> Option<usize> {
+        let rendered = self.blocks_as_rendered();
+        source_line_to_display_row(&rendered, &self.src, line)
     }
 
     /// Non-blocking drain of the render worker: if a result matching
@@ -393,9 +469,25 @@ impl App {
         self.link_map = rendered.link_map;
         self.checkbox_map = rendered.checkbox_map;
         self.headings = rendered.headings;
+        self.blocks = rendered.blocks;
         self.render_state = RenderState::Ready;
-        // Re-clamp scroll now that the real line count is known.
-        self.scroll = self.scroll.min(self.max_scroll());
+        // If `render()` resolved a source-line anchor for this generation
+        // (a resize re-render), restore scroll to the display row nearest
+        // that anchor in the NEW layout, rather than just re-clamping the
+        // old raw index — that clamp is the BE.7.D teleport bug. Renders
+        // with no anchor (e.g. the initial render) fall back to the old
+        // clamp-only behavior.
+        match self.pending_scroll_anchor.take() {
+            Some(anchor) => {
+                self.scroll = self
+                    .anchor_to_display_row(anchor)
+                    .map(|row| (row as u16).min(self.max_scroll()))
+                    .unwrap_or_else(|| self.scroll.min(self.max_scroll()));
+            }
+            None => {
+                self.scroll = self.scroll.min(self.max_scroll());
+            }
+        }
     }
 
     /// Block until the render for the current generation lands and apply it.
@@ -2396,5 +2488,178 @@ mod tests {
             .as_ref()
             .expect("browser must be Some after ascend");
         assert_eq!(b.dir, parent, "ascend must re-root browser at parent");
+    }
+
+    // --- Task 2 (BE.7.D): scroll anchoring across re-render ---
+
+    /// Three headed blocks with paragraphs long enough to wrap onto several
+    /// display rows at a narrow width but fit on one or two at a wide one —
+    /// the same shape as the seams spike's measured 11-vs-15-display-line
+    /// shift for an 80-vs-30 resize (see the block record's "why").
+    const SCROLL_ANCHOR_FIXTURE: &str = "# Heading One\n\nThis paragraph is deliberately long so that it wraps onto several display lines once the terminal narrows, which is exactly the resize behaviour this block anchors against.\n\n## Heading Two\n\nA second paragraph, also long enough to reflow across multiple rows at a narrow width, sits between two headings so the fixture has more than one block to scroll through.\n\n### Heading Three\n\nA third paragraph closes out the document and gives jump_bottom something real to land on once the viewport has scrolled past the earlier blocks.\n";
+
+    #[test]
+    fn resolve_and_restore_scroll_anchor_round_trip() {
+        // Headings-only fixture: each block is exactly one display row, with
+        // a blank spacer row between them that belongs to no block. Anchor
+        // on a row that IS inside a block's own span (its `display_start`)
+        // so the round trip at a FIXED width is exact, not merely "within
+        // one row" — a spacer row would hit the nearest-block fallback and
+        // is covered separately by `scroll_anchor_survives_resize`.
+        let mut app = make_app(20, 5);
+        let row = app
+            .blocks
+            .get(3)
+            .map(|b| b.display_start as u16)
+            .filter(|&r| r <= app.max_scroll())
+            .expect("fixture must have at least 4 in-viewport blocks");
+        app.scroll = row;
+        let anchor = app
+            .resolve_scroll_anchor()
+            .expect("anchor must resolve for a populated document");
+        let restored = app
+            .anchor_to_display_row(anchor)
+            .expect("anchor must restore for a populated document");
+        assert_eq!(
+            restored as u16, row,
+            "round trip at a fixed width must land exactly on the original row \
+             (row={row}, anchor={anchor}, restored={restored})"
+        );
+    }
+
+    #[test]
+    fn scroll_anchor_survives_resize() {
+        // width 80 -> 30: the source line at the top of the viewport must
+        // still be at the top (within one row) after the document re-wraps.
+        let mut app = App::new(
+            SCROLL_ANCHOR_FIXTURE.to_string(),
+            PathBuf::from("scroll_anchor.md"),
+            80,
+            6,
+        );
+        app.block_until_ready();
+        let max = app.max_scroll();
+        assert!(
+            max > 0,
+            "precondition: fixture must overflow a 5-row viewport at width 80"
+        );
+        // A mid-document row, not the trivial 0 or max edge case.
+        app.scroll = (max / 2).max(1);
+        let anchor_before = app
+            .resolve_scroll_anchor()
+            .expect("anchor must resolve at width 80");
+
+        app.render(30);
+        app.block_until_ready();
+
+        assert_eq!(app.width, 30, "the requested width must have been applied");
+        let anchor_after = app
+            .resolve_scroll_anchor()
+            .expect("anchor must resolve at width 30");
+        assert!(
+            anchor_before.abs_diff(anchor_after) <= 1,
+            "resize must keep the same source line at the top of the viewport \
+             within one row: before={anchor_before} after={anchor_after}"
+        );
+    }
+
+    #[test]
+    fn scroll_anchor_survives_async_out_of_order_render_delivery() {
+        // Fires two resizes back-to-back against the REAL render worker,
+        // without draining in between. The first request's result — however
+        // and whenever it is actually delivered on the channel — is by then
+        // stale (superseded by the second request's generation token) and
+        // must be discarded by the existing generation check in
+        // `poll_render`/`block_until_ready`; only the second render's anchor
+        // restore may ever be applied. This is the exact "late or
+        // out-of-order render delivery" race the block record calls out —
+        // stubbing the worker away would remove it entirely.
+        let mut app = App::new(
+            SCROLL_ANCHOR_FIXTURE.to_string(),
+            PathBuf::from("scroll_anchor_async.md"),
+            80,
+            6,
+        );
+        app.block_until_ready();
+        let max = app.max_scroll();
+        assert!(max > 0, "precondition: fixture must overflow the viewport");
+        app.scroll = (max / 2).max(1);
+        let anchor_before = app
+            .resolve_scroll_anchor()
+            .expect("anchor must resolve at width 80");
+
+        app.render(45); // superseded before its result is ever drained
+        app.render(30); // the render whose result must actually apply
+        app.block_until_ready();
+
+        assert_eq!(
+            app.width, 30,
+            "only the latest (second) render may end up applied"
+        );
+        let anchor_after = app
+            .resolve_scroll_anchor()
+            .expect("anchor must resolve at width 30");
+        assert!(
+            anchor_before.abs_diff(anchor_after) <= 1,
+            "the anchor must survive a stale in-flight render being discarded: \
+             before={anchor_before} after={anchor_after}"
+        );
+    }
+
+    #[test]
+    fn scroll_top_and_bottom_reachable_across_resize() {
+        let mut app = App::new(
+            SCROLL_ANCHOR_FIXTURE.to_string(),
+            PathBuf::from("scroll_anchor_bounds.md"),
+            80,
+            6,
+        );
+        app.block_until_ready();
+
+        for width in [45u16, 30, 20, 80] {
+            app.render(width);
+            app.block_until_ready();
+            app.jump_top();
+            assert_eq!(app.scroll, 0, "top must be reachable at width {width}");
+            app.jump_bottom();
+            assert_eq!(
+                app.scroll,
+                app.max_scroll(),
+                "bottom must be reachable at width {width}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_still_clears_the_six_deliberate_fields_with_anchoring_in_place() {
+        // Guards against anchoring creeping into the fields `render()`
+        // deliberately clears on every re-render (BE.7.E's territory, not
+        // this block's) — `render_resets_nav_state`,
+        // `selection_cleared_on_render`, and `last_click_cleared_on_render`
+        // already cover this individually; this test asserts all six at
+        // once so a future change can't clear five and quietly keep one.
+        let src = "[link](other.md) some text to search for".to_string();
+        let mut app = App::new(src, PathBuf::from("clears.md"), 80, 25);
+        app.block_until_ready();
+        app.focused_link = Some(0);
+        app.hovered_link = Some(0);
+        app.toggled_checkboxes.insert(0);
+        app.search = Some(super::SearchState::new());
+        app.drag_origin = Some((0, 0));
+        app.selection = Some(crate::selection::Selection {
+            anchor: (0, 0),
+            cursor: (0, 1),
+        });
+        app.last_click = Some((Instant::now(), 0, 0));
+
+        app.render(80);
+
+        assert!(app.focused_link.is_none());
+        assert!(app.hovered_link.is_none());
+        assert!(app.toggled_checkboxes.is_empty());
+        assert!(app.search.is_none());
+        assert!(app.drag_origin.is_none());
+        assert!(app.selection.is_none());
+        assert!(app.last_click.is_none());
     }
 }
