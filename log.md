@@ -13,6 +13,20 @@ timestamp: "2026-09-01T19:15:00Z"
 
 ## [run: 2026-09-02]
 
+Closed `BE.7.L` (visual regression harness) via `/sdlc-flow` resume; all 6 tasks passed, review verdict PASS. Picking up from the prior bail after task 3 (stale VHS reference PNGs), task 4 captured verbatim evidence that both `check_scenes.sh` and `check_vhs_fresh.sh` actually go red on a real drawn-output regression, a known-bad capture, and a simulated stale reference set, then confirmed the tree stays clean. Task 5 added tape/manifest parity checking to `scripts/check_scenes.sh` (demonstrated failing, then reverted), pinning headers to both reference tapes, a three-tier rewrite of `planning/artifacts/screenshots/README.md`, and the two new scene commands to `CLAUDE.md`'s Build/test/run block. Task 6 ran the full authoritative validation suite — fmt, clippy, `cargo test` (via `NEXTEST_POLICY_OVERRIDE`), release build, `check_test_layout.sh`, `check_scenes.sh`, `check_vhs_fresh.sh` — all 8 checks green with no further code changes needed. Notable decision from the earlier task 3 resolution: 6 of 11 regenerated reference PNGs came back byte-identical to their prior blobs, so each was stamped with a PNG tEXt chunk recording the source commit it was verified against, forcing a real (pixel-identical) blob change that lets the git-commit-time freshness gate re-fire honestly. `BE.7.C` (walker: symlinks, hidden/ignored reveal, corpus-root rule) is now the next layout block in sequence.
+
+```
+845e5e7 docs: update docs for BE.7.L
+779a0af feat: implement BE.7.L-task5
+ad2e781 fix: bump VHS reference tape settle time to fix corrupt browser captures
+```
+
+Next: `/sdlc-flow BE.7.C` (walker: symlinks, hidden/ignored reveal, corpus-root rule).
+
+---
+
+## [run: 2026-09-02]
+
 `BE.7.L` (visual regression harness) BAILED via `/sdlc-flow` after task 3 of 6 — task 1 added `scripts/vhs/scenes.toml` (11-scene manifest) and `scripts/capture_scenes.sh`, driving the real release `bella` binary through plain tmux (no `bastion` dependency) and writing capture-pane text to `tests/scenes/`. Task 2 added `scripts/check_scenes.sh` (re-capture + diff against the committed baselines, with a distinct hard-error path for blank/near-empty captures) and registered `scenes` as a gating `validation.checks[]` entry, committing the 11 text baselines. Task 3 built `scripts/check_vhs_fresh.sh` — sanity (byte floor + non-blank companion text scene) and git-commit-time freshness on the reference PNGs, resolving each side's commit time in its own repo since `planning/` is a symlink into a separate vault — and registered it as the `vhs-fresh` check; it currently and correctly reports 10 of 11 reference PNGs stale, captured against commit 273c486 before `BE.7.A`'s `b6b5c71` touched `crates/bella-engine/src/markdown.rs` (frontmatter stripping). The gate's own logic verified sound (sanity passes all 11 PNGs, mtime-immune, bastion-absence positive control passes); what remains is regenerating the reference PNG set, which is out of this task's declared scope (files: `check_vhs_fresh.sh`, `harness.json`) and reproducibly failed in this sandbox — two `vhs` capture attempts produced corrupted/near-empty PNGs for several scenes, most likely from resource contention with other concurrently-running agent lanes on this machine; both attempts were fully reverted rather than committed. Tasks 4-6 (reference-tape sync, docs, and final validation) did not run. Next: regenerate the VHS reference PNG set in a quieter environment or its own dedicated block, then resume `BE.7.L` from task 4.
 
 ```
