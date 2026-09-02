@@ -2,12 +2,38 @@
 type: Log
 title: Bella Development Log
 description: Chronological log of work completed for Bella.
-timestamp: "2026-09-01T19:15:00Z"
+timestamp: "2026-09-02T14:45:00Z"
 ---
 
 # Log — Bella
 
 *Append-only working log. One dated entry per session. Newest entries at the top.*
+
+---
+
+## [session: 2026-09-02] modeless-editor lane — eight blocks
+
+**What:** Drove the `modeless-editor` lane from `BE.7.M` to `BE.7.E` — eight blocks closed and
+merged (`BE.7.A`, `BE.7.B`, `BE.7.L`, `BE.7.C`, `BE.7.D`, `BE.7.E` plus two adopted tickets), PRs
+#5-#10. bella now strips OKF frontmatter, survives a resize without teleporting the reader, browses
+into symlinked `planning/`, reveals hidden and gitignored entries on a toggle, and draws a
+three-column frame with a click-and-keyboard TOC rail. It also grew a three-tier visual regression
+harness: TestBackend buffers, tmux text scenes diffed against 19 committed baselines, and VHS
+reference PNGs under a sanity/freshness gate.
+
+**Why:** the layout initiative goes before the editor by operator decision (Fork 5,
+`planning/ide-layout/seams.md`) — `BE.6.B`/`C` sit behind an operator gate that may never open,
+and layout has none. Two of the eight blocks were **not planned**: `BE.ticket.vhs-capture-trustworthiness`
+and `BE.ticket.vhs-wait-for-readiness` were adopted mid-run after the visual gate passed a corrupt
+reference twice — a 20032-byte and then a 25135-byte capture, both bare shell prompts that cleared
+their own thresholds. Fixed at the root: every VHS screenshot is now gated on a `Wait+Screen`
+readiness match rather than a fixed sleep, so a screenshot cannot fire before the UI is on screen.
+
+**Also:** `harness.json`'s `fastCommand` was skipping every integration test (`--lib --bins`);
+`scenes` and `vhs-fresh` moved to `perTask: false` after measuring ~9 min per block on one check.
+
+**Refs:** `planning/orchestration-run/modeless-editor/notes.md` (every decision with its rejected
+alternatives), `planning/handoff.md`, `planning/roadmaps/modeless-editor/lane-log.jsonl`.
 
 ---
 
