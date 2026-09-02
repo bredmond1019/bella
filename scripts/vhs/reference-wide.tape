@@ -93,7 +93,7 @@ Sleep 500ms
 Screenshot planning/artifacts/screenshots/wide_browser_selection.png
 
 Enter
-Sleep 1s
+Sleep 2.5s
 Screenshot planning/artifacts/screenshots/wide_browser_nested.png
 Type "q"
 Sleep 500ms
@@ -105,7 +105,7 @@ Sleep 2s
 Screenshot planning/artifacts/screenshots/wide_browser_reveal_off.png
 
 Type "r"
-Sleep 500ms
+Sleep 3s
 Screenshot planning/artifacts/screenshots/wide_browser_reveal_on.png
 Type "q"
 Sleep 500ms
@@ -134,7 +134,7 @@ Type "target/release/bella scripts/vhs/fixtures/scroll_anchor.md"
 Enter
 Sleep 4s
 Down 4
-Sleep 500ms
+Sleep 3s
 Screenshot planning/artifacts/screenshots/wide_scroll_anchor_top.png
 Type "q"
 Sleep 500ms

@@ -49,7 +49,7 @@ Sleep 4s
 Screenshot planning/artifacts/screenshots/narrow_reader_demo_top.png
 
 Down 20
-Sleep 2s
+Sleep 3s
 Screenshot planning/artifacts/screenshots/narrow_reader_demo_table.png
 Type "q"
 Sleep 800ms
@@ -74,7 +74,7 @@ Type "target/release/bella scripts/vhs/fixtures/scroll_anchor.md"
 Enter
 Sleep 4s
 Down 4
-Sleep 500ms
+Sleep 3s
 Screenshot planning/artifacts/screenshots/narrow_scroll_anchor_after_resize.png
 Type "q"
 Sleep 500ms
