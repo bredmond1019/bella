@@ -1,0 +1,136 @@
+# scenes.toml — the single scene manifest, read by both tiers:
+#   - scripts/capture_scenes.sh / scripts/check_scenes.sh (text captures via
+#     tmux against the real binary, diffed against tests/scenes/<name>.txt)
+#   - scripts/vhs/reference-wide.tape / reference-narrow.tape (VHS PNGs,
+#     freshness/sanity-gated by scripts/check_vhs_fresh.sh, never diffed)
+#
+# Adding a scene to one tier and not the other is meant to be detectable —
+# BE.7.L task 5 adds a parity check to check_scenes.sh that fails when the
+# scene names here and the tapes' `Screenshot` targets disagree.
+#
+# Fields per [[scene]]:
+#   name    — scene id; also the basename of tests/scenes/<name>.txt
+#   target  — file or directory bella is opened on, repo-relative
+#   keys    — ordered list of keystrokes sent one at a time via
+#             `tmux send-keys`, never as a repeat-count (settle-time
+#             regression guard — see [defaults].key_settle below and
+#             carryover `rapid-keypresses-blank-the-render`). Each entry is
+#             either a literal single character/string (sent with `-l`) or
+#             one of tmux's named keys: Down, Up, Enter, Escape, Tab, BTab,
+#             PPage, NPage, Home, End.
+#   width   — pinned terminal columns
+#   height  — pinned terminal rows
+#   settle  — optional override (seconds) of [defaults].key_settle for this
+#             scene only, for a scene that needs a longer render pause.
+
+[defaults]
+# Time to wait after launching the binary before the first keystroke/capture,
+# so the initial render (and any cargo/file-load work) has settled.
+launch_settle = 2.0
+# Time to wait after EACH individual keystroke before sending the next one.
+# Sending keys with an explicit sleep between them (never a repeat-count) is
+# load-bearing: BE.7.B task 3 reproducibly blanked a VHS capture with
+# `Down 34`/`Down 38` while single stepped `Down` was stable across three
+# runs. See carryover `rapid-keypresses-blank-the-render`.
+key_settle = 0.4
+
+# --- Wide (~110x43 cols) ---------------------------------------------------
+
+[[scene]]
+name = "wide_reader_demo_top"
+target = "scripts/vhs/fixtures/demo.md"
+keys = []
+width = 110
+height = 43
+
+[[scene]]
+name = "wide_reader_demo_tasks_code"
+target = "scripts/vhs/fixtures/demo.md"
+keys = [
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+]
+width = 110
+height = 43
+
+[[scene]]
+name = "wide_reader_demo_table"
+target = "scripts/vhs/fixtures/demo.md"
+keys = [
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down",
+]
+width = 110
+height = 43
+
+[[scene]]
+name = "wide_reader_search"
+target = "scripts/vhs/fixtures/demo.md"
+keys = [
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down",
+  "/", "t", "a", "s", "k", "Enter",
+]
+width = 110
+height = 43
+settle = 0.5
+
+[[scene]]
+name = "wide_reader_readme_top"
+target = "README.md"
+keys = []
+width = 110
+height = 43
+
+[[scene]]
+name = "wide_browser_root"
+target = "."
+keys = []
+width = 110
+height = 43
+
+[[scene]]
+name = "wide_browser_selection"
+target = "."
+keys = ["Down", "Down"]
+width = 110
+height = 43
+
+[[scene]]
+name = "wide_browser_nested"
+target = "."
+keys = ["Down", "Down", "Enter"]
+width = 110
+height = 43
+settle = 0.6
+
+# --- Narrow (~65x27 cols) — wrap/reflow check -------------------------------
+
+[[scene]]
+name = "narrow_reader_demo_top"
+target = "scripts/vhs/fixtures/demo.md"
+keys = []
+width = 65
+height = 27
+
+[[scene]]
+name = "narrow_reader_demo_table"
+target = "scripts/vhs/fixtures/demo.md"
+keys = [
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down",
+]
+width = 65
+height = 27
+
+[[scene]]
+name = "narrow_browser_root"
+target = "."
+keys = []
+width = 65
+height = 27
