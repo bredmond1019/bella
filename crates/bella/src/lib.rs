@@ -13,3 +13,9 @@ pub mod history;
 pub mod render_worker;
 pub mod selection;
 pub mod ui;
+
+// Test-only fixture helper (unique_temp_dir). Deliberately NOT part of the
+// pub mod list above — that list exists so integration tests can drive the
+// modules; testsupport must not be reachable from the shipped binary.
+#[cfg(test)]
+mod testsupport;
