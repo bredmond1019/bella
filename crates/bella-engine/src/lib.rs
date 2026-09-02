@@ -2,6 +2,10 @@
 // Public surface for the bella app crate and integration tests.
 
 pub mod browser;
+// Not yet wired into the render path or re-exported — that's BE.7.A task 2.
+// Declared here only so `cargo nextest run -p bella-engine frontmatter` has
+// a module to compile and run tests from.
+mod frontmatter;
 pub mod geometry;
 pub mod links;
 pub mod markdown;
