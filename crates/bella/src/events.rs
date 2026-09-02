@@ -88,6 +88,9 @@ pub enum Action {
     BrowserScroll(i32),
     /// Return from the reader to the browser (Backspace in reader mode).
     BrowserBack,
+    /// Toggle `reveal_ignored` (hidden dotfiles + gitignored entries) and
+    /// re-list the current browser directory.
+    BrowserToggleReveal,
 }
 
 /// Pure browser key→action mapper (unit-testable without a live terminal).
@@ -100,6 +103,7 @@ pub fn map_browser_key(key: KeyEvent) -> Action {
         KeyCode::Char('k') | KeyCode::Up => Action::BrowserUp,
         KeyCode::Enter => Action::BrowserDescend,
         KeyCode::Backspace => Action::BrowserAscend,
+        KeyCode::Char('r') => Action::BrowserToggleReveal,
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
         _ => Action::None,
@@ -476,6 +480,9 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         }
         Action::BrowserBack => {
             app.back_to_browser();
+        }
+        Action::BrowserToggleReveal => {
+            app.toggle_reveal();
         }
     }
 }
@@ -1809,6 +1816,12 @@ mod tests {
     }
 
     #[test]
+    fn map_browser_key_r_produces_toggle_reveal() {
+        let k = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::empty());
+        assert_eq!(map_browser_key(k), Action::BrowserToggleReveal);
+    }
+
+    #[test]
     fn reader_backspace_produces_browser_back() {
         // In reader mode, Backspace maps to BrowserBack.
         let k = KeyEvent::new(KeyCode::Backspace, KeyModifiers::empty());
@@ -1831,6 +1844,45 @@ mod tests {
             let after = app.browser.as_ref().unwrap().selected;
             assert_ne!(before, after, "BrowserDown must advance the cursor");
         }
+    }
+
+    #[test]
+    fn apply_browser_toggle_reveal_flips_flag_and_relists() {
+        let dir = crate::testsupport::unique_temp_dir("bella_events_browser_toggle_reveal_apply");
+        // A dot-directory containing a `status.md` DIRECTORY — the fleet's
+        // real trap case — invisible by default, revealed once toggled.
+        let dot_dir = dir.join(".mev-history");
+        std::fs::create_dir_all(dot_dir.join("status.md")).expect("create nested dirs");
+
+        let mut app = App::new_browser(dir, 80, 25);
+        assert!(
+            !app.browser.as_ref().unwrap().reveal_ignored,
+            "precondition: reveal_ignored starts false"
+        );
+        assert!(
+            app.browser
+                .as_ref()
+                .unwrap()
+                .entries
+                .iter()
+                .all(|e| e.display != ".mev-history"),
+            "precondition: dot-directory hidden by default"
+        );
+
+        super::apply(Action::BrowserToggleReveal, &mut app);
+
+        let b = app.browser.as_ref().unwrap();
+        assert!(b.reveal_ignored, "toggle must flip reveal_ignored to true");
+        assert!(
+            b.entries.iter().any(|e| e.display == ".mev-history"),
+            "toggle must re-list the current directory, revealing the dot-directory"
+        );
+
+        // Toggling again flips back off and hides it again.
+        super::apply(Action::BrowserToggleReveal, &mut app);
+        let b = app.browser.as_ref().unwrap();
+        assert!(!b.reveal_ignored);
+        assert!(b.entries.iter().all(|e| e.display != ".mev-history"));
     }
 
     #[test]

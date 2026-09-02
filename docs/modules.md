@@ -51,18 +51,20 @@ Pure directory listing model.
 |---|---|
 | `BrowserEntryKind` | `ParentDir`, `Dir`, `Markdown` |
 | `BrowserEntry` | `path`, `display`, `kind` |
-| `Browser` | `dir`, `entries`, `selected` (cursor), `scroll: u16` |
+| `Browser` | `dir`, `entries`, `selected` (cursor), `scroll: u16`, `reveal_ignored: bool`, `dropped_entries: usize` |
 
 **Key functions:**
 
 | Function | What it does |
 |---|---|
-| `Browser::new(dir) -> Self` | List directory (ignore crate, gitignore-aware, max_depth 1, dotfiles skipped) |
+| `Browser::new(dir) -> Self` | List directory (ignore crate, gitignore-aware, max_depth 1, dotfiles skipped, symlinked children followed via `follow_links(true)`); `reveal_ignored` starts `false` |
+| `Browser::set_reveal_ignored(reveal: bool)` | Flips `reveal_ignored` and re-lists `dir`, relaxing (or restoring) the `hidden`/`git_ignore`/`git_global`/`git_exclude` filters together; clamps `selected` into the new entry count |
 | `Browser::move_cursor(delta, viewport_h)` | Wrap-around cursor with scroll-clamping |
 | `Browser::descend() -> Option<PathBuf>` | Dir/ParentDir → path, else None |
 | `Browser::ascend_target() -> Option<PathBuf>` | Parent of current dir |
+| `resolve_corpus_root(invoked: &Path) -> PathBuf` | Walks up from the invoked path to the nearest `brain.toml`, else the nearest `.git` root, else falls back to the invoked path itself (a file's parent, since a file can never be a corpus root) |
 
-Entry order: `..` (if parent exists) → subdirs (case-insensitive alpha) → `.md`/`.mdx` files (case-insensitive alpha). Non-markdown files are hidden. Invariant: `selected < entries.len()` (or 0 when empty); scroll kept so `scroll <= selected < scroll + viewport_h`.
+Entry order: `..` (if parent exists) → subdirs (case-insensitive alpha) → `.md`/`.mdx` files (case-insensitive alpha). Non-markdown files are hidden. Invariant: `selected < entries.len()` (or 0 when empty); scroll kept so `scroll <= selected < scroll + viewport_h`. A walk error the `ignore` crate cannot resolve (e.g. a dangling symlink) is counted in `dropped_entries` rather than silently swallowed.
 
 ---
 

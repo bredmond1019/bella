@@ -148,7 +148,15 @@ fn draw_browser_statusline(
     } else {
         format!("{}/{}", browser.selected + 1, total)
     };
-    let text = format!(" bella · {dir} · {position} · j/k nav · Enter open · q quit");
+    let reveal = if browser.reveal_ignored { "on" } else { "off" };
+    let dropped = if browser.dropped_entries > 0 {
+        format!(" · {} entries dropped", browser.dropped_entries)
+    } else {
+        String::new()
+    };
+    let text = format!(
+        " bella · {dir} · {position} · j/k nav · Enter open · r reveal ({reveal}) · q quit{dropped}"
+    );
     let line = Line::from(vec![Span::styled(
         text,
         Style::default().fg(theme.status_fg).bg(theme.status_bg),
@@ -1143,6 +1151,83 @@ mod tests {
             style.bg,
             Some(app.theme.status_bg),
             "browser status line bg must come from app.theme.status_bg"
+        );
+    }
+
+    #[test]
+    fn draw_browser_status_line_shows_reveal_hint_and_dropped_count() {
+        // The status line must (a) document the reveal key/state, and (b)
+        // surface a non-zero dropped-entry count so an incomplete listing is
+        // visible to the operator rather than silent.
+        let width: u16 = 200;
+        let height: u16 = 20;
+
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_status_line_reveal");
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_browser_app(dir, width, height);
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.clear();
+            b.dropped_entries = 3;
+        }
+
+        terminal
+            .draw(|f| {
+                draw_browser(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let bottom: String = (0..width)
+            .map(|x| buf.cell((x, height - 1)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+
+        assert!(
+            bottom.contains("r reveal"),
+            "browser status line must document the reveal key; got:\n{bottom:?}"
+        );
+        assert!(
+            bottom.contains("off"),
+            "browser status line must show reveal is off by default; got:\n{bottom:?}"
+        );
+        assert!(
+            bottom.contains("3 entries dropped"),
+            "browser status line must surface a non-zero dropped-entry count; got:\n{bottom:?}"
+        );
+    }
+
+    #[test]
+    fn draw_browser_status_line_hides_dropped_count_when_zero() {
+        let width: u16 = 200;
+        let height: u16 = 20;
+
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_status_line_no_drop");
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_browser_app(dir, width, height);
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.clear();
+            b.dropped_entries = 0;
+        }
+
+        terminal
+            .draw(|f| {
+                draw_browser(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let bottom: String = (0..width)
+            .map(|x| buf.cell((x, height - 1)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+
+        assert!(
+            !bottom.contains("dropped"),
+            "browser status line must not mention drops when the count is zero; got:\n{bottom:?}"
         );
     }
 

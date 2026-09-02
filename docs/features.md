@@ -93,6 +93,12 @@ History is pushed on file navigation; anchor-only navigation does not add a hist
 
 Browser mode is active when no file is open (startup with no arg or a directory arg). A bordered pane shows the directory listing. `▶` marks the selected entry. Directories and `..` are shown in bold cyan; markdown files in default colour.
 
+The walk that builds the listing follows symlinked child entries (`follow_links(true)`) so a
+symlinked directory — e.g. this repo's own `planning/` — shows its contents instead of being
+silently dropped. Any entry the walk cannot resolve (a dangling symlink, for example) is counted
+in `Browser::dropped_entries` rather than swallowed, and a non-zero count is shown in the status
+line.
+
 ### Keyboard — Browser Mode
 
 | Key | Action | What happens internally |
@@ -101,7 +107,11 @@ Browser mode is active when no file is open (startup with no arg or a directory 
 | `k` / `↑` | Move cursor up | `BrowserUp` → `Browser::move_cursor(-1, viewport_h)` |
 | `Enter` | Open / descend | `BrowserDescend` → check `Browser::descend()`; if Dir → `App::enter_dir()`; if Markdown → `App::open_from_browser()` → Reader mode |
 | `Backspace` | Ascend to parent | `BrowserAscend` → `App::ascend()` → `Browser::new(parent_dir)` |
+| `r` | Toggle reveal (hidden dotfiles + gitignored entries) | `BrowserToggleReveal` → `App::toggle_reveal()` → `Browser::set_reveal_ignored(!reveal_ignored)` → re-lists the current directory with `hidden`/`git_ignore`/`git_global`/`git_exclude` all relaxed or restored together |
 | `q` / `Ctrl-C` | Quit | `Quit` |
+
+The status line always shows the reveal state (`r reveal (on)` / `r reveal (off)`) and, when
+`dropped_entries` is non-zero, an extra count of entries the walk could not resolve.
 
 ### Mouse — Browser Mode
 

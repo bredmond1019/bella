@@ -4,18 +4,30 @@
 #
 # For each PNG:
 #   (a) SANITY — it must be a real capture, not a failed one showing only a
-#       shell prompt. Checked two ways: a byte-size floor, AND the presence
-#       of a companion text scene (tests/scenes/<same-name>.txt, from
-#       scripts/capture_scenes.sh) that carries bella's status line. The
-#       status line's literal text varies by mode (e.g. the search overlay
-#       replaces it with a `/query [n/m]` prompt line, so a fixed string
-#       like "bella ·" is not present in every real scene — see
-#       tests/scenes/wide_reader_search.txt) so this is checked the same
-#       way scripts/check_scenes.sh already detects a failed/blanked
-#       capture: a minimum non-whitespace line count. A companion scene
-#       showing only a shell prompt (the known failure mode) has 0-2
-#       non-blank lines; every real capture carries bella's rendered
-#       content plus a footer line.
+#       shell prompt. The PRIMARY discriminator is a per-scene byte-size
+#       floor (min_bytes in scripts/vhs/scenes.toml), because a single
+#       global floor cannot work: a ~20032-byte blank capture of
+#       narrow_reader_demo_table.png passed a MIN_PNG_BYTES=15000 floor,
+#       and raising that floor to 25000 would false-fail
+#       narrow_browser_root.png, whose real captures land at ~27838 bytes.
+#       Each scene's own min_bytes is derived from a verified-good capture
+#       of THAT scene, generously under it.
+#
+#       The companion text scene (tests/scenes/<same-name>.txt, from
+#       scripts/capture_scenes.sh) is checked SECOND, as a secondary
+#       signal only — it CANNOT be the primary discriminator, because it
+#       is captured via tmux, a different mechanism from VHS: a blank VHS
+#       PNG paired with a healthy tmux scene passes a companion-only check
+#       (this is exactly how narrow_reader_demo_table.png shipped blank
+#       while its BE.7.L review was green). It still carries a minimum
+#       non-whitespace line count, the same way scripts/check_scenes.sh
+#       already detects a failed/blanked capture, since the status line's
+#       literal text varies by mode (e.g. the search overlay replaces it
+#       with a `/query [n/m]` prompt line, so a fixed string like
+#       "bella ·" is not present in every real scene — see
+#       tests/scenes/wide_reader_search.txt). A companion scene showing
+#       only a shell prompt has 0-2 non-blank lines; every real capture
+#       carries bella's rendered content plus a footer line.
 #   (b) FRESHNESS — its last commit must not be older than the last commit
 #       to any of the render/theme sources: crates/bella/src/ui.rs,
 #       crates/bella/src/theme.rs, crates/bella-engine/src/markdown.rs,
@@ -56,7 +68,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCREENSHOTS_DIR="${1:-$REPO_ROOT/planning/artifacts/screenshots}"
 BASELINE_DIR="$REPO_ROOT/tests/scenes"
-MIN_PNG_BYTES=15000
+SCENES_TOML="$REPO_ROOT/scripts/vhs/scenes.toml"
 MIN_NONBLANK_LINES=3
 
 SOURCE_FILES=(
@@ -87,6 +99,36 @@ commit_time_in_own_repo() {
     rel="${real#"$toplevel"/}"
     ts="$(git -C "$toplevel" log -1 --format=%ct -- "$rel" 2>/dev/null || true)"
     echo "$ts"
+}
+
+# scene_min_bytes <scene-name> — the per-scene expected minimum PNG size
+# (bytes), read from the `min_bytes` field of the matching [[scene]] block
+# in scripts/vhs/scenes.toml. Prints nothing if the manifest has no
+# min_bytes entry for that scene (the caller must treat that as a failure,
+# not fall back to a global floor — that global floor is exactly what this
+# check replaces, for the reasons in the header comment above).
+scene_min_bytes() {
+    local scene_name="$1"
+    awk -v want="$scene_name" '
+        /^\[\[scene\]\]/ { name = "" }
+        /^name[[:space:]]*=/ {
+            line = $0
+            sub(/^name[[:space:]]*=[[:space:]]*"/, "", line)
+            sub(/".*$/, "", line)
+            name = line
+        }
+        /^min_bytes[[:space:]]*=/ {
+            if (name == want) {
+                line = $0
+                sub(/^min_bytes[[:space:]]*=[[:space:]]*/, "", line)
+                gsub(/[[:space:]]+$/, "", line)
+                print line
+                found = 1
+                exit
+            }
+        }
+        END { if (!found) print "" }
+    ' "$SCENES_TOML"
 }
 
 # Freshest commit time across the render/theme sources that actually exist.
@@ -130,15 +172,21 @@ for png in "${pngs[@]}"; do
         *)        tape="scripts/vhs/reference-wide.tape or scripts/vhs/reference-narrow.tape" ;;
     esac
 
-    # (a) SANITY — byte-size floor.
+    # (a) SANITY — per-scene byte-size floor (primary discriminator).
+    expected_min="$(scene_min_bytes "$name")"
+    if [[ -z "$expected_min" ]]; then
+        echo "check_vhs_fresh.sh: FAIL — '$name.png' has no min_bytes entry for scene '$name' in scripts/vhs/scenes.toml — cannot determine its sanity floor. Add one to scenes.toml." >&2
+        FAIL=1
+        continue
+    fi
     size="$(wc -c <"$png" | tr -d '[:space:]')"
-    if [[ "$size" -lt "$MIN_PNG_BYTES" ]]; then
-        echo "check_vhs_fresh.sh: FAIL — '$name.png' is only $size bytes (minimum $MIN_PNG_BYTES) — looks like a failed capture, not a real render. Re-run $tape." >&2
+    if [[ "$size" -lt "$expected_min" ]]; then
+        echo "check_vhs_fresh.sh: FAIL — '$name.png' is only $size bytes (expected at least $expected_min for this scene, per scripts/vhs/scenes.toml) — looks like a failed capture, not a real render. Re-run $tape." >&2
         FAIL=1
         continue
     fi
 
-    # (a) SANITY — companion text scene must exist and contain the status line.
+    # (a) SANITY — companion text scene, secondary signal only (see header).
     companion="$BASELINE_DIR/${name}.txt"
     if [[ ! -f "$companion" ]]; then
         echo "check_vhs_fresh.sh: FAIL — '$name.png' has no companion text scene at tests/scenes/${name}.txt — cannot confirm it is a real capture. Re-run $tape." >&2

@@ -45,6 +45,17 @@ pub struct Browser {
     pub scroll: u16,
     /// Optional absolute path above which navigation is blocked.
     pub root_boundary: Option<PathBuf>,
+    /// When `true`, relaxes BOTH the hidden-dotfile filter and the
+    /// `.gitignore`/global-git-ignore/git-exclude filters, revealing
+    /// entries the default listing hides. Defaults to `false` (today's
+    /// behaviour: both filters stay on).
+    pub reveal_ignored: bool,
+    /// Count of entries the last listing dropped because the walker could
+    /// not resolve them (e.g. a broken symlink, a permission error). A
+    /// non-zero count means the listing is INCOMPLETE, not empty-because-
+    /// there-was-nothing-there — distinct from a directory that is simply
+    /// empty.
+    pub dropped_entries: usize,
 }
 
 impl Browser {
@@ -54,14 +65,38 @@ impl Browser {
     /// `.gitignore` via the `ignore` walker, and hides non-markdown files.
     /// Entries are ordered: `..` (if parent exists) → subdirectories (alpha,
     /// case-insensitive) → `.md`/`.mdx` files (alpha, case-insensitive).
+    ///
+    /// `reveal_ignored` starts `false` — today's behaviour.
     pub fn new(dir: PathBuf) -> Self {
-        let entries = build_entries(dir.as_path());
+        let (entries, dropped_entries) = build_entries(dir.as_path(), false);
         Self {
             dir,
             entries,
             selected: 0,
             scroll: 0,
             root_boundary: None,
+            reveal_ignored: false,
+            dropped_entries,
+        }
+    }
+
+    /// Toggle `reveal_ignored` and re-list the current directory.
+    ///
+    /// The cursor is clamped into the (possibly shorter or longer) new
+    /// entry list rather than reset, so toggling reveal off again lands
+    /// close to where the user was.
+    pub fn set_reveal_ignored(&mut self, reveal: bool) {
+        self.reveal_ignored = reveal;
+        self.refresh();
+    }
+
+    /// Re-list `self.dir` with the current `reveal_ignored` setting.
+    fn refresh(&mut self) {
+        let (entries, dropped_entries) = build_entries(self.dir.as_path(), self.reveal_ignored);
+        self.entries = entries;
+        self.dropped_entries = dropped_entries;
+        if self.selected >= self.entries.len() {
+            self.selected = self.entries.len().saturating_sub(1);
         }
     }
 
@@ -126,23 +161,87 @@ impl Browser {
     }
 }
 
+/// Resolve the corpus root for `invoked` — the path bella was launched at
+/// (a file or a directory).
+///
+/// The rule: walk UPWARD from `invoked` to the nearest ancestor directory
+/// containing `brain.toml`. Failing that, walk upward again to the nearest
+/// ancestor containing a `.git` entry (the git root). Failing that, return
+/// `invoked` itself — this never errors, so a bare directory with neither
+/// marker still gets a usable root.
+///
+/// This is a property of how bella was invoked, not of any document index —
+/// BE.7.G's document index consumes this result rather than re-deriving it.
+pub fn resolve_corpus_root(invoked: &Path) -> PathBuf {
+    // Walking starts from a directory. When `invoked` names a file, start
+    // from its parent instead of treating the file itself as a candidate
+    // ancestor.
+    let start = if invoked.is_file() {
+        invoked
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| invoked.to_path_buf())
+    } else {
+        invoked.to_path_buf()
+    };
+
+    if let Some(root) = nearest_ancestor_containing(&start, "brain.toml") {
+        return root;
+    }
+    if let Some(root) = nearest_ancestor_containing(&start, ".git") {
+        return root;
+    }
+    invoked.to_path_buf()
+}
+
+/// Walk `start` and its ancestors looking for the nearest one whose
+/// directory contains an entry named `marker`. Returns `None` if no
+/// ancestor (including `start` itself) has one.
+fn nearest_ancestor_containing(start: &Path, marker: &str) -> Option<PathBuf> {
+    let mut cur = Some(start);
+    while let Some(dir) = cur {
+        if dir.join(marker).exists() {
+            return Some(dir.to_path_buf());
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
 
-/// Build the sorted entry list for `dir`.
-fn build_entries(dir: &Path) -> Vec<BrowserEntry> {
+/// Build the sorted entry list for `dir`, plus a count of entries the
+/// walker dropped because it could not resolve them (e.g. a broken
+/// symlink or a permission error) rather than silently shortening the
+/// listing with no trace.
+///
+/// `reveal_ignored` relaxes BOTH the hidden-dotfile filter and every
+/// `.gitignore`/global-ignore/git-exclude filter. Either alone leaves the
+/// other hiding things — a dot-directory that itself contains a
+/// gitignored child needs both off to be reachable.
+fn build_entries(dir: &Path, reveal_ignored: bool) -> (Vec<BrowserEntry>, usize) {
     let mut dirs: Vec<BrowserEntry> = Vec::new();
     let mut files: Vec<BrowserEntry> = Vec::new();
+    let mut dropped: usize = 0;
 
-    // Walk with the `ignore` crate: max_depth(1), respects .gitignore,
-    // hidden files are skipped.
+    // Walk with the `ignore` crate: max_depth(1). `follow_links(true)`
+    // resolves a symlinked CHILD entry to its target's file type — e.g.
+    // `planning/` in every repo of this fleet is a symlink into the brain
+    // vault, and without this flag a symlink's own type is neither
+    // `is_dir()` nor `is_file()`, so `build_entries` drops it from the
+    // listing entirely ("the browser cannot enter it at all"). It also
+    // lets a `Browser` rooted directly at a symlinked directory list the
+    // target's contents. `reveal_ignored` flips both filters that hide
+    // content; both stay on (today's behaviour) by default.
     let walker = ignore::WalkBuilder::new(dir)
         .max_depth(Some(1))
-        .hidden(true) // skip dot-files
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
+        .follow_links(true)
+        .hidden(!reveal_ignored) // skip dot-files unless revealed
+        .git_ignore(!reveal_ignored)
+        .git_global(!reveal_ignored)
+        .git_exclude(!reveal_ignored)
         // Respect .gitignore even outside a git repository (e.g. stand-alone dirs).
         .require_git(false)
         .build();
@@ -150,7 +249,14 @@ fn build_entries(dir: &Path) -> Vec<BrowserEntry> {
     for result in walker {
         let entry = match result {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(_) => {
+                // The walker could not resolve this entry (a broken
+                // symlink, a permission error, ...). Count it so the
+                // caller can tell an incomplete listing from an empty
+                // directory, instead of silently shortening the list.
+                dropped += 1;
+                continue;
+            }
         };
 
         let path = entry.path().to_path_buf();
@@ -203,7 +309,7 @@ fn build_entries(dir: &Path) -> Vec<BrowserEntry> {
     }
     entries.extend(dirs);
     entries.extend(files);
-    entries
+    (entries, dropped)
 }
 
 // ---------------------------------------------------------------------------
@@ -579,5 +685,253 @@ mod tests {
         let mut b2 = Browser::new(dir.clone());
         b2.root_boundary = Some(dir.clone());
         assert_eq!(b2.ascend_target(), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // BE.7.C task 1: follow_links, reveal_ignored, filesystem entry kind,
+    // dropped-entry count.
+    // -----------------------------------------------------------------------
+
+    /// `planning/` in every repo of this fleet is a symlink INTO the brain
+    /// vault — i.e. it shows up as a symlinked CHILD entry inside a normal
+    /// directory being browsed, not as the browser's own root. Without
+    /// `follow_links(true)`, a symlink's own file type is neither `is_dir()`
+    /// nor `is_file()`, so `build_entries` drops it from the listing
+    /// entirely — the "browser cannot enter it at all" bug this block
+    /// exists to fix. With `follow_links(true)`, the entry resolves to the
+    /// target's type (`Dir`) and descending into it lists the target's
+    /// contents.
+    ///
+    /// Observed by hand: reverting `.follow_links(true)` to
+    /// `.follow_links(false)` in `build_entries` and re-running this test
+    /// made it fail — `link_to_target` was absent from `b.entries` (not
+    /// merely wrong-kind: `find_entry` returned `None`). Flag restored
+    /// afterward; the assertion below is what caught it.
+    #[test]
+    #[cfg(unix)]
+    fn follow_links_lists_symlinked_child_directory_and_its_contents() {
+        let dir = temp_dir("symlink_child");
+        let real_target = create_dir(&dir, "real_target");
+        create_file(&real_target, "inside.md");
+
+        let link = dir.join("link_to_target");
+        std::os::unix::fs::symlink(&real_target, &link).expect("create symlink");
+
+        let b = Browser::new(dir.clone());
+        let link_entry = find_entry(&b.entries, "link_to_target").unwrap_or_else(|| {
+            panic!(
+                "symlinked child directory must be listed; entries = {:?}",
+                b.entries.iter().map(|e| &e.display).collect::<Vec<_>>()
+            )
+        });
+        assert_eq!(
+            link_entry.kind,
+            BrowserEntryKind::Dir,
+            "a symlink to a directory must resolve to kind Dir"
+        );
+
+        // Descending into it must list the target's contents.
+        let inner = Browser::new(link_entry.path.clone());
+        assert!(
+            find_entry(&inner.entries, "inside.md").is_some(),
+            "browsing into the symlinked child must list the target's contents"
+        );
+    }
+
+    /// Default constructor path keeps both filters ON (today's behaviour);
+    /// `set_reveal_ignored(true)` relaxes `git_ignore` and reveals a
+    /// gitignored entry.
+    #[test]
+    fn reveal_toggle_shows_gitignored_entry_only_when_on() {
+        let dir = temp_dir("reveal_gitignore");
+        fs::write(dir.join(".gitignore"), "ignored_dir/\n").expect("write .gitignore");
+        create_dir(&dir, "ignored_dir");
+
+        let b_off = Browser::new(dir.clone());
+        assert!(
+            !b_off.reveal_ignored,
+            "reveal_ignored must default to false"
+        );
+        assert!(
+            find_entry(&b_off.entries, "ignored_dir").is_none(),
+            "gitignored dir must be hidden by default"
+        );
+
+        let mut b_on = Browser::new(dir.clone());
+        b_on.set_reveal_ignored(true);
+        assert!(
+            find_entry(&b_on.entries, "ignored_dir").is_some(),
+            "gitignored dir must be visible once revealed"
+        );
+    }
+
+    /// The fleet's real trap, reproduced exactly: a DIRECTORY literally
+    /// named `status.md` living inside a dot-directory
+    /// (`planning/.mev-history/status.md`). A toggle that relaxes only
+    /// `git_ignore` never reveals this — it needs `hidden` relaxed too.
+    /// Also proves entry kind comes from filesystem metadata, not the
+    /// extension: `status.md` is a DIRECTORY and must be listed as
+    /// `BrowserEntryKind::Dir`, never `Markdown`.
+    #[test]
+    fn reveal_toggle_relaxes_hidden_and_kind_comes_from_filesystem() {
+        let dir = temp_dir("reveal_dotdir_trap");
+        let hidden_dir = create_dir(&dir, ".mev-history");
+        // Trap: a directory, not a file, named like a markdown file.
+        create_dir(&hidden_dir, "status.md");
+
+        // Toggle off: the dot-directory is invisible entirely, so the trap
+        // beneath it is unreachable.
+        let b_off = Browser::new(dir.clone());
+        assert!(
+            find_entry(&b_off.entries, ".mev-history").is_none(),
+            "dot-directory must be hidden by default"
+        );
+
+        // Toggle on: the dot-directory becomes visible, as a Dir.
+        let mut b_on = Browser::new(dir.clone());
+        b_on.set_reveal_ignored(true);
+        let dot_entry = find_entry(&b_on.entries, ".mev-history")
+            .expect("dot-directory must be visible once revealed");
+        assert_eq!(dot_entry.kind, BrowserEntryKind::Dir);
+
+        // Browse into it: `status.md` must be listed as a Dir, not Markdown
+        // — its kind must come from `file_type()`, never from the name.
+        let mut inner = Browser::new(hidden_dir.clone());
+        inner.set_reveal_ignored(true);
+        let trap_entry = find_entry(&inner.entries, "status.md")
+            .expect("directory named status.md must be listed");
+        assert_eq!(
+            trap_entry.kind,
+            BrowserEntryKind::Dir,
+            "a directory named `*.md` must be kind Dir, never Markdown \
+             (entry kind must come from filesystem metadata, not the \
+             extension)"
+        );
+    }
+
+    /// A walk error (here: a dangling symlink, which `follow_links(true)`
+    /// tries and fails to resolve) must not silently shorten the listing.
+    /// The sibling that CAN be read is still listed, and the drop is
+    /// counted so the caller can tell an incomplete listing from an empty
+    /// directory.
+    #[test]
+    #[cfg(unix)]
+    fn dropped_entry_count_reports_unresolvable_entry() {
+        let dir = temp_dir("dropped_broken_link");
+        create_file(&dir, "visible.md");
+        let broken = dir.join("broken_link");
+        std::os::unix::fs::symlink(dir.join("does_not_exist"), &broken)
+            .expect("create dangling symlink");
+
+        let b = Browser::new(dir.clone());
+
+        assert!(
+            find_entry(&b.entries, "visible.md").is_some(),
+            "a readable sibling must still be listed despite the unresolvable entry"
+        );
+        assert!(
+            b.dropped_entries > 0,
+            "dropped_entries must report the unresolvable entry, got {}",
+            b.dropped_entries
+        );
+    }
+
+    /// `set_reveal_ignored` re-lists the SAME directory and clamps the
+    /// cursor into the (possibly shorter) new entry count rather than
+    /// panicking or leaving it out of bounds.
+    #[test]
+    fn set_reveal_ignored_reclamps_selected() {
+        let dir = temp_dir("reveal_reclamp");
+        fs::write(dir.join(".gitignore"), "only_visible_when_revealed/\n")
+            .expect("write .gitignore");
+        create_dir(&dir, "only_visible_when_revealed");
+
+        let mut b = Browser::new(dir.clone());
+        b.selected = b.entries.len().saturating_sub(1);
+
+        b.set_reveal_ignored(true);
+        assert!(b.selected < b.entries.len(), "selected must stay in bounds");
+        assert!(
+            find_entry(&b.entries, "only_visible_when_revealed").is_some(),
+            "revealed entry must now be present"
+        );
+
+        b.set_reveal_ignored(false);
+        assert!(b.selected < b.entries.len().max(1) || b.entries.is_empty());
+        assert!(
+            find_entry(&b.entries, "only_visible_when_revealed").is_none(),
+            "entry must be hidden again once reveal is toggled off"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Corpus-root resolver tests
+    // -----------------------------------------------------------------------
+
+    use super::resolve_corpus_root;
+
+    /// A directory under a tree containing `brain.toml` resolves to the
+    /// nearest ancestor holding it, not to the git root or the invoked
+    /// path.
+    #[test]
+    fn resolve_corpus_root_finds_nearest_brain_toml() {
+        let root = temp_dir("corpus_root_brain_toml");
+        fs::write(root.join("brain.toml"), "").expect("write brain.toml");
+        // A `.git` marker further up must NOT win — brain.toml takes
+        // priority over the git root.
+        let nested = create_dir(&root, "sub");
+        let leaf = create_dir(&nested, "leaf");
+
+        let resolved = resolve_corpus_root(&leaf);
+        assert_eq!(
+            resolved, root,
+            "must resolve to the nearest ancestor containing brain.toml"
+        );
+    }
+
+    /// A git repo with no `brain.toml` anywhere in its ancestry falls back
+    /// to the git root (nearest ancestor containing `.git`).
+    #[test]
+    fn resolve_corpus_root_falls_back_to_git_root() {
+        let root = temp_dir("corpus_root_git");
+        create_dir(&root, ".git");
+        let nested = create_dir(&root, "sub");
+        let leaf = create_dir(&nested, "leaf");
+
+        let resolved = resolve_corpus_root(&leaf);
+        assert_eq!(
+            resolved, root,
+            "must resolve to the nearest ancestor containing .git when no brain.toml exists"
+        );
+    }
+
+    /// A directory that is neither under a `brain.toml` tree nor a git repo
+    /// resolves to the invoked path itself, rather than erroring or
+    /// returning some other default.
+    #[test]
+    fn resolve_corpus_root_returns_invoked_path_when_neither_marker_exists() {
+        let dir = temp_dir("corpus_root_neither");
+
+        let resolved = resolve_corpus_root(&dir);
+        assert_eq!(
+            resolved, dir,
+            "must return the invoked path itself when neither brain.toml nor .git is found"
+        );
+    }
+
+    /// When `invoked` names a file (not a directory), resolution starts
+    /// from the file's parent — a file can never itself be a corpus root.
+    #[test]
+    fn resolve_corpus_root_starts_from_parent_when_invoked_is_a_file() {
+        let root = temp_dir("corpus_root_file_invoked");
+        fs::write(root.join("brain.toml"), "").expect("write brain.toml");
+        let file = root.join("doc.md");
+        create_file(&root, "doc.md");
+
+        let resolved = resolve_corpus_root(&file);
+        assert_eq!(
+            resolved, root,
+            "resolution must start from the invoked file's parent directory"
+        );
     }
 }

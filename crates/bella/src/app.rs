@@ -158,6 +158,14 @@ pub struct App {
     /// [`Theme::dark`] passed to `request_render`; this field exists so
     /// always-on chrome can reference the same values without re-deriving them.
     pub theme: Theme,
+    /// Corpus root resolved once at startup from the invoked path: the
+    /// nearest ancestor containing `brain.toml`, failing that the git root,
+    /// failing that the invoked path itself. See
+    /// [`bella_engine::browser::resolve_corpus_root`]. A property of how
+    /// bella was invoked, not of any document index — stored here so a
+    /// later block (BE.7.G's document index) can consume it without
+    /// re-resolving.
+    pub corpus_root: PathBuf,
 }
 
 impl App {
@@ -167,6 +175,7 @@ impl App {
     /// so `viewport_height = term_height.saturating_sub(1)`.
     pub fn new(src: String, file: PathBuf, width: u16, term_height: u16) -> Self {
         let viewport_height = term_height.saturating_sub(1);
+        let corpus_root = bella_engine::browser::resolve_corpus_root(&file);
         let mut render_worker = RenderWorker::spawn();
         let base_dir = file.parent().map(Path::to_path_buf);
         let render_generation = render_worker.request_render(
@@ -206,6 +215,7 @@ impl App {
             render_generation,
             render_state: RenderState::Loading,
             theme: Theme::dark(),
+            corpus_root,
         }
     }
 
@@ -215,6 +225,7 @@ impl App {
     /// so `viewport_height = term_height.saturating_sub(1)`.
     pub fn new_browser(dir: PathBuf, width: u16, term_height: u16) -> Self {
         let viewport_height = term_height.saturating_sub(1);
+        let corpus_root = bella_engine::browser::resolve_corpus_root(&dir);
         // Reader fields are empty until a file is opened from the browser. The
         // document is empty, so there is nothing worth offloading — render it
         // synchronously and start the worker already `Ready`.
@@ -249,6 +260,7 @@ impl App {
             render_generation: 0,
             render_state: RenderState::Ready,
             theme: Theme::dark(),
+            corpus_root,
         }
     }
 
@@ -294,6 +306,21 @@ impl App {
     /// `mode` remains [`Mode::Browser`].
     pub fn enter_dir(&mut self, dir: PathBuf) {
         self.browser = Some(Browser::new(dir));
+    }
+
+    /// Toggle the active browser's `reveal_ignored` flag and re-list the
+    /// current directory.
+    ///
+    /// No-op when there is no active browser (e.g. `Mode::Reader`). The
+    /// browser's `dropped_entries` count (surfaced directly in the status
+    /// line — see `ui::draw_browser_statusline`) makes an incomplete
+    /// listing visible to the operator without needing a separate
+    /// `status_message`.
+    pub fn toggle_reveal(&mut self) {
+        if let Some(b) = self.browser.as_mut() {
+            let new_reveal = !b.reveal_ignored;
+            b.set_reveal_ignored(new_reveal);
+        }
     }
 
     /// Ascend to the parent directory (Backspace key).
@@ -2325,6 +2352,24 @@ mod tests {
         assert_eq!(app.mode, Mode::Browser, "mode must remain Browser");
         let b = app.browser.as_ref().expect("browser must be Some");
         assert_eq!(b.dir, child, "enter_dir must re-root browser at child");
+    }
+
+    #[test]
+    fn toggle_reveal_flips_flag_and_is_noop_without_a_browser() {
+        let dir = temp_browser_dir("toggle_reveal_flag");
+        let mut app = App::new_browser(dir, 80, 25);
+        assert!(!app.browser.as_ref().unwrap().reveal_ignored);
+
+        app.toggle_reveal();
+        assert!(app.browser.as_ref().unwrap().reveal_ignored);
+
+        app.toggle_reveal();
+        assert!(!app.browser.as_ref().unwrap().reveal_ignored);
+
+        // No browser (e.g. a reader-only App) — must not panic.
+        app.browser = None;
+        app.toggle_reveal();
+        assert!(app.browser.is_none());
     }
 
     #[test]

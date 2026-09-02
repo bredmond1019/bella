@@ -22,6 +22,13 @@
 #   height  — pinned terminal rows
 #   settle  — optional override (seconds) of [defaults].key_settle for this
 #             scene only, for a scene that needs a longer render pause.
+#   min_bytes — expected minimum PNG size (bytes) for this scene's VHS
+#             capture, read by scripts/check_vhs_fresh.sh as the per-scene
+#             sanity floor. Derived from a verified-good capture and set
+#             generously under it, but well above a blank frame (blanks at
+#             these terminal sizes land around 2-20KB) — a single global
+#             floor cannot discriminate a blank from a real capture across
+#             scenes this different in size (see check_vhs_fresh.sh).
 
 [defaults]
 # Time to wait after launching the binary before the first keystroke/capture,
@@ -42,6 +49,7 @@ target = "scripts/vhs/fixtures/demo.md"
 keys = []
 width = 110
 height = 43
+min_bytes = 130000
 
 [[scene]]
 name = "wide_reader_demo_tasks_code"
@@ -52,6 +60,7 @@ keys = [
 ]
 width = 110
 height = 43
+min_bytes = 150000
 
 [[scene]]
 name = "wide_reader_demo_table"
@@ -64,6 +73,7 @@ keys = [
 ]
 width = 110
 height = 43
+min_bytes = 140000
 
 [[scene]]
 name = "wide_reader_search"
@@ -77,6 +87,7 @@ keys = [
 ]
 width = 110
 height = 43
+min_bytes = 135000
 settle = 0.5
 
 [[scene]]
@@ -85,6 +96,7 @@ target = "README.md"
 keys = []
 width = 110
 height = 43
+min_bytes = 230000
 
 [[scene]]
 name = "wide_browser_root"
@@ -92,6 +104,7 @@ target = "."
 keys = []
 width = 110
 height = 43
+min_bytes = 30000
 
 [[scene]]
 name = "wide_browser_selection"
@@ -99,6 +112,7 @@ target = "."
 keys = ["Down", "Down"]
 width = 110
 height = 43
+min_bytes = 30000
 
 [[scene]]
 name = "wide_browser_nested"
@@ -106,7 +120,41 @@ target = "."
 keys = ["Down", "Down", "Enter"]
 width = 110
 height = 43
+min_bytes = 34000
 settle = 0.6
+
+# BE.7.C task 3: reveal-toggle ('r') scenes. `reveal_demo/` is a fixture
+# reproducing the fleet's real trap in miniature: a dot-directory
+# (`.mev-history/`) containing a DIRECTORY named `status.md`, plus a
+# `.gitignore`-ignored sibling (`ignored_notes/`) and a plain visible
+# directory (`visible/`). With the toggle off, only `visible/` is listed;
+# `r` reveals all three.
+[[scene]]
+name = "wide_browser_reveal_off"
+target = "scripts/vhs/fixtures/reveal_demo"
+keys = []
+width = 110
+height = 43
+min_bytes = 25000
+
+[[scene]]
+name = "wide_browser_reveal_on"
+target = "scripts/vhs/fixtures/reveal_demo"
+keys = ["r"]
+width = 110
+height = 43
+min_bytes = 25000
+
+# A directory reached through the `planning/` symlink — bella's own
+# `.gitignore` lists `/planning`, so this scene exercises `follow_links`
+# resolving a symlinked root and listing its (real, non-empty) contents.
+[[scene]]
+name = "wide_browser_planning_symlink"
+target = "planning"
+keys = []
+width = 110
+height = 43
+min_bytes = 25000
 
 # --- Narrow (~65x27 cols) — wrap/reflow check -------------------------------
 
@@ -116,6 +164,7 @@ target = "scripts/vhs/fixtures/demo.md"
 keys = []
 width = 65
 height = 27
+min_bytes = 75000
 
 [[scene]]
 name = "narrow_reader_demo_table"
@@ -127,6 +176,7 @@ keys = [
 ]
 width = 65
 height = 27
+min_bytes = 25000
 
 [[scene]]
 name = "narrow_browser_root"
@@ -134,3 +184,4 @@ target = "."
 keys = []
 width = 65
 height = 27
+min_bytes = 19000

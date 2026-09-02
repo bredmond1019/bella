@@ -13,6 +13,22 @@ timestamp: "2026-09-01T19:15:00Z"
 
 ## [run: 2026-09-02]
 
+Closed `BE.7.C` (walker: symlinks, hidden/ignored reveal, corpus-root rule) via `/sdlc-flow`; all 5 tasks passed, review verdict PASS. Task 1 set `WalkBuilder::follow_links(true)` on `Browser::build_entries` (fixing the long-standing symlinked-child-entry drop that hid `planning/` in every repo of this fleet) and added a `reveal_ignored` field/setter relaxing both `hidden(true)` and `git_ignore(true)` together — plus `build_entries` now returns a dropped-entry count instead of silently swallowing walk errors. Task 2 added `resolve_corpus_root` (invoked path → nearest `brain.toml` ancestor → git root → invoked path) and stored it as `App.corpus_root` at startup. Task 3 bound reveal-toggle to `r` in browser mode, surfaced reveal state and the dropped-entry count in the browser status line, and refreshed the scene/VHS baselines for the new browser behaviour (14 reference PNGs touched, most re-saved pixel-identical with a PNG tEXt freshness stamp; one genuine new capture). Task 4 ran the real cross-repo bastion gate (`cargo build`/`cargo test`, 2713+4+1+7 tests green) confirming all five `Browser::new` call sites keep default filtering unchanged. Task 5 confirmed the full authoritative validation suite (fmt, clippy, `cargo test` via nextest-policy override, release build, test-layout, scenes, VHS freshness) green with a clean tree. One deviation from the spec as written: task 3 required editing `crates/bella/src/ui.rs` (not in task 3's declared `files[]`) because browser mode never renders through `App::status_message`, so surfacing reveal state and the dropped-entry count visibly required touching the draw function directly. `BE.7.D` (scroll anchoring across re-render) is now the next layout block in sequence.
+
+```
+7b2f205 docs: update docs for BE.7.C
+c498c46 fix: lengthen two VHS scene settle times against measured blanking
+1387815 feat: implement BE.7.C-task3
+0b4ce99 feat: implement BE.7.C-task2
+dcb96ea feat: implement BE.7.C-task1
+```
+
+Next: `/sdlc-flow BE.7.D` (scroll anchoring across re-render).
+
+---
+
+## [run: 2026-09-02]
+
 Closed `BE.7.L` (visual regression harness) via `/sdlc-flow` resume; all 6 tasks passed, review verdict PASS. Picking up from the prior bail after task 3 (stale VHS reference PNGs), task 4 captured verbatim evidence that both `check_scenes.sh` and `check_vhs_fresh.sh` actually go red on a real drawn-output regression, a known-bad capture, and a simulated stale reference set, then confirmed the tree stays clean. Task 5 added tape/manifest parity checking to `scripts/check_scenes.sh` (demonstrated failing, then reverted), pinning headers to both reference tapes, a three-tier rewrite of `planning/artifacts/screenshots/README.md`, and the two new scene commands to `CLAUDE.md`'s Build/test/run block. Task 6 ran the full authoritative validation suite — fmt, clippy, `cargo test` (via `NEXTEST_POLICY_OVERRIDE`), release build, `check_test_layout.sh`, `check_scenes.sh`, `check_vhs_fresh.sh` — all 8 checks green with no further code changes needed. Notable decision from the earlier task 3 resolution: 6 of 11 regenerated reference PNGs came back byte-identical to their prior blobs, so each was stamped with a PNG tEXt chunk recording the source commit it was verified against, forcing a real (pixel-identical) blob change that lets the git-commit-time freshness gate re-fire honestly. `BE.7.C` (walker: symlinks, hidden/ignored reveal, corpus-root rule) is now the next layout block in sequence.
 
 ```
