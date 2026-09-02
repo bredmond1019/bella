@@ -78,6 +78,7 @@ cargo test -p bella -- test_scroll_clamp
 | Engine integration | `crates/bella-engine/tests/it/render.rs` | Full render pipeline: source → `Rendered`; checks line count, link extraction, checkbox spans |
 | App unit tests | `crates/bella/src/*.rs` (`#[cfg(test)]` blocks) | Scroll clamping, key mapping, history push/back/forward, selection normalisation, double-click timing, browser cursor wrap, browser entry ordering |
 | App draw tests | `crates/bella/src/ui.rs` (`#[cfg(test)]`) | `ratatui::backend::TestBackend` assertions on rendered cell content |
+| App draw integration (golden) | `crates/bella/tests/it/golden_draw.rs` | `TestBackend` structural assertions (region widths, x-offsets, pane boundaries, status-row position) for `draw_reader`/`draw_browser` across multiple terminal sizes |
 
 All mappers (`map_key`, `map_browser_key`, `map_search_key`, `map_mouse`, `map_browser_mouse`) are pure functions with no terminal dependency — they are exercised directly in unit tests without any mocking.
 

@@ -11,6 +11,20 @@ timestamp: "2026-09-01T19:15:00Z"
 
 ---
 
+## [run: 2026-09-02]
+
+Closed `BE.7.B` (browser resize fix + structural golden buffer) via `/sdlc-flow`; all 4 tasks passed, review verdict PASS. Task 1 added `crates/bella/tests/it/golden_draw.rs` (plus its `mod` line in `tests/it/main.rs`) — TestBackend structural assertions over `draw_reader`/`draw_browser` at three terminal sizes, pinning region widths, x-offsets, pane boundaries and the status-row's position, deliberately never cell contents, so the buffer stays a regression gate rather than a source of cosmetic churn. Task 2 fixed the live off-by-one: `events.rs`'s `Event::Resize` arm now reads the existing single source `app.browser_area.height` instead of recomputing `height.saturating_sub(2)`, extracted as a testable `reclamp_browser_scroll_on_resize` so both the crate's own unit tests and the external `tests/it` binary can exercise it; the negative control (temporarily reverting to the old computation) was run manually and confirmed the golden-draw resize test fails without the fix, then fully restored before committing. Task 3 re-captured `planning/artifacts/screenshots/narrow_reader_demo_table.png` via a scoped, disposable VHS tape — it now shows bella's actual reader render (110546 bytes) instead of a bare shell prompt (was 20326 bytes); committed from the HQ vault repo since the file lives under the `planning/` symlink. Task 4 ran the full validation suite (fmt, clippy, `cargo test` via the designated full-suite override, release build, `check_test_layout.sh`) clean with no further code changes. `BE.7.L` (visual regression harness) is now the next layout block in sequence.
+
+Next: `/sdlc-flow BE.7.L` (visual regression harness — scripted terminal scenes + VHS freshness gate).
+
+```
+050c038 docs: update docs for BE.7.B
+1a99f40 fix: resize off-by-one browser clamp + failing golden test
+e0f0084 feat: implement BE.7.B-task1
+```
+
+---
+
 ## [run: 2026-09-01]
 
 Resumed and closed `BE.7.A` (frontmatter strip + restricted OKF parse) via `/sdlc-flow`; all 5 tasks passed, review verdict PASS. The prior fmt bail (task 5's `cargo fmt --check` failing on `crates/bella-engine/tests/it/frontmatter.rs`, unformatted since task 3) was cleared by a scoped, task-independent commit (`74d6950`) that ran `cargo fmt` on only that file — whitespace-only, no assertion or test-name changes. Task 5 then re-ran clean: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` (via `NEXTEST_POLICY_OVERRIDE=1`, this task's designated full-suite validation), `cargo build --release`, and `scripts/check_test_layout.sh` all passed with zero further code changes. Docs updated (`docs/modules.md`, `docs/capabilities.md`, `docs/development.md`) to reflect the frontmatter module. Net result: `bella-engine` now strips OKF frontmatter as a pre-pass before `pulldown-cmark`, carries a parsed `Frontmatter` on `Rendered`, and corrects `blocks[].source_range`/`row_source[]`/`EditCtx.cursor` back into original-file byte space — clearing the live rendering defect (bogus setext-H2 from the YAML close fence) on every OKF document in this fleet. Cross-repo evidence (bastion `cargo build`/`test` green, real `tui_capture.sh` capture) was recorded in task 4. `BE.7.B` is now the only remaining startable layout block.
