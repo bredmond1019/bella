@@ -38,7 +38,7 @@
 #
 # Run from the repo root: vhs scripts/vhs/reference-wide.tape
 
-Output planning/artifacts/screenshots/wide.gif
+Output target/vhs/wide.gif
 
 Set Shell "bash"
 Set FontSize 16

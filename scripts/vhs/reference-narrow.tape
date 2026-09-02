@@ -33,7 +33,7 @@
 # back blank at these settle times, retry the tape rather than lowering the
 # floor at commit time — see check_vhs_fresh.sh's per-scene floor.
 
-Output planning/artifacts/screenshots/narrow.gif
+Output target/vhs/narrow.gif
 
 Set Shell "bash"
 Set FontSize 16
