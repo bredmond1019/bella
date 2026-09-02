@@ -61,11 +61,26 @@ Wait+Screen@30s /Bella Reference Demo/
 Sleep 300ms
 Screenshot planning/artifacts/screenshots/narrow_reader_demo_top.png
 
-Down 20
 # "Task list" is the heading that scrolls into view after Down 20 at this
 # narrow width — it sits well below what the initial top screenshot shows.
+# Sent as four Down 5 bursts with a short Sleep between (BE.ticket.vhs-
+# wait-for-readiness task 2, measured 2026-09-02), not one Down 20 burst:
+# a single 20-keypress burst here reliably triggered the known
+# reader-mode render-blanking carryover (rapid-keypresses-blank-the-
+# render, explicitly out of scope to FIX here) even after Wait+Screen
+# matched "Task list" — the capture itself came back blank at a constant
+# 2176 bytes, well under this scene's min_bytes floor, on 6 of 7
+# consecutive attempts. Breaking the burst into smaller chunks is a
+# capture-cadence workaround, not a change to bella's render code.
+Down 5
+Sleep 80ms
+Down 5
+Sleep 80ms
+Down 5
+Sleep 80ms
+Down 5
 Wait+Screen@30s /Task list/
-Sleep 300ms
+Sleep 2000ms
 Screenshot planning/artifacts/screenshots/narrow_reader_demo_table.png
 Type "q"
 Sleep 800ms
@@ -79,27 +94,36 @@ Enter
 # this is the exact scene that shipped a blank capture at BE.7.D despite
 # passing its byte-size floor.
 Wait+Screen@30s /j\/k nav/
-Sleep 300ms
+Sleep 2000ms
 Screenshot planning/artifacts/screenshots/narrow_browser_root.png
 Type "q"
 Sleep 500ms
 
 # Scroll anchoring (BE.7.D task 3): the scroll_anchor.md fixture at the
-# narrow reference size, scrolled down the SAME count as
+# narrow reference size, scrolled to the same anchor heading as
 # wide_scroll_anchor_top in reference-wide.tape, to visually compare the
 # two. Named "after_resize" for parity with its text-capture counterpart in
 # scripts/vhs/scenes.toml, which resizes LIVE via tmux from wide to this
 # narrow size before capturing (VHS cannot do a mid-tape resize — see
 # scenes.toml's `keys` field doc) — this PNG is a fresh launch already at
 # the narrow size, not an actual resize, but shows the same content.
+#
+# Down 10, not the wide tape's Down 4 (BE.ticket.vhs-wait-for-readiness
+# task 2, measured 2026-09-02): at this narrow width the fixture's
+# paragraphs wrap onto more display lines, so Down 4 lands at line ~26 of
+# 33 and never reaches "Heading Three" — the readiness gate DID ITS JOB
+# here, timing out on a Wait that could never match, instead of shipping a
+# stale mid-scroll frame the way the old fixed-Sleep tape would have. Down
+# 10 reliably scrolls past the end of this fixture's content regardless of
+# exact wrap count (the view simply stops at the bottom).
 Type "target/release/bella scripts/vhs/fixtures/scroll_anchor.md"
 Enter
-Down 4
+Down 10
 # "Heading Three" is the fixture's last heading — the anchor text for this
 # scene, and a real guard against a blank/stale frame regardless of how
-# much the narrower width's reflow moves it relative to Down 4.
+# much the narrower width's reflow moves it relative to Down 10.
 Wait+Screen@30s /Heading Three/
-Sleep 300ms
+Sleep 2000ms
 Screenshot planning/artifacts/screenshots/narrow_scroll_anchor_after_resize.png
 Type "q"
 Sleep 500ms

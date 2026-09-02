@@ -26,9 +26,19 @@
 #
 # Each pattern is chosen to be text that is NOT on screen before that
 # scene's action completes — see the one-line rationale on each Wait+Screen
-# line below. A short `Sleep` is kept after a handful of matches, only
-# where a paint still needs to settle after the matched text appears
-# (documented per-case); it is a minor polish step now, never the primary
+# line below. Every Screenshot's settle Sleep is 1500ms (BE.ticket.vhs-
+# wait-for-readiness task 2, measured 2026-09-02, bumped from the
+# original 300ms): under real concurrent-lane system load on this
+# machine (measured load average up to 13, several other agent sessions
+# building/running at once), a handful of scenes intermittently produced
+# a genuinely blank shell-prompt capture EVEN AFTER Wait+Screen had
+# already matched the ready-state pattern — visually confirmed while
+# re-capturing this set, not a floor artifact. The longer post-match
+# settle reduced but did not eliminate this; the min_bytes floor plus a
+# mandatory visual check of every PNG (this task's own acceptance
+# criteria) remains the real backstop. A short `Sleep` is kept after a
+# handful of matches, only where a paint still needs to settle after the
+# matched text appears (documented per-case); it is a minor polish step
 # defence.
 #
 # THE PATTERN MUST BE ASCII. Measured 2026-09-02: a probe waiting on
@@ -66,14 +76,14 @@ Enter
 # painted the file — the typed shell command above uses a lowercase
 # "bella" path segment, so it can't satisfy this match early.
 Wait+Screen@30s /Bella Reference Demo/
-Sleep 300ms
+Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_reader_demo_top.png
 
 Down 18
 # "Code block" only scrolls into view after Down 18 — it sits below the
 # task list, well past what the initial top screenshot shows.
 Wait+Screen@30s /Code block/
-Sleep 300ms
+Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_reader_demo_tasks_code.png
 
 Down 14
@@ -81,7 +91,7 @@ Down 14
 # line — only on screen once scrolled past the table, i.e. only after
 # this second Down.
 Wait+Screen@30s /Horizontal rule/
-Sleep 300ms
+Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_reader_demo_table.png
 
 # --- Search ---
@@ -105,7 +115,7 @@ Enter
 # "full mouse support" is prose from the README's first paragraph — never
 # present in the typed shell command line it replaces on screen.
 Wait+Screen@30s /full mouse support/
-Sleep 300ms
+Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_reader_readme_top.png
 Type "q"
 Sleep 800ms
@@ -117,7 +127,7 @@ Enter
 # equivalent hint reads "j/k scroll"), so it can only appear once the
 # directory-tree walk finishes and browser mode paints its first frame.
 Wait+Screen@30s /j\/k nav/
-Sleep 300ms
+Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_browser_root.png
 
 # Browser mode: nested + selection
@@ -126,7 +136,7 @@ Down 2
 # to "3/" once the cursor has moved two entries down — "3/" is not a
 # substring of the prior "1/11" state, so this can't match before the move.
 Wait+Screen@30s /3\//
-Sleep 500ms
+Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_browser_selection.png
 
 Enter
@@ -135,7 +145,7 @@ Enter
 # screenshots, so it can only be on screen once bella has descended into
 # docs/ and repainted its listing.
 Wait+Screen@30s /architecture\.md/
-Sleep 500ms
+Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_browser_nested.png
 Type "q"
 Sleep 500ms
@@ -146,14 +156,14 @@ Enter
 # "reveal (off)" is bella's default reveal-state hint text, only present
 # once the browser status line renders for this fixture.
 Wait+Screen@30s /reveal \(off\)/
-Sleep 300ms
+Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_browser_reveal_off.png
 
 Type "r"
 # "reveal (on)" only appears after the 'r' toggle above flips the state —
 # the prior screenshot's screen read "reveal (off)" instead.
 Wait+Screen@30s /reveal \(on\)/
-Sleep 300ms
+Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_browser_reveal_on.png
 Type "q"
 Sleep 500ms
@@ -165,7 +175,7 @@ Enter
 # planning/ — it does not exist anywhere else bella has browsed in this
 # tape, so it can only be on screen once this symlinked directory is open.
 Wait+Screen@30s /BE\.ticket\.vhs-wait-for-readiness/
-Sleep 300ms
+Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_browser_planning_symlink.png
 Type "q"
 Sleep 500ms
@@ -188,7 +198,7 @@ Down 4
 # guards against a genuinely blank/stale frame (the class of bug this
 # ticket exists to remove), even though it isn't a post-scroll delta here.
 Wait+Screen@30s /Heading Three/
-Sleep 300ms
+Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_scroll_anchor_top.png
 Type "q"
 Sleep 500ms
