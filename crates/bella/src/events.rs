@@ -5,7 +5,7 @@ use bella_engine::body_pos;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use std::time::{Duration, Instant};
 
 use crate::app::{App, Mode};
@@ -91,6 +91,23 @@ pub enum Action {
     /// Toggle `reveal_ignored` (hidden dotfiles + gitignored entries) and
     /// re-list the current browser directory.
     BrowserToggleReveal,
+    // TOC rail actions (BE.7.E task 2)
+    /// Toggle the rail open/closed.
+    RailToggle,
+    /// Give keyboard focus to the rail (no-op if not currently visible).
+    RailFocus,
+    /// Return keyboard focus from the rail to the body, leaving the rail's
+    /// open/closed state untouched.
+    RailUnfocus,
+    /// Move the rail's keyboard selection by `delta` rows.
+    RailMove(i32),
+    /// Activate the rail's focused row — scroll the body to that heading.
+    RailActivate,
+    /// Left-click on a rail row: `row` is the row index relative to the
+    /// rail's inner listing area (post-border).
+    RailClickAt {
+        row: usize,
+    },
 }
 
 /// Pure browser key→action mapper (unit-testable without a live terminal).
@@ -139,8 +156,36 @@ pub fn map_key(key: KeyEvent, viewport_height: u16) -> Action {
         // History navigation
         KeyCode::Char('[') => Action::HistoryBack,
         KeyCode::Char(']') => Action::HistoryForward,
+        // TOC rail (BE.7.E task 2): 't' toggles it open/closed, 'T' gives
+        // it keyboard focus (arrows move within it — see `map_rail_key`,
+        // used instead of this mapper once focused).
+        KeyCode::Char('t') => Action::RailToggle,
+        KeyCode::Char('T') => Action::RailFocus,
         // Return to browser (when the reader was entered via the browser).
         KeyCode::Backspace => Action::BrowserBack,
+        KeyCode::Char('q') => Action::Quit,
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
+        _ => Action::None,
+    }
+}
+
+/// Pure key→action mapper active only while the TOC rail has keyboard
+/// focus (`App::rail_focused`) — the keyboard-parity path for the rail
+/// required alongside its mouse click-to-jump (BE.7.E task 2): a
+/// click-only affordance is unusable over a mouse-less terminal or a
+/// remote session that swallows mouse reports.
+///
+/// `j`/`k`/arrows move the rail selection instead of scrolling the body,
+/// `Enter` activates the focused row, `Esc` returns focus to the body
+/// without closing the rail, and `t` still toggles the rail closed (which
+/// also drops focus — see [`crate::app::App::toggle_rail`]).
+pub fn map_rail_key(key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Action::RailMove(1),
+        KeyCode::Char('k') | KeyCode::Up => Action::RailMove(-1),
+        KeyCode::Enter => Action::RailActivate,
+        KeyCode::Esc => Action::RailUnfocus,
+        KeyCode::Char('t') => Action::RailToggle,
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
         _ => Action::None,
@@ -160,6 +205,26 @@ pub fn map_search_key(key: KeyEvent) -> Action {
         KeyCode::Esc => Action::SearchCancel,
         _ => Action::None,
     }
+}
+
+/// Map a screen position to a row index within the rail's inner (post-border)
+/// listing area, or `None` if the position falls outside it — including on
+/// the rail's own 1-cell `Borders::ALL` frame, so a click on the border or
+/// title is a no-op rather than aliasing to row 0. `rail_area` is the
+/// *outer* rectangle stored on `App` (mirrors what `ui::draw_rail` was
+/// handed before computing its own `Block::inner`).
+fn rail_row_at(rail_area: Rect, col: u16, row: u16) -> Option<usize> {
+    if rail_area.width < 2 || rail_area.height < 2 {
+        return None;
+    }
+    let inner_x0 = rail_area.x + 1;
+    let inner_x1 = rail_area.x + rail_area.width - 1;
+    let inner_y0 = rail_area.y + 1;
+    let inner_y1 = rail_area.y + rail_area.height - 1;
+    if col < inner_x0 || col >= inner_x1 || row < inner_y0 || row >= inner_y1 {
+        return None;
+    }
+    Some((row - inner_y0) as usize)
 }
 
 /// Pure mouse→action mapper (unit-testable without a live terminal).
@@ -194,6 +259,15 @@ pub fn map_mouse(mouse: MouseEvent, app: &App) -> Action {
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            // The rail is drawn to the left of the body and is disjoint
+            // from `app.body_area`, so check it first: a click there would
+            // otherwise just fall through `body_pos` as an out-of-body
+            // `Action::None`.
+            if app.rail_visible
+                && let Some(row) = rail_row_at(app.rail_area, mouse.column, mouse.row)
+            {
+                return Action::RailClickAt { row };
+            }
             if let Some((content_row, local_col)) = body_pos(
                 app.body_area,
                 false,
@@ -325,11 +399,13 @@ pub(crate) fn apply(action: Action, app: &mut App) {
             // `back()` can return the previous entry.
             if let Some((prev_path, prev_anchor)) = app.follow_focused() {
                 // Push the previous position (where we were before navigating).
-                app.history.push(HistoryEntry::new(prev_path, prev_anchor));
+                app.history_mut()
+                    .push(HistoryEntry::new(prev_path, prev_anchor));
                 // Push the new current position (already loaded into app).
                 // `load_file` always resets scroll to the top of the new
                 // document, i.e. source line 0.
-                app.history.push(HistoryEntry::new(app.file.clone(), 0));
+                let cur = app.file().to_path_buf();
+                app.history_mut().push(HistoryEntry::new(cur, 0));
             }
         }
         // History navigation
@@ -381,9 +457,11 @@ pub(crate) fn apply(action: Action, app: &mut App) {
             } else if app.drag_origin.is_some() && content_row != usize::MAX {
                 // No drag — treat as a plain click: follow link or toggle checkbox.
                 if let Some((prev_path, prev_anchor)) = app.click_at(content_row, col) {
-                    app.history.push(HistoryEntry::new(prev_path, prev_anchor));
+                    app.history_mut()
+                        .push(HistoryEntry::new(prev_path, prev_anchor));
                     // `load_file` always resets scroll to source line 0.
-                    app.history.push(HistoryEntry::new(app.file.clone(), 0));
+                    let cur = app.file().to_path_buf();
+                    app.history_mut().push(HistoryEntry::new(cur, 0));
                 }
             }
             // Always clear the drag origin on mouse-up.
@@ -399,6 +477,13 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         Action::SearchCancel => app.cancel_search(),
         Action::Quit => app.quit(),
         Action::None => {}
+        // TOC rail actions (BE.7.E task 2)
+        Action::RailToggle => app.toggle_rail(),
+        Action::RailFocus => app.focus_rail(),
+        Action::RailUnfocus => app.rail_focused = false,
+        Action::RailMove(delta) => app.rail_move(delta),
+        Action::RailActivate => app.activate_rail_selection(),
+        Action::RailClickAt { row } => app.jump_to_heading(row),
         // Browser actions (Block E, Task 4)
         Action::BrowserUp => {
             let vp = app.browser_area.height.max(1);
@@ -595,6 +680,8 @@ pub fn run_loop(
                             app.search.as_ref().map(|s| s.input_mode).unwrap_or(false);
                         if in_search_input {
                             map_search_key(key)
+                        } else if app.rail_focused {
+                            map_rail_key(key)
                         } else {
                             map_key(key, app.viewport_height)
                         }
@@ -634,11 +721,14 @@ pub fn run_loop(
 mod tests {
     use std::path::PathBuf;
 
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+    use ratatui::layout::Rect;
 
     use crate::app::{App, Mode};
 
-    use super::{Action, map_browser_key, map_key};
+    use super::{Action, map_browser_key, map_key, map_rail_key, rail_row_at};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::empty())
@@ -790,10 +880,11 @@ mod tests {
         let mut app = App::new(src, std::path::PathBuf::from("test.md"), 80, 11);
         app.block_until_ready();
         // No focused link — Follow should be a no-op (no panic, no change).
-        let file_before = app.file.clone();
+        let file_before = app.file().to_path_buf();
         super::apply(Action::Follow, &mut app);
         assert_eq!(
-            app.file, file_before,
+            app.file(),
+            file_before,
             "file must not change when no link is focused"
         );
     }
@@ -807,7 +898,11 @@ mod tests {
         assert!(!app.link_map.links.is_empty(), "precondition: link exists");
         app.focused_link = Some(0);
         super::apply(Action::Follow, &mut app);
-        assert_eq!(app.file, file, "file must not change when following a URL");
+        assert_eq!(
+            app.file(),
+            file,
+            "file must not change when following a URL"
+        );
     }
 
     #[test]
@@ -831,7 +926,8 @@ mod tests {
         super::apply(Action::Follow, &mut app);
 
         assert_eq!(
-            app.file, target,
+            app.file(),
+            target,
             "app.file must be the followed target path"
         );
         // Cleanup.
@@ -967,10 +1063,11 @@ mod tests {
     #[test]
     fn apply_history_back_noop_at_start() {
         let mut app = make_app();
-        let file_before = app.file.clone();
+        let file_before = app.file().to_path_buf();
         super::apply(Action::HistoryBack, &mut app);
         assert_eq!(
-            app.file, file_before,
+            app.file(),
+            file_before,
             "HistoryBack at start must be a no-op"
         );
     }
@@ -978,10 +1075,11 @@ mod tests {
     #[test]
     fn apply_history_forward_noop_at_end() {
         let mut app = make_app();
-        let file_before = app.file.clone();
+        let file_before = app.file().to_path_buf();
         super::apply(Action::HistoryForward, &mut app);
         assert_eq!(
-            app.file, file_before,
+            app.file(),
+            file_before,
             "HistoryForward at end must be a no-op"
         );
     }
@@ -1004,7 +1102,7 @@ mod tests {
 
         // Before follow — history must be empty (no back entry).
         assert!(
-            !app.history.can_back(),
+            !app.history().can_back(),
             "history must have no back entry before following a link"
         );
 
@@ -1013,13 +1111,14 @@ mod tests {
         // After following a LocalFile link, apply pushes both prev AND new position.
         // The cursor is on the new entry, so can_back() is true (prev is behind it).
         assert!(
-            app.history.can_back(),
+            app.history().can_back(),
             "history must have a back entry after following a local-file link"
         );
         // Going back should restore the main file.
         app.go_back();
         assert_eq!(
-            app.file, main_path,
+            app.file(),
+            main_path,
             "go_back after follow must restore the main file"
         );
 
@@ -1446,7 +1545,11 @@ mod tests {
             &mut app,
         );
 
-        assert_eq!(app.file, target, "Down+Up (click) on a link must follow it");
+        assert_eq!(
+            app.file(),
+            target,
+            "Down+Up (click) on a link must follow it"
+        );
         assert!(app.selection.is_none(), "click must not leave a selection");
 
         // Cleanup.
@@ -1493,7 +1596,6 @@ mod tests {
 
     // --- Task 5 (Block D) tests: double-click detection ---
 
-    use ratatui::layout::Rect;
     use std::time::{Duration, Instant};
 
     /// App whose first rendered line is "hello world" and body_area is set.
@@ -1990,7 +2092,7 @@ mod tests {
             Mode::Reader,
             "BrowserDescend on a Markdown entry must switch to Reader"
         );
-        assert_eq!(app.file, md_path, "file must be the opened markdown");
+        assert_eq!(app.file(), md_path, "file must be the opened markdown");
     }
 
     #[test]
@@ -2102,6 +2204,214 @@ mod tests {
             Mode::Reader,
             "BrowserClickAt on a Markdown entry must switch to Reader"
         );
-        assert_eq!(app.file, md_path, "file must be the clicked markdown");
+        assert_eq!(app.file(), md_path, "file must be the clicked markdown");
+    }
+
+    // --- TOC rail (BE.7.E task 2) ---
+
+    #[test]
+    fn t_produces_rail_toggle() {
+        assert_eq!(map_key(key(KeyCode::Char('t')), 10), Action::RailToggle);
+    }
+
+    #[test]
+    fn shift_t_produces_rail_focus() {
+        assert_eq!(map_key(key(KeyCode::Char('T')), 10), Action::RailFocus);
+    }
+
+    #[test]
+    fn ctrl_c_still_produces_quit_alongside_rail_bindings() {
+        // Regression guard: RailFocus is bound to plain 'c', which must not
+        // shadow the pre-existing Ctrl-C quit binding.
+        assert_eq!(map_key(ctrl(KeyCode::Char('c')), 10), Action::Quit);
+    }
+
+    /// Pure `map_rail_key` coverage — the keyboard-parity path required
+    /// alongside the rail's mouse click-to-jump: it must be fully operable
+    /// with no terminal and no mouse.
+    #[test]
+    fn map_rail_key_j_and_down_move_selection_forward() {
+        assert_eq!(map_rail_key(key(KeyCode::Char('j'))), Action::RailMove(1));
+        assert_eq!(map_rail_key(key(KeyCode::Down)), Action::RailMove(1));
+    }
+
+    #[test]
+    fn map_rail_key_k_and_up_move_selection_backward() {
+        assert_eq!(map_rail_key(key(KeyCode::Char('k'))), Action::RailMove(-1));
+        assert_eq!(map_rail_key(key(KeyCode::Up)), Action::RailMove(-1));
+    }
+
+    #[test]
+    fn map_rail_key_enter_activates() {
+        assert_eq!(map_rail_key(key(KeyCode::Enter)), Action::RailActivate);
+    }
+
+    #[test]
+    fn map_rail_key_esc_unfocuses() {
+        assert_eq!(map_rail_key(key(KeyCode::Esc)), Action::RailUnfocus);
+    }
+
+    #[test]
+    fn map_rail_key_t_still_toggles() {
+        assert_eq!(map_rail_key(key(KeyCode::Char('t'))), Action::RailToggle);
+    }
+
+    #[test]
+    fn map_rail_key_ctrl_c_quits() {
+        assert_eq!(map_rail_key(ctrl(KeyCode::Char('c'))), Action::Quit);
+    }
+
+    #[test]
+    fn map_rail_key_unmapped_is_none() {
+        assert_eq!(map_rail_key(key(KeyCode::Char('x'))), Action::None);
+    }
+
+    #[test]
+    fn apply_rail_toggle_opens_and_closes() {
+        let mut app = make_app();
+        assert!(!app.rail_open, "precondition: rail starts closed");
+        super::apply(Action::RailToggle, &mut app);
+        assert!(app.rail_open);
+        super::apply(Action::RailToggle, &mut app);
+        assert!(!app.rail_open);
+    }
+
+    #[test]
+    fn apply_rail_focus_and_unfocus() {
+        let mut app = make_app();
+        app.rail_visible = true;
+        super::apply(Action::RailFocus, &mut app);
+        assert!(app.rail_focused, "RailFocus must set focus when visible");
+        super::apply(Action::RailUnfocus, &mut app);
+        assert!(!app.rail_focused, "RailUnfocus must clear focus");
+    }
+
+    #[test]
+    fn apply_rail_move_updates_selection() {
+        let mut app = make_app();
+        app.rail_selected = 0;
+        super::apply(Action::RailMove(3), &mut app);
+        assert_eq!(app.rail_selected, 3);
+    }
+
+    #[test]
+    fn apply_rail_activate_scrolls_to_selected_heading_when_focused() {
+        let mut app = make_app();
+        app.rail_focused = true;
+        app.rail_selected = 5;
+        super::apply(Action::RailActivate, &mut app);
+        let target_line = app.headings[5].line as u16;
+        assert!(
+            app.scroll <= target_line && target_line < app.scroll + app.viewport_height,
+            "RailActivate must scroll the selected heading into view"
+        );
+    }
+
+    #[test]
+    fn apply_rail_click_at_scrolls_to_that_heading() {
+        let mut app = make_app();
+        super::apply(Action::RailClickAt { row: 7 }, &mut app);
+        let target_line = app.headings[7].line as u16;
+        assert!(
+            app.scroll <= target_line && target_line < app.scroll + app.viewport_height,
+            "RailClickAt must scroll the clicked heading into view"
+        );
+    }
+
+    #[test]
+    fn apply_rail_click_at_out_of_range_is_a_noop_not_a_panic() {
+        let mut app = make_app();
+        let scroll_before = app.scroll;
+        super::apply(Action::RailClickAt { row: 999 }, &mut app);
+        assert_eq!(
+            app.scroll, scroll_before,
+            "a click past the end of the heading list must be a no-op"
+        );
+    }
+
+    /// `rail_row_at` — geometry-only hit test, no headings involved: a
+    /// position outside the inner (post-border) rect is `None`, one inside
+    /// it maps to the 0-based row relative to the top of that inner rect.
+    #[test]
+    fn rail_row_at_maps_inner_positions_and_rejects_the_border() {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 24,
+            height: 10,
+        };
+        // Top-left interior cell -> row 0.
+        assert_eq!(rail_row_at(area, 1, 1), Some(0));
+        // A few rows down.
+        assert_eq!(rail_row_at(area, 1, 4), Some(3));
+        // The border itself (x=0, y=0) is outside the inner rect.
+        assert_eq!(rail_row_at(area, 0, 0), None);
+        // Past the bottom-right interior edge (height=10 -> inner rows
+        // 1..=8, so y=9 is the bottom border).
+        assert_eq!(rail_row_at(area, 1, 9), None);
+        // Off to the right, past the rail entirely.
+        assert_eq!(rail_row_at(area, 30, 1), None);
+    }
+
+    #[test]
+    fn map_mouse_click_inside_rail_produces_rail_click_at() {
+        let mut app = make_app();
+        app.rail_visible = true;
+        app.rail_area = Rect {
+            x: 0,
+            y: 0,
+            width: 24,
+            height: 10,
+        };
+        let ev = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 3,
+            modifiers: KeyModifiers::empty(),
+        };
+        assert_eq!(super::map_mouse(ev, &app), Action::RailClickAt { row: 2 });
+    }
+
+    #[test]
+    fn map_mouse_click_on_rail_border_is_not_a_rail_click() {
+        let mut app = make_app();
+        app.rail_visible = true;
+        app.rail_area = Rect {
+            x: 0,
+            y: 0,
+            width: 24,
+            height: 10,
+        };
+        let ev = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0, // left border column
+            row: 3,
+            modifiers: KeyModifiers::empty(),
+        };
+        // Falls through to the body hit-test, which is also a miss at this
+        // position (outside `app.body_area`, default-zeroed here) -> None.
+        assert_eq!(super::map_mouse(ev, &app), Action::None);
+    }
+
+    #[test]
+    fn map_mouse_click_ignores_rail_when_not_visible() {
+        let mut app = make_app();
+        app.rail_visible = false;
+        app.rail_area = Rect {
+            x: 0,
+            y: 0,
+            width: 24,
+            height: 10,
+        };
+        let ev = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 3,
+            modifiers: KeyModifiers::empty(),
+        };
+        // The rail geometry is still set, but `rail_visible` is false, so
+        // this must fall through to the (missing) body hit-test, not
+        // RailClickAt.
+        assert_eq!(super::map_mouse(ev, &app), Action::None);
     }
 }

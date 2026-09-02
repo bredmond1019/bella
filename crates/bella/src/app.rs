@@ -105,7 +105,11 @@ pub struct App {
     /// Terminal width — stored so `load_file` can re-render at the same width.
     pub width: u16,
     /// File path shown in the status line.
-    pub file: PathBuf,
+    ///
+    /// Private (BE.7.E task 2): every external read goes through
+    /// [`Self::file`], the single accessor, so a later buffer list (several
+    /// open files rather than one) is a change contained to that method.
+    file: PathBuf,
     /// Exit flag — set to `true` to terminate the event loop.
     pub should_quit: bool,
     /// Index of the currently focused link (into `link_map.links`), if any.
@@ -121,7 +125,10 @@ pub struct App {
     /// Cleared on the next successful action that overwrites it.
     pub status_message: Option<String>,
     /// Back/forward navigation history stack (Task 6).
-    pub history: History,
+    ///
+    /// Private (BE.7.E task 2): every external read/write goes through
+    /// [`Self::history`]/[`Self::history_mut`], the single accessor pair.
+    history: History,
     /// Body viewport rectangle — updated after each draw so mouse handlers can
     /// call `body_pos` with accurate geometry.
     pub body_area: Rect,
@@ -196,6 +203,15 @@ pub struct App {
     /// later block (BE.7.G's document index) can consume it without
     /// re-resolving.
     pub corpus_root: PathBuf,
+    /// Whether keyboard focus is on the TOC rail rather than the body.
+    /// Only meaningful while [`Self::rail_visible`] is `true`; the rail
+    /// auto-collapsing clears it (see [`Self::set_rail_open`]) so a
+    /// mouse-less session is never left with an invisible focus target.
+    pub rail_focused: bool,
+    /// Index into `headings` of the rail row under keyboard focus.
+    /// Clamped to `headings.len().saturating_sub(1)` on every render, since
+    /// a re-render can shrink the heading list.
+    pub rail_selected: usize,
 }
 
 impl App {
@@ -251,6 +267,8 @@ impl App {
             pending_scroll_anchor: None,
             theme: Theme::dark(),
             corpus_root,
+            rail_focused: false,
+            rail_selected: 0,
         }
     }
 
@@ -301,6 +319,8 @@ impl App {
             pending_scroll_anchor: None,
             theme: Theme::dark(),
             corpus_root,
+            rail_focused: false,
+            rail_selected: 0,
         }
     }
 
@@ -371,6 +391,88 @@ impl App {
         let target = self.browser.as_ref().and_then(|b| b.ascend_target());
         if let Some(dir) = target {
             self.browser = Some(Browser::new(dir));
+        }
+    }
+
+    // --- single accessors (BE.7.E task 2) ---
+    //
+    // `App.file` and `App.history` are private; every external read/write
+    // goes through the pair below rather than the field directly, so a
+    // later buffer list (several open files instead of one) is a change
+    // contained to these methods.
+
+    /// The currently open file's path.
+    pub fn file(&self) -> &Path {
+        &self.file
+    }
+
+    /// Read-only view of the back/forward navigation history stack.
+    pub fn history(&self) -> &History {
+        &self.history
+    }
+
+    /// Mutable view of the back/forward navigation history stack, for the
+    /// event loop's history-recording sites (`push`).
+    pub fn history_mut(&mut self) -> &mut History {
+        &mut self.history
+    }
+
+    // --- TOC rail (BE.7.E task 2) ---
+
+    /// Toggle the rail open/closed. Re-render is not needed here: the next
+    /// `draw_reader` picks up the new `content_width` split and, because
+    /// that changes `body_area.width`, re-renders through the same
+    /// single-writer path that already anchors a resize (BE.7.D) — a rail
+    /// toggle is just another body-width change to it.
+    pub fn toggle_rail(&mut self) {
+        self.rail_open = !self.rail_open;
+        if !self.rail_open {
+            self.rail_focused = false;
+        }
+    }
+
+    /// Give keyboard focus to the rail. No-op when the rail is not
+    /// currently visible (e.g. auto-collapsed) — there is nothing to focus.
+    pub fn focus_rail(&mut self) {
+        if self.rail_visible {
+            self.rail_focused = true;
+            self.rail_selected = self
+                .rail_selected
+                .min(self.headings.len().saturating_sub(1));
+        }
+    }
+
+    /// Move the rail's keyboard selection by `delta` rows, clamped to the
+    /// heading list (no wraparound). No-op when there are no headings.
+    pub fn rail_move(&mut self, delta: i32) {
+        if self.headings.is_empty() {
+            return;
+        }
+        let max = self.headings.len() - 1;
+        let cur = self.rail_selected as i32;
+        self.rail_selected = (cur + delta).clamp(0, max as i32) as usize;
+    }
+
+    /// Activate the rail's focused row: scroll the body to that heading's
+    /// display line, the same as clicking it (see [`Self::jump_to_heading`]).
+    pub fn activate_rail_selection(&mut self) {
+        if self.rail_focused {
+            self.jump_to_heading(self.rail_selected);
+        }
+    }
+
+    /// Scroll the body so heading `idx` is at the top of the viewport.
+    /// A no-op (never a panic) when `idx` is out of range — e.g. a stale
+    /// click delivered after the heading list shrank on re-render.
+    ///
+    /// Reuses the same direct-scroll style as `LinkTarget::Anchor` in
+    /// [`Self::follow_focused`]: `headings[idx].line` is already a display
+    /// line index into the *current* render, so no source-line anchor
+    /// resolution is needed here (unlike a resize/rail-toggle re-render,
+    /// where the layout itself is about to change).
+    pub fn jump_to_heading(&mut self, idx: usize) {
+        if let Some(heading) = self.headings.get(idx) {
+            self.scroll = (heading.line as u16).min(self.max_scroll());
         }
     }
 
@@ -1041,6 +1143,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::App;
+    use crate::history::HistoryEntry;
 
     fn make_app(line_count: usize, viewport: u16) -> App {
         // Build a doc with `line_count` lines by using that many headings.
@@ -2785,5 +2888,191 @@ mod tests {
         assert!(app.drag_origin.is_none());
         assert!(app.selection.is_none());
         assert!(app.last_click.is_none());
+    }
+
+    // --- TOC rail (BE.7.E task 2) ---
+
+    #[test]
+    fn rail_toggle_preserves_position_through_the_anchor() {
+        // A rail toggle changes body width exactly the way a resize does —
+        // this drives the same `render()` anchor path BE.7.D's resize
+        // tests above exercise, reusing their fixture and asserting the
+        // identical "within one row" tolerance.
+        let mut app = App::new(
+            SCROLL_ANCHOR_FIXTURE.to_string(),
+            PathBuf::from("scroll_anchor_rail.md"),
+            120,
+            6,
+        );
+        app.block_until_ready();
+        let max = app.max_scroll();
+        assert!(
+            max > 0,
+            "precondition: fixture must overflow the viewport at width 120"
+        );
+        app.scroll = (max / 2).max(1);
+        let anchor_before = app
+            .resolve_scroll_anchor()
+            .expect("anchor must resolve before the toggle");
+
+        app.toggle_rail();
+        assert!(app.rail_open, "precondition: rail is now open");
+        // Mirrors the RAIL_WIDTH `ui::draw_reader` would carve out of a
+        // 120-column terminal (private there, so re-stated here).
+        const RAIL_WIDTH: u16 = 24;
+        app.render(120 - RAIL_WIDTH);
+        app.block_until_ready();
+
+        assert_ne!(
+            app.width, 120,
+            "precondition: the toggle must actually have changed the render width"
+        );
+        let anchor_after = app
+            .resolve_scroll_anchor()
+            .expect("anchor must resolve after the toggle");
+        assert!(
+            anchor_before.abs_diff(anchor_after) <= 2,
+            "toggling the rail must keep the same source line at the top of \
+             the viewport, within the same small nearest-row tolerance \
+             BE.7.D's resize anchor tests use: before={anchor_before} after={anchor_after}"
+        );
+    }
+
+    #[test]
+    fn toggle_rail_flips_open_state_and_clears_focus_on_close() {
+        let mut app = make_app(5, 5);
+        assert!(!app.rail_open, "precondition: rail starts closed");
+
+        app.toggle_rail();
+        assert!(app.rail_open, "toggle must open the rail");
+
+        app.rail_focused = true;
+        app.toggle_rail();
+        assert!(!app.rail_open, "second toggle must close the rail");
+        assert!(
+            !app.rail_focused,
+            "closing the rail must drop keyboard focus on it"
+        );
+    }
+
+    #[test]
+    fn focus_rail_is_noop_when_not_visible() {
+        let mut app = make_app(5, 5);
+        assert!(!app.rail_visible, "precondition: rail not visible");
+        app.focus_rail();
+        assert!(
+            !app.rail_focused,
+            "focusing an invisible rail must be a no-op"
+        );
+    }
+
+    #[test]
+    fn focus_rail_sets_focus_and_clamps_selection_when_visible() {
+        let mut app = make_app(3, 5);
+        app.rail_visible = true;
+        app.rail_selected = 999; // stale selection from a shrunk heading list
+        app.focus_rail();
+        assert!(app.rail_focused, "focusing a visible rail must set focus");
+        assert_eq!(
+            app.rail_selected,
+            app.headings.len() - 1,
+            "a stale selection must clamp to the last heading"
+        );
+    }
+
+    #[test]
+    fn rail_move_clamps_without_wraparound() {
+        let mut app = make_app(3, 5);
+        assert_eq!(app.headings.len(), 3, "precondition: 3 headings");
+        app.rail_selected = 0;
+        app.rail_move(-5);
+        assert_eq!(app.rail_selected, 0, "must clamp at the first heading");
+        app.rail_move(5);
+        assert_eq!(app.rail_selected, 2, "must clamp at the last heading");
+        app.rail_move(-1);
+        assert_eq!(app.rail_selected, 1);
+    }
+
+    #[test]
+    fn rail_move_is_noop_with_no_headings() {
+        let mut app = App::new(String::new(), PathBuf::from("empty.md"), 80, 24);
+        app.block_until_ready();
+        assert!(app.headings.is_empty(), "precondition: no headings");
+        app.rail_move(1);
+        assert_eq!(
+            app.rail_selected, 0,
+            "no headings must leave selection at 0"
+        );
+    }
+
+    #[test]
+    fn jump_to_heading_scrolls_to_heading_line() {
+        let mut app = make_app(20, 5);
+        let target = &app.headings[10];
+        let target_line = target.line as u16;
+        app.jump_to_heading(10);
+        // scroll_to_line semantics: the target row must be within view,
+        // not necessarily exactly at the top.
+        assert!(
+            app.scroll <= target_line && target_line < app.scroll + app.viewport_height,
+            "heading 10 (line {target_line}) must be visible after jump_to_heading \
+             (scroll={})",
+            app.scroll
+        );
+    }
+
+    #[test]
+    fn jump_to_heading_out_of_range_is_a_noop_not_a_panic() {
+        let mut app = make_app(3, 5);
+        let scroll_before = app.scroll;
+        app.jump_to_heading(999);
+        assert_eq!(
+            app.scroll, scroll_before,
+            "an out-of-range heading index must be a no-op"
+        );
+    }
+
+    #[test]
+    fn activate_rail_selection_jumps_only_when_focused() {
+        let mut app = make_app(20, 5);
+        app.rail_selected = 15;
+
+        // Not focused: activation must be a no-op.
+        let scroll_before = app.scroll;
+        app.activate_rail_selection();
+        assert_eq!(
+            app.scroll, scroll_before,
+            "activation without rail focus must be a no-op"
+        );
+
+        app.rail_focused = true;
+        app.activate_rail_selection();
+        let target_line = app.headings[15].line as u16;
+        assert!(
+            app.scroll <= target_line && target_line < app.scroll + app.viewport_height,
+            "activation while focused must jump to the selected heading"
+        );
+    }
+
+    // --- single accessors (BE.7.E task 2) ---
+
+    #[test]
+    fn file_accessor_returns_the_open_path() {
+        let app = make_app(1, 5);
+        assert_eq!(app.file(), std::path::Path::new("test.md"));
+    }
+
+    #[test]
+    fn history_accessors_read_and_write_through_the_same_stack() {
+        let mut app = make_app(1, 5);
+        assert!(!app.history().can_back(), "precondition: no history yet");
+        app.history_mut()
+            .push(HistoryEntry::new(PathBuf::from("a.md"), 0));
+        app.history_mut()
+            .push(HistoryEntry::new(PathBuf::from("b.md"), 0));
+        assert!(
+            app.history().can_back(),
+            "a push through history_mut() must be visible through history()"
+        );
     }
 }

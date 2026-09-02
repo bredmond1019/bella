@@ -59,6 +59,13 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
 
     let rail_visible = rail_should_show(app.rail_open, content_area.width);
     app.rail_visible = rail_visible;
+    if !rail_visible {
+        // Auto-collapse (or the rail simply being off) must not leave
+        // keyboard focus on an invisible target.
+        app.rail_focused = false;
+    } else if !app.headings.is_empty() {
+        app.rail_selected = app.rail_selected.min(app.headings.len() - 1);
+    }
 
     let (rail_area, body_area) = if rail_visible {
         let chunks = Layout::default()
@@ -92,17 +99,42 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
     body_area.height
 }
 
-/// Draw the TOC rail region: a bordered pane beside the body.
-///
-/// The heading list itself (BE.7.E task 2) is not drawn yet — this is the
-/// frame-only deliverable of task 1, giving the layout something real to
-/// reserve space for and to golden-buffer against.
+/// Draw the TOC rail region: a bordered pane listing `app.headings`, one
+/// per row (indented by level, deepest levels clipped by the fixed
+/// [`RAIL_WIDTH`] the same way any long line is). The row under keyboard
+/// focus ([`App::rail_selected`], only meaningful while
+/// [`App::rail_focused`]) is highlighted so [`App::activate_rail_selection`]
+/// has a visible target — see BE.7.E task 2's keyboard-parity requirement.
 fn draw_rail(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Contents")
         .style(Style::default().fg(app.theme.status_bg));
+    let inner = block.inner(area);
     frame.render_widget(block, area);
+
+    let lines: Vec<Line> = app
+        .headings
+        .iter()
+        .enumerate()
+        .map(|(idx, h)| {
+            let indent = "  ".repeat((h.level.saturating_sub(1)) as usize);
+            let text = format!("{indent}{}", h.text);
+            let selected = app.rail_focused && idx == app.rail_selected;
+            let style = if selected {
+                Style::default()
+                    .fg(app.theme.status_bg)
+                    .bg(app.theme.status_fg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            Line::from(Span::styled(text, style))
+        })
+        .collect();
+
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, inner);
 }
 
 /// Draw the directory browser: a bordered full-screen pane titled with the
@@ -490,7 +522,11 @@ fn draw_statusline(frame: &mut Frame, area: Rect, app: &App) {
         // that clears or replaces it.
         format!(" bella · {msg}")
     } else {
-        let file_name = app.file.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+        let file_name = app
+            .file()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?");
         let total = app.lines.len();
         let current = (app.scroll as usize + app.viewport_height as usize).min(total);
         format!(
