@@ -12,31 +12,97 @@ use ratatui::{
 use crate::app::App;
 use bella_engine::browser::BrowserEntryKind;
 
-/// Draw the full viewer: body (scrolled markdown) + 1-row status line.
+/// Fixed column width of the TOC rail when it is drawn.
+const RAIL_WIDTH: u16 = 24;
+
+/// The narrowest a body region may ever be drawn at. Below
+/// `RAIL_WIDTH + MIN_BODY_WIDTH` total content width, the rail auto-collapses
+/// rather than squeezing the body under this floor — see [`rail_should_show`].
+const MIN_BODY_WIDTH: u16 = 20;
+
+/// Whether the rail should actually be drawn this frame, given the user's
+/// toggle preference (`rail_open`) and the available content width.
+///
+/// This is the minimum-body-width policy: even with the rail toggled on,
+/// a `content_width` too narrow to fit both `RAIL_WIDTH` and
+/// `MIN_BODY_WIDTH` auto-collapses the rail so the body is never squeezed
+/// below its usable floor. A zero-width body is unreachable through this
+/// path — when the rail is hidden the body takes the full `content_width`,
+/// which is only zero if the terminal itself is.
+fn rail_should_show(rail_open: bool, content_width: u16) -> bool {
+    rail_open && content_width >= RAIL_WIDTH + MIN_BODY_WIDTH
+}
+
+/// Draw the full viewer: an optional TOC rail beside the body (scrolled
+/// markdown), plus a 1-row status line.
+///
+/// `ui.rs` is the SOLE writer of [`App::width`] (BE.7.E) — it is derived
+/// here from the BODY region's width, which is only known once this layout
+/// has been computed (with a rail open, body width != terminal width). No
+/// other call site may assign `app.width`; `events.rs`'s resize handling
+/// intentionally leaves it untouched and relies on the next draw to pick up
+/// any width change through this function instead.
 ///
 /// Returns the body area height so the caller can push it back into `App`
 /// with [`App::set_viewport_height`].
 pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
-    let chunks = Layout::default()
+    let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(0),    // body
+            Constraint::Min(0),    // content row (rail + body)
             Constraint::Length(1), // status line
         ])
         .split(area);
 
-    let body_area = chunks[0];
-    let status_area = chunks[1];
+    let content_area = outer[0];
+    let status_area = outer[1];
+
+    let rail_visible = rail_should_show(app.rail_open, content_area.width);
+    app.rail_visible = rail_visible;
+
+    let (rail_area, body_area) = if rail_visible {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(RAIL_WIDTH), Constraint::Min(0)])
+            .split(content_area);
+        (chunks[0], chunks[1])
+    } else {
+        (Rect::default(), content_area)
+    };
 
     // Feed the real body height back into the app so max_scroll stays accurate.
     app.set_viewport_height(body_area.height);
-    // Store the body area for mouse coordinate conversion in event handlers.
+    // Store the body/rail areas for mouse coordinate conversion in event handlers.
     app.body_area = body_area;
+    app.rail_area = rail_area;
+
+    // The single write site for `App.width`: re-render whenever the body
+    // region's width (not the terminal's) has changed since the last render.
+    if body_area.width != app.width {
+        app.width = body_area.width;
+        app.render(body_area.width);
+    }
 
     draw_body(frame, body_area, app);
+    if rail_visible {
+        draw_rail(frame, rail_area, app);
+    }
     draw_statusline(frame, status_area, app);
 
     body_area.height
+}
+
+/// Draw the TOC rail region: a bordered pane beside the body.
+///
+/// The heading list itself (BE.7.E task 2) is not drawn yet — this is the
+/// frame-only deliverable of task 1, giving the layout something real to
+/// reserve space for and to golden-buffer against.
+fn draw_rail(frame: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Contents")
+        .style(Style::default().fg(app.theme.status_bg));
+    frame.render_widget(block, area);
 }
 
 /// Draw the directory browser: a bordered full-screen pane titled with the

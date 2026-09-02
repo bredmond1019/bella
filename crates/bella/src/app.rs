@@ -125,6 +125,21 @@ pub struct App {
     /// Body viewport rectangle — updated after each draw so mouse handlers can
     /// call `body_pos` with accurate geometry.
     pub body_area: Rect,
+    /// Whether the TOC rail is toggled on. Per-session only — no
+    /// persistence across launches and no CLI flag (both out of scope for
+    /// BE.7.E). `ui.rs` reads this to decide whether to reserve a rail
+    /// region; the *actual* on-screen visibility can still be `false` even
+    /// when this is `true` if the terminal is too narrow to fit a rail
+    /// alongside a usable body (see [`Self::rail_visible`]).
+    pub rail_open: bool,
+    /// Whether the rail was actually drawn on the last frame — distinct
+    /// from `rail_open` because the minimum-body-width policy can
+    /// auto-collapse it even while the user's toggle preference stays on.
+    /// Written only by `ui::draw_reader`.
+    pub rail_visible: bool,
+    /// Rail viewport rectangle — updated after each draw (mirrors
+    /// `body_area`), `Rect::default()` when the rail is not visible.
+    pub rail_area: Rect,
     /// Pending drag origin: the content position where `Down(Left)` was recorded.
     /// Cleared on `Up(Left)`.  Used to distinguish a plain click from a true drag.
     pub drag_origin: Option<(usize, usize)>,
@@ -220,6 +235,9 @@ impl App {
             status_message: None,
             history: History::new(),
             body_area: Rect::default(),
+            rail_open: false,
+            rail_visible: false,
+            rail_area: Rect::default(),
             drag_origin: None,
             selection: None,
             last_click: None,
@@ -267,6 +285,9 @@ impl App {
             status_message: None,
             history: History::new(),
             body_area: Rect::default(),
+            rail_open: false,
+            rail_visible: false,
+            rail_area: Rect::default(),
             drag_origin: None,
             selection: None,
             last_click: None,

@@ -17,4 +17,5 @@
 //! second binary (guarded by `scripts/check_test_layout.sh`).
 
 mod golden_draw;
+mod layout;
 mod render_async;

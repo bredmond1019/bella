@@ -513,6 +513,29 @@ const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(50);
 /// integration-test golden buffer (`tests/it/golden_draw.rs`), which needs
 /// to assert the post-resize scroll clamp without driving a real
 /// `crossterm::event::Event::Resize` through `run_loop`.
+/// Handle a `crossterm::event::Event::Resize` in `run_loop`: update the
+/// viewport height and re-clamp browser scroll.
+///
+/// Deliberately does NOT write `App.width` (BE.7.E) — `ui::draw_reader` is
+/// the sole writer, deriving it from the BODY region's width once layout is
+/// computed, which the next iteration of `run_loop`'s draw call already
+/// does. Writing a terminal-width guess here (as this arm used to) would
+/// re-introduce a second, disagreeing writer the moment a rail is open,
+/// since body width != terminal width in that case. `width` is accepted
+/// only so the caller can still destructure `Event::Resize(width, height)`
+/// without an unused-variable warning at the call site; it is intentionally
+/// unused here.
+///
+/// Extracted to a function (rather than inlined in the `Event::Resize` match
+/// arm), like [`reclamp_browser_scroll_on_resize`] below, so the
+/// single-writer invariant can be exercised directly by a test with no
+/// terminal.
+pub fn handle_resize(app: &mut App, width: u16, height: u16) {
+    let _ = width;
+    app.set_viewport_height(height.saturating_sub(1));
+    reclamp_browser_scroll_on_resize(app);
+}
+
 pub fn reclamp_browser_scroll_on_resize(app: &mut App) {
     let browser_inner_h = app.browser_area.height as usize;
     if let Some(b) = app.browser.as_mut() {
@@ -580,13 +603,11 @@ pub fn run_loop(
                 apply(action, &mut app);
             }
             Event::Resize(width, height) => {
-                app.set_viewport_height(height.saturating_sub(1));
-                app.width = width;
-                if app.mode == Mode::Reader {
-                    app.render(width);
-                }
-                // Re-clamp browser scroll to the new terminal height.
-                reclamp_browser_scroll_on_resize(&mut app);
+                // Reader-mode re-render at the new width happens on the next
+                // draw, in `ui::draw_reader` — the sole writer of
+                // `App.width` (BE.7.E). This arm only updates what it alone
+                // owns: viewport height and the browser's scroll clamp.
+                handle_resize(&mut app, width, height);
             }
             Event::Mouse(mouse) => {
                 let action = match app.mode {
