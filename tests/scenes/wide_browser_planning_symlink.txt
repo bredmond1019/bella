@@ -6,6 +6,7 @@
 │  BE.7.A                                                                                                    │
 │  BE.7.B                                                                                                    │
 │  BE.7.C                                                                                                    │
+│  BE.7.D                                                                                                    │
 │  BE.7.L                                                                                                    │
 │  BE.7.M                                                                                                    │
 │  BE.ticket.browser-status-bar                                                                              │
@@ -38,6 +39,5 @@
 │                                                                                                            │
 │                                                                                                            │
 │                                                                                                            │
-│                                                                                                            │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- bella · planning · 1/28 · j/k nav · Enter open · r reveal (off) · q quit
+ bella · planning · 1/29 · j/k nav · Enter open · r reveal (off) · q quit

@@ -13,6 +13,23 @@ timestamp: "2026-09-01T19:15:00Z"
 
 ## [run: 2026-09-02]
 
+Closed `BE.7.D` (scroll anchoring across re-render) via `/sdlc-flow`; all 5 tasks passed, review verdict PASS. Task 1 added additive `display_row_to_source_line`/`source_line_to_display_row` lookups to `bella-engine`'s `markdown.rs`, built on `Rendered::blocks` with block-granular linear interpolation, tested in both directions including a source line spanning several display rows after wrapping. Task 2 replaced `app.rs`'s clamp-only handling of `render()`'s `scroll` field with a real anchor resolve/restore: a new `pending_scroll_anchor` field and `blocks_as_rendered()` helper let a resize re-resolve the source-line anchor after the real (unstubbed) render worker delivers, including the case where a second resize fires before the first render lands — the async race this block exists to fix, not a synchronous-only fix. Task 3 rewrote `history.rs`'s `HistoryEntry` to store a `usize` source-line anchor instead of a raw `u16` display index (back/forward now restore via the same resize-survival path), added a `RESIZE:<cols>x<rows>` pseudo-key to `capture_scenes.sh` for VHS scenes that must exercise a real terminal resize, and — after an interim bail on an incomplete vault commit — re-captured two VHS reference screenshots that had gone blank under concurrent-lane CPU contention and widened marginal post-keystroke settle times in both reference tapes to reduce recurrence. Task 4 confirmed bella-engine's two new public functions are additive-only and ran the real cross-repo bastion gate (`cargo build`/`cargo test`, 2713 passed). Task 5 confirmed the full authoritative validation suite (fmt, clippy, `cargo test` via nextest-policy override, release build, test-layout, three consecutive `check_scenes.sh` runs, VHS freshness) green with no further changes needed. `BE.7.E` (horizontal frame + body-width single writer + TOC rail) is now the next layout block in sequence.
+
+```
+324434b docs: update docs for BE.7.D
+c4c434b docs: note the VHS settle-timing fix in scenes.toml (BE.7.D-task3)
+6a95dbc fix: fix pass 1 for BE.7.D-task3
+1d83b56 feat: implement BE.7.D-task3
+ee46931 feat: implement BE.7.D-task2
+a79b304 feat: implement BE.7.D-task1
+```
+
+Next: `/sdlc-flow BE.7.E` (horizontal frame + body-width single writer + TOC rail).
+
+---
+
+## [run: 2026-09-02]
+
 Closed `BE.7.C` (walker: symlinks, hidden/ignored reveal, corpus-root rule) via `/sdlc-flow`; all 5 tasks passed, review verdict PASS. Task 1 set `WalkBuilder::follow_links(true)` on `Browser::build_entries` (fixing the long-standing symlinked-child-entry drop that hid `planning/` in every repo of this fleet) and added a `reveal_ignored` field/setter relaxing both `hidden(true)` and `git_ignore(true)` together — plus `build_entries` now returns a dropped-entry count instead of silently swallowing walk errors. Task 2 added `resolve_corpus_root` (invoked path → nearest `brain.toml` ancestor → git root → invoked path) and stored it as `App.corpus_root` at startup. Task 3 bound reveal-toggle to `r` in browser mode, surfaced reveal state and the dropped-entry count in the browser status line, and refreshed the scene/VHS baselines for the new browser behaviour (14 reference PNGs touched, most re-saved pixel-identical with a PNG tEXt freshness stamp; one genuine new capture). Task 4 ran the real cross-repo bastion gate (`cargo build`/`cargo test`, 2713+4+1+7 tests green) confirming all five `Browser::new` call sites keep default filtering unchanged. Task 5 confirmed the full authoritative validation suite (fmt, clippy, `cargo test` via nextest-policy override, release build, test-layout, scenes, VHS freshness) green with a clean tree. One deviation from the spec as written: task 3 required editing `crates/bella/src/ui.rs` (not in task 3's declared `files[]`) because browser mode never renders through `App::status_message`, so surfacing reveal state and the dropped-entry count visibly required touching the draw function directly. `BE.7.D` (scroll anchoring across re-render) is now the next layout block in sequence.
 
 ```

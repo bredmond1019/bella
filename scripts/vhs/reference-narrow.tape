@@ -17,7 +17,8 @@
 # scenes.toml's `[[scene]]` names must agree, or `scripts/check_scenes.sh`'s
 # parity assertion (BE.7.L task 5) fails naming the missing side. Scenes
 # this tape owns (the `narrow_*` half of the manifest):
-#   narrow_reader_demo_top, narrow_reader_demo_table, narrow_browser_root
+#   narrow_reader_demo_top, narrow_reader_demo_table, narrow_browser_root,
+#   narrow_scroll_anchor_after_resize
 #
 # SETTLE TIME (re-measured 2026-09-02 against the PREBUILT binary, on this
 # machine under concurrent-lane load, `uptime` load averages observed
@@ -33,7 +34,7 @@
 # back blank at these settle times, retry the tape rather than lowering the
 # floor at commit time — see check_vhs_fresh.sh's per-scene floor.
 
-Output planning/artifacts/screenshots/narrow.gif
+Output target/vhs/narrow.gif
 
 Set Shell "bash"
 Set FontSize 16
@@ -48,7 +49,7 @@ Sleep 4s
 Screenshot planning/artifacts/screenshots/narrow_reader_demo_top.png
 
 Down 20
-Sleep 2s
+Sleep 3s
 Screenshot planning/artifacts/screenshots/narrow_reader_demo_table.png
 Type "q"
 Sleep 800ms
@@ -58,5 +59,22 @@ Type "target/release/bella ."
 Enter
 Sleep 8s
 Screenshot planning/artifacts/screenshots/narrow_browser_root.png
+Type "q"
+Sleep 500ms
+
+# Scroll anchoring (BE.7.D task 3): the scroll_anchor.md fixture at the
+# narrow reference size, scrolled down the SAME count as
+# wide_scroll_anchor_top in reference-wide.tape, to visually compare the
+# two. Named "after_resize" for parity with its text-capture counterpart in
+# scripts/vhs/scenes.toml, which resizes LIVE via tmux from wide to this
+# narrow size before capturing (VHS cannot do a mid-tape resize — see
+# scenes.toml's `keys` field doc) — this PNG is a fresh launch already at
+# the narrow size, not an actual resize, but shows the same content.
+Type "target/release/bella scripts/vhs/fixtures/scroll_anchor.md"
+Enter
+Sleep 4s
+Down 4
+Sleep 3s
+Screenshot planning/artifacts/screenshots/narrow_scroll_anchor_after_resize.png
 Type "q"
 Sleep 500ms

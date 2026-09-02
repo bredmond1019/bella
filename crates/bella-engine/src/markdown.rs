@@ -158,6 +158,164 @@ pub fn render_with_edit(
     rendered
 }
 
+// ---------------------------------------------------------------------------
+// Display-row <-> source-line mapping.
+//
+// Scroll anchoring (BE.7.D) needs to survive a re-render that changes the
+// document's display-line count (e.g. a terminal resize re-wraps every
+// block). Rather than track a raw display-row index — which moves with
+// width — the app crate resolves the current top row to a SOURCE line
+// before a re-render, then resolves that source line back to a display row
+// after it. Both directions are built on `Rendered::blocks`, which already
+// carries each block's source byte range and display row range in
+// ORIGINAL-file coordinate space (see `render_with_edit`'s doc comment) —
+// no parallel structure is introduced.
+//
+// Resolution is block-granular with linear interpolation across a block's
+// own span: a block that wraps one source line into several display rows,
+// or several source lines into one, is handled correctly at its two ends
+// (block start maps to block start, block end to block end) and
+// approximately in between. That is the accepted resolution — CLAUDE.md /
+// the block record calls for "nearest source line, plus or minus one
+// display row", not exact sub-line precision.
+// ---------------------------------------------------------------------------
+
+/// Byte offset (0-indexed, original-file space) -> 0-indexed source line
+/// number, counting `\n` bytes before `offset`.
+fn byte_offset_to_source_line(source: &str, offset: usize) -> usize {
+    let offset = offset.min(source.len());
+    source.as_bytes()[..offset]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count()
+}
+
+/// 0-indexed source line number -> byte offset of that line's first byte
+/// (original-file space). Clamps to the document's last line if `line` is
+/// past the end, so callers never have to special-case an out-of-range
+/// anchor (e.g. history restoring a line number from a document that has
+/// since been edited shorter).
+fn source_line_to_byte_offset(source: &str, line: usize) -> usize {
+    if line == 0 {
+        return 0;
+    }
+    let mut seen = 0usize;
+    for (i, b) in source.bytes().enumerate() {
+        if b == b'\n' {
+            seen += 1;
+            if seen == line {
+                return i + 1;
+            }
+        }
+    }
+    // `line` is at or past the last line: clamp to end-of-document.
+    source.len()
+}
+
+/// Resolve a display row (an index into `Rendered::lines`) to the nearest
+/// source line number. Interpolates linearly across the enclosing block's
+/// source-line span by the row's fractional position within the block's
+/// display-row span. Returns `None` only when the document has no blocks
+/// at all (an empty document).
+pub fn display_row_to_source_line(rendered: &Rendered, source: &str, row: usize) -> Option<usize> {
+    if rendered.blocks.is_empty() {
+        return None;
+    }
+    let block = rendered
+        .blocks
+        .iter()
+        .find(|b| row >= b.display_start && row < b.display_end)
+        .unwrap_or_else(|| {
+            // `row` is past every block's range (e.g. the caller clamped
+            // scroll to a row beyond the document, or blank trailing
+            // display rows with no owning block) — anchor to whichever end
+            // of the document `row` is closest to.
+            if row < rendered.blocks[0].display_start {
+                &rendered.blocks[0]
+            } else {
+                rendered.blocks.last().unwrap()
+            }
+        });
+
+    let block_start_line = byte_offset_to_source_line(source, block.source_range.start);
+    let block_end_line = byte_offset_to_source_line(
+        source,
+        block
+            .source_range
+            .end
+            .max(block.source_range.start + 1)
+            .saturating_sub(1),
+    );
+    let display_span = block.display_end.saturating_sub(block.display_start).max(1);
+    let row_in_block = row
+        .saturating_sub(block.display_start)
+        .min(display_span.saturating_sub(1));
+    let line_span = block_end_line.saturating_sub(block_start_line);
+
+    if display_span <= 1 || line_span == 0 {
+        return Some(block_start_line);
+    }
+    let frac = row_in_block as f64 / (display_span - 1) as f64;
+    let line = block_start_line + (frac * line_span as f64).round() as usize;
+    Some(line.min(block_end_line))
+}
+
+/// Resolve a source line number to the nearest display row (an index into
+/// `Rendered::lines`). The inverse of [`display_row_to_source_line`]:
+/// finds the block whose source range contains the line (falling back to
+/// the nearest block by source position if the line falls in a gap, e.g. a
+/// blank line between blocks), then interpolates linearly across the
+/// block's display-row span. Returns `None` only when the document has no
+/// blocks at all.
+pub fn source_line_to_display_row(rendered: &Rendered, source: &str, line: usize) -> Option<usize> {
+    if rendered.blocks.is_empty() {
+        return None;
+    }
+    let target_offset = source_line_to_byte_offset(source, line);
+    let block = rendered
+        .blocks
+        .iter()
+        .find(|b| target_offset >= b.source_range.start && target_offset <= b.source_range.end)
+        .unwrap_or_else(|| {
+            // Nearest block by distance from `target_offset` to its source
+            // range — covers a source line that falls in a gap (blank
+            // line, stripped frontmatter) between two blocks.
+            rendered
+                .blocks
+                .iter()
+                .min_by_key(|b| {
+                    if target_offset < b.source_range.start {
+                        b.source_range.start - target_offset
+                    } else if target_offset > b.source_range.end {
+                        target_offset.saturating_sub(b.source_range.end)
+                    } else {
+                        0
+                    }
+                })
+                .unwrap()
+        });
+
+    let block_start_line = byte_offset_to_source_line(source, block.source_range.start);
+    let block_end_line = byte_offset_to_source_line(
+        source,
+        block
+            .source_range
+            .end
+            .max(block.source_range.start + 1)
+            .saturating_sub(1),
+    );
+    let display_span = block.display_end.saturating_sub(block.display_start).max(1);
+    let line_span = block_end_line.saturating_sub(block_start_line);
+
+    if line_span == 0 || display_span <= 1 {
+        return Some(block.display_start);
+    }
+    let clamped_line = line.clamp(block_start_line, block_end_line);
+    let frac = (clamped_line - block_start_line) as f64 / line_span as f64;
+    let row = block.display_start + (frac * (display_span - 1) as f64).round() as usize;
+    Some(row.min(block.display_end.saturating_sub(1)))
+}
+
 /// Does the actual `pulldown-cmark` walk + layout pass over `source`,
 /// which by the time it reaches here has already had any frontmatter block
 /// stripped off by `render_with_edit`. Every byte offset produced here is

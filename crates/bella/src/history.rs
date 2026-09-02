@@ -14,17 +14,29 @@ use std::path::PathBuf;
 // Public types
 // ---------------------------------------------------------------------------
 
-/// A single visited location: the file that was open and the scroll offset
-/// within it.
+/// A single visited location: the file that was open and a **source-line
+/// anchor** into it (BE.7.D) — not a raw display-line scroll index.
+///
+/// A raw display-line index means nothing once the line count changes: the
+/// same document re-wraps to a different number of display rows at every
+/// terminal width, so an index stored at width 80 can point at a wholly
+/// different part of the file when restored after a resize. The source line
+/// is stable across width — it names a place in the *file*, not a row on
+/// screen — so back/forward restores the reader to the same place they were
+/// reading, not the same row number. Resolving an anchor back to a display
+/// row (for the *current* layout) is the app crate's job, via
+/// `bella_engine::markdown::source_line_to_display_row`; this type stays
+/// engine- and UI-independent and just carries the number.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryEntry {
     pub path: PathBuf,
-    pub scroll: u16,
+    /// Source-line anchor (0-based), not a display-line scroll index.
+    pub anchor: usize,
 }
 
 impl HistoryEntry {
-    pub fn new(path: PathBuf, scroll: u16) -> Self {
-        Self { path, scroll }
+    pub fn new(path: PathBuf, anchor: usize) -> Self {
+        Self { path, anchor }
     }
 }
 
@@ -46,7 +58,7 @@ impl HistoryEntry {
 /// assert!(h.can_back());
 /// let prev = h.back().unwrap();
 /// assert_eq!(prev.path, PathBuf::from("a.md"));
-/// assert_eq!(prev.scroll, 0);
+/// assert_eq!(prev.anchor, 0);
 /// ```
 #[derive(Debug, Default)]
 pub struct History {
@@ -153,8 +165,8 @@ mod tests {
 
     use super::{History, HistoryEntry};
 
-    fn entry(name: &str, scroll: u16) -> HistoryEntry {
-        HistoryEntry::new(PathBuf::from(name), scroll)
+    fn entry(name: &str, anchor: usize) -> HistoryEntry {
+        HistoryEntry::new(PathBuf::from(name), anchor)
     }
 
     // --- basic empty state ---
@@ -197,26 +209,26 @@ mod tests {
         // back → "b.md"
         let prev = h.back().unwrap();
         assert_eq!(prev.path, PathBuf::from("b.md"));
-        assert_eq!(prev.scroll, 5);
+        assert_eq!(prev.anchor, 5);
         assert!(h.can_back());
         assert!(h.can_forward());
 
         // back → "a.md"
         let prev = h.back().unwrap();
         assert_eq!(prev.path, PathBuf::from("a.md"));
-        assert_eq!(prev.scroll, 0);
+        assert_eq!(prev.anchor, 0);
         assert!(!h.can_back());
         assert!(h.can_forward());
 
         // forward → "b.md"
         let next = h.forward().unwrap();
         assert_eq!(next.path, PathBuf::from("b.md"));
-        assert_eq!(next.scroll, 5);
+        assert_eq!(next.anchor, 5);
 
         // forward → "c.md"
         let next = h.forward().unwrap();
         assert_eq!(next.path, PathBuf::from("c.md"));
-        assert_eq!(next.scroll, 10);
+        assert_eq!(next.anchor, 10);
 
         // No more forward.
         assert!(h.forward().is_none());
@@ -272,19 +284,19 @@ mod tests {
         assert!(!h.can_back());
     }
 
-    // --- scroll position is preserved per entry ---
+    // --- anchor is preserved per entry ---
 
     #[test]
-    fn scroll_position_preserved() {
+    fn anchor_is_preserved() {
         let mut h = History::new();
         h.push(entry("first.md", 42));
         h.push(entry("second.md", 0));
 
         let prev = h.back().unwrap();
-        assert_eq!(prev.scroll, 42);
+        assert_eq!(prev.anchor, 42);
 
         let next = h.forward().unwrap();
-        assert_eq!(next.scroll, 0);
+        assert_eq!(next.anchor, 0);
     }
 
     // --- current() returns the entry at the cursor without moving it ---

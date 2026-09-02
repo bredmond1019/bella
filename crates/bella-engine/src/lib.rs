@@ -23,5 +23,7 @@ mod testsupport;
 pub use frontmatter::{Frontmatter, FrontmatterValue, parse as parse_frontmatter};
 pub use geometry::{body_pos, select_word_at};
 pub use links::{CheckboxMap, LinkMap, LinkTarget, TableMap};
-pub use markdown::{Rendered, render_with_edit};
+pub use markdown::{
+    Rendered, display_row_to_source_line, render_with_edit, source_line_to_display_row,
+};
 pub use theme::Theme;

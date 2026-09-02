@@ -19,3 +19,4 @@
 mod frontmatter;
 mod html_comments;
 mod render;
+mod scroll_anchor;
