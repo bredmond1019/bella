@@ -2,10 +2,7 @@
 // Public surface for the bella app crate and integration tests.
 
 pub mod browser;
-// Not yet wired into the render path or re-exported — that's BE.7.A task 2.
-// Declared here only so `cargo nextest run -p bella-engine frontmatter` has
-// a module to compile and run tests from.
-mod frontmatter;
+pub mod frontmatter;
 pub mod geometry;
 pub mod links;
 pub mod markdown;
@@ -23,6 +20,7 @@ mod testsupport;
 
 // Re-export the stable public surface consumed by the bella app crate and
 // later blocks. Names match the Engine surface line in master-plan.md.
+pub use frontmatter::{Frontmatter, FrontmatterValue, parse as parse_frontmatter};
 pub use geometry::{body_pos, select_word_at};
 pub use links::{CheckboxMap, LinkMap, LinkTarget, TableMap};
 pub use markdown::{Rendered, render_with_edit};

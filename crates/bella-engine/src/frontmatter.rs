@@ -17,12 +17,6 @@
 //! `HashMap`) because the metadata pane (BE.7.F) renders them in the order
 //! the author wrote them.
 
-// Not yet wired into markdown.rs or re-exported from lib.rs (that's BE.7.A
-// task 2), so nothing in the crate calls these public items yet. Silence
-// the resulting dead_code lint rather than mark real API `pub(crate)` —
-// task 2 makes this module's `pub`s part of the crate's public surface.
-#![allow(dead_code)]
-
 use std::ops::Range;
 
 /// One frontmatter value, in whichever of the four shapes it was written.
