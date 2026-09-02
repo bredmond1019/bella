@@ -15,6 +15,13 @@ related: [capabilities, architecture, modules, development, features, bella-work
 Start with [`capabilities.md`](capabilities.md) if you want to *use* bella, and
 [`architecture.md`](architecture.md) if you want to *change* it.
 
+> **A note on `planning/` paths.** These docs sometimes cite files under `planning/` — decision
+> records like `planning/decisions/D3-bella-engine-shared-with-bastion.md`, or the validation
+> config `planning/harness.json`. **That directory is not part of this repository.** It is a
+> symlink into a private planning vault and is gitignored, so a clone of bella will not contain
+> it. Those citations are provenance for maintainers, not links you can follow. Everything you
+> need to build, test and change bella lives in `docs/`, `scripts/` and `crates/`.
+
 ## Using bella
 
 | Doc | One line |
@@ -28,7 +35,7 @@ Start with [`capabilities.md`](capabilities.md) if you want to *use* bella, and
 |---|---|
 | [architecture.md](architecture.md) | Crate split, render pipeline, async render worker, event loop, modes |
 | [modules.md](modules.md) | Per-module purpose, key types, and public functions |
-| [development.md](development.md) | Build, test, lint, and how to add a keybinding |
+| [development.md](development.md) | Build, test, lint, the three-tier visual regression harness, and how to add a keybinding |
 
 ## Running the SDLC harness
 

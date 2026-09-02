@@ -94,23 +94,64 @@ Any test that needs a scratch directory on disk must call `crate::testsupport::u
 `#[cfg(test)]`-only) rather than a fixed `std::env::temp_dir().join("bella_...")` path — a fixed
 name collides when two runs (e.g. two `--worktree` lanes) share one `/tmp`.
 
-### Visual QA (manual/agent review)
+### Visual regression testing
 
-Automated tests assert cell *content*, not appearance — for an actual visual check (spacing,
-color, layout), two scripts under `scripts/`:
+bella draws to a terminal, so ordinary tests can assert what is *in* a cell but not whether the
+screen actually looks right. Three independent tiers cover that, and **none replaces another** —
+they answer different questions and fail in different ways.
+
+| Tier | What it captures | Gated? | Regenerate with |
+|---|---|---|---|
+| **1. Buffer assertions** | Geometry and content, in-process via ratatui's `TestBackend`. Never runs `main.rs` | yes, as part of `test` | ordinary `cargo` test runs |
+| **2. Text scenes** | What the **real release binary** prints, driven through tmux and diffed against committed baselines in `tests/scenes/` | yes, as `scenes` | `bash scripts/capture_scenes.sh` |
+| **3. VHS reference PNGs** | Colour, glyphs and font rendering, as images under a sanity + freshness gate — **not** pixel-diffed | yes, as `vhs-fresh` | `vhs scripts/vhs/reference-wide.tape` (and `-narrow`, `-collapse`) |
+
+Tier 1 can pass while the real binary shows nothing, because it never starts one. Tier 2 catches
+that. Tier 3 is the only tier that sees colour, but images are non-deterministic across font and
+antialiasing changes, so it is checked for *plausibility and freshness* rather than diffed.
+
+```bash
+bash scripts/check_scenes.sh      # tier 2 — re-capture and diff against tests/scenes/
+bash scripts/check_vhs_fresh.sh   # tier 3 — sanity + freshness of the reference PNGs
+```
+
+All three tiers read one manifest, `scripts/vhs/scenes.toml`, so a scene declared once is
+consumed by both the text captures and the tapes.
+
+**Both gated checks are `perTask: false`** in `planning/harness.json` — they run once per block at
+the end review or terminal reconcile, not after every task. `scenes` drives 19 tmux sessions and
+takes ~1m45s, and `vhs-fresh` compares git commit times, so it is red from the first task that
+touches a render source until the re-capture lands. Neither per-task verdict was meaningful; the
+block-level one is.
+
+#### Four rules, each learned by breaking it
+
+1. **A green gate is not evidence a capture is good.** `check_vhs_fresh.sh` passed two corrupt
+   references — a 20032-byte and a 25135-byte PNG, both showing a bare shell prompt. A blank
+   frame's size depends on how much shell text is on screen, so **no byte threshold separates a
+   blank from a sparse real frame.** After re-capturing, open the images and look at them.
+2. **Every `Screenshot` in a tape must be preceded by `Wait+Screen@30s /<pattern>/`**, never a bare
+   `Sleep`. A fixed sleep races the app's startup; a readiness match makes the failure impossible
+   rather than detectable. **The pattern must be ASCII** — waiting on `/bella ·/` (the middle dot
+   bella actually prints) silently produces no screenshot and exits 0.
+3. **A scene's `target` must be a committed fixture or a stable in-repo path**, never a shared or
+   generated directory. Use `scripts/vhs/fixtures/`. A baseline that captures a directory outside
+   this repo's control drifts whenever anything else writes there.
+4. **Any block that changes what appears on screen owes a scene.** Add it to `scenes.toml` with a
+   per-scene `min_bytes`, commit the baseline, and review the diff against the previous set rather
+   than accepting it blind.
+
+### Manual visual inspection
+
+For ad-hoc looks that are not part of any gate:
 
 | Tool | What it does | Use it for |
 |---|---|---|
-| `scripts/tui_capture.sh <file\|dir> [key ...]` | Drives bella in a detached tmux session (via `bastion new`/`capture`/`kill`) and dumps the rendered screen as text | Fast structural checks — is a section present, did navigation land where expected |
-| `scripts/vhs/*.tape` (run with `vhs <tape>`, requires `brew install vhs`) | Scripts a real pty session and renders it to PNG/GIF | Pixel-level review — theme colors, alignment, wrapping. `reference-wide.tape`/`reference-narrow.tape` regenerate the baseline set in `planning/artifacts/screenshots/` (see that directory's `README.md`) |
+| `scripts/tui_capture.sh <file\|dir> [key ...]` | Drives bella in a detached tmux session and dumps the rendered screen as text | Quick structural checks — is a section present, did navigation land where expected |
+| `vhs scripts/vhs/*.tape` (needs `brew install vhs`) | Scripts a real pty session and renders it to PNG/GIF | Eyeballing theme colours, alignment, wrapping |
 
-Beyond these two manual-review tools, bella also gates on two **automated** regression checks —
-run `bash scripts/check_scenes.sh` and `bash scripts/check_vhs_fresh.sh` to reproduce what the
-harness's `scenes` and `vhs-fresh` checks run (`planning/harness.json`). Both are driven off one
-shared scene manifest, `scripts/vhs/scenes.toml`, and both are documented in full — what each
-tier catches, why VHS output is checked for freshness/sanity rather than pixel-diffed, and how to
-regenerate baselines — in `planning/artifacts/screenshots/README.md`. `scripts/capture_scenes.sh`
-regenerates the tier-2 text baselines under `tests/scenes/`.
+`tui_capture.sh` depends on `bastion` for session lifecycle and is therefore an **interactive tool
+only** — no gated check may depend on it, so that bella stays testable outside its monorepo.
 
 ## Lint / Format
 
