@@ -1172,7 +1172,7 @@ mod tests {
     #[test]
     fn app_with_temp_file_uses_correct_base_dir() {
         // Create a real temp file so base_dir is a real directory.
-        let dir = std::env::temp_dir();
+        let dir = crate::testsupport::unique_temp_dir("bella_test_base_dir");
         let file_path = dir.join("bella_test_base_dir.md");
         let src = "[rel](sibling.md)".to_string();
         {
@@ -1395,9 +1395,7 @@ mod tests {
 
     /// Create a uniquely-named temp directory to avoid inter-test collisions.
     fn tempdir_for_test(label: &str) -> PathBuf {
-        let base = std::env::temp_dir().join(format!("bella_task4_{label}"));
-        std::fs::create_dir_all(&base).expect("create temp dir");
-        base
+        crate::testsupport::unique_temp_dir(&format!("bella_task4_{label}"))
     }
 
     // --- Task 5 tests: in-document search ---
@@ -1636,8 +1634,7 @@ mod tests {
 
     /// Helper: create two real temp files (main and target) and return their paths.
     fn make_two_temp_files(label: &str) -> (PathBuf, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("bella_task6_{label}"));
-        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let dir = crate::testsupport::unique_temp_dir(&format!("bella_task6_{label}"));
         let main_path = dir.join("main.md");
         let target_path = dir.join("target.md");
         std::fs::write(&main_path, "[go](target.md)").expect("write main");
@@ -1659,8 +1656,7 @@ mod tests {
     #[test]
     fn go_back_after_follow_restores_file_and_scroll() {
         // Write files with enough content so max_scroll > 0 and scroll=3 is valid.
-        let dir = std::env::temp_dir().join("bella_task6_go_back_scroll");
-        std::fs::create_dir_all(&dir).expect("create dir");
+        let dir = crate::testsupport::unique_temp_dir("bella_task6_go_back_scroll");
         let main_content: String = (1..=30)
             .map(|i| format!("line {i}\n\n"))
             .collect::<Vec<_>>()
@@ -2203,9 +2199,7 @@ mod tests {
     use super::Mode;
 
     fn temp_browser_dir(label: &str) -> PathBuf {
-        let base = std::env::temp_dir().join(format!("bella_task2_{label}"));
-        std::fs::create_dir_all(&base).expect("create temp dir");
-        base
+        crate::testsupport::unique_temp_dir(&format!("bella_task2_{label}"))
     }
 
     #[test]

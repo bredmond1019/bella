@@ -966,8 +966,7 @@ mod tests {
         let height: u16 = 20;
 
         // Use a real temp dir so App::new_browser succeeds.
-        let dir = std::env::temp_dir().join("bella_ui_browser_names");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_names");
 
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -1009,8 +1008,7 @@ mod tests {
         let width: u16 = 80;
         let height: u16 = 20;
 
-        let dir = std::env::temp_dir().join("bella_ui_browser_prefix");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_prefix");
 
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -1060,8 +1058,7 @@ mod tests {
         let width: u16 = 200;
         let height: u16 = 20;
 
-        let dir = std::env::temp_dir().join("bella_ui_browser_status_line");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_status_line");
 
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -1118,8 +1115,7 @@ mod tests {
         let width: u16 = 80;
         let height: u16 = 20;
 
-        let dir = std::env::temp_dir().join("bella_ui_browser_status_line_theme");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_status_line_theme");
 
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -1158,8 +1154,7 @@ mod tests {
         let width: u16 = 80;
         let height: u16 = 20;
 
-        let dir = std::env::temp_dir().join("bella_ui_browser_style");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_style");
 
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();

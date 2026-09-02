@@ -760,7 +760,7 @@ mod tests {
     #[test]
     fn apply_follow_local_file_changes_file() {
         // Write a real target file so load_file can succeed.
-        let dir = std::env::temp_dir();
+        let dir = crate::testsupport::unique_temp_dir("bella_events_follow");
         let target = dir.join("bella_events_follow_target.md");
         std::fs::write(&target, "# Target\n\nContent.").expect("write target");
 
@@ -936,7 +936,7 @@ mod tests {
     #[test]
     fn apply_follow_pushes_history_entry() {
         // Write a real target file so load_file can succeed.
-        let dir = std::env::temp_dir();
+        let dir = crate::testsupport::unique_temp_dir("bella_events_task6");
         let target = dir.join("bella_events_task6_target.md");
         std::fs::write(&target, "# Target\n\nContent.").expect("write target");
 
@@ -1365,8 +1365,7 @@ mod tests {
     #[test]
     fn apply_drag_end_without_drag_follows_link() {
         // Write a real target so load_file can succeed.
-        let dir = std::env::temp_dir().join("bella_drag_click_follow");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testsupport::unique_temp_dir("bella_drag_click_follow");
         let target = dir.join("target.md");
         std::fs::write(&target, "# Target\n\nContent.").unwrap();
         let main_path = dir.join("main.md");
@@ -1636,14 +1635,12 @@ mod tests {
     // --- Task 4 (Block E) tests: browser key/mouse handlers ---
 
     fn make_browser_app(label: &str) -> App {
-        let dir = std::env::temp_dir().join(format!("bella_events_browser_{label}"));
-        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let dir = crate::testsupport::unique_temp_dir(&format!("bella_events_browser_{label}"));
         App::new_browser(dir, 80, 25)
     }
 
     fn make_browser_app_with_md(label: &str) -> (App, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("bella_events_browser_{label}"));
-        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let dir = crate::testsupport::unique_temp_dir(&format!("bella_events_browser_{label}"));
         let md_path = dir.join("hello.md");
         std::fs::write(&md_path, "# Hello\n\nContent.").expect("write md");
         let app = App::new_browser(dir.clone(), 80, 25);
@@ -1732,7 +1729,7 @@ mod tests {
     #[test]
     fn apply_browser_asc_and_desc_round_trip() {
         // Create a parent dir with a child dir.
-        let parent = std::env::temp_dir().join("bella_events_browser_ascend_desc_parent");
+        let parent = crate::testsupport::unique_temp_dir("bella_events_browser_ascend_desc_parent");
         let child = parent.join("child_dir");
         std::fs::create_dir_all(&child).expect("create dirs");
 
@@ -1759,7 +1756,7 @@ mod tests {
 
     #[test]
     fn apply_browser_descend_on_dir_re_roots_browser() {
-        let parent = std::env::temp_dir().join("bella_events_browser_descend_dir");
+        let parent = crate::testsupport::unique_temp_dir("bella_events_browser_descend_dir");
         let child = parent.join("nested");
         std::fs::create_dir_all(&child).expect("create dirs");
 
@@ -1855,7 +1852,7 @@ mod tests {
     #[test]
     fn apply_browser_click_at_on_dir_descends_into_it() {
         // Create a parent dir containing one subdir.
-        let parent = std::env::temp_dir().join("bella_events_browser_click_sel");
+        let parent = crate::testsupport::unique_temp_dir("bella_events_browser_click_sel");
         let child = parent.join("click_child_dir");
         std::fs::create_dir_all(&child).expect("create child dir");
 
