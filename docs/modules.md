@@ -35,7 +35,7 @@ Crate root. Re-exports the stable public surface consumed by the `bella` app cra
 |---|---|
 | `body_pos`, `select_word_at` | `geometry` |
 | `CheckboxMap`, `LinkMap`, `LinkTarget`, `TableMap` | `links` |
-| `Rendered`, `render_with_edit` | `markdown` |
+| `Rendered`, `render_with_edit`, `display_row_to_source_line`, `source_line_to_display_row` | `markdown` |
 | `Frontmatter`, `FrontmatterValue`, `parse_frontmatter` | `frontmatter` |
 | `Theme` | `theme` |
 
@@ -103,6 +103,8 @@ The render pipeline. 2561 lines — the largest file in the project.
 |---|---|
 | `render(source, base_dir, width, theme) -> Rendered` | Convenience wrapper — no edit mode |
 | `render_with_edit(source, base_dir, width, theme, edit, tables) -> Rendered` | Full render with optional edit-mode cursor support |
+| `display_row_to_source_line(rendered, source, row) -> Option<usize>` | Map a display row to the nearest source line, via block-granular linear interpolation across `Rendered::blocks`; clamps to the document's start/end rather than returning `None` on an out-of-range row |
+| `source_line_to_display_row(rendered, source, line) -> Option<usize>` | The inverse of `display_row_to_source_line` — maps a source line back to a display row, same clamping behavior |
 
 Pipeline: strip a leading OKF frontmatter fence (via [`frontmatter.rs`](#frontmatterrs), so pulldown-cmark never sees it — an unstripped fence misreads the closing `---` as a setext H2) → pulldown-cmark event stream → block tree → layout pass (word-wrap, link span extraction, table geometry). `render_with_edit` translates every byte offset it reports (`BlockInfo::source_range`, `row_source`, `EditCtx::cursor`) back to original-file coordinates, so callers never see stripped-body offsets. Edit mode replaces the smallest inline element containing the cursor with raw source text. Link spans that cross wrap boundaries are split — each physical line gets a separate `LinkSpan` entry.
 
@@ -312,6 +314,8 @@ Central state container. 2183 lines — the largest app-crate file.
 | `toggled_checkboxes` | `HashSet<usize>` | Visual-only toggles (not persisted) |
 | `search` | `SearchState` | Search state |
 | `history` | `History` | Back/forward stack |
+| `blocks` | `Vec<BlockInfo>` | The current render's block map, kept alongside `lines` so scroll position can be re-anchored to a source line across a re-render (resize) |
+| `pending_scroll_anchor` | `Option<usize>` (private) | Source line to restore scroll to once the in-flight render lands; set by resize, `HistoryBack`/`HistoryForward`, and follow-navigation |
 | `body_area` | `Rect` | Stored by draw_reader for mouse hit-testing |
 | `drag_origin` | `Option<(usize, usize)>` | Drag-select start position |
 | `selection` | `Option<Selection>` | Active text selection |
@@ -326,6 +330,7 @@ Central state container. 2183 lines — the largest app-crate file.
 **Key invariants:**
 - `render()`, `load_file()`, and `App::new()` kick off an async render via `render_worker.request_render(...)` and set `render_state = Loading` with placeholder `lines`; they never block on the render itself. `poll_render()` (called each tick of `run_loop`) drains the worker's channel and applies the result once it matches `render_generation`, discarding stale (superseded) ones.
 - `render()` resets all overlay state (focused link, hovered link, search, selection, drag) because display line indices change.
+- Scroll survives a re-render (e.g. terminal resize) by source line, not raw display-row index: `render()` resolves the current display row to a source line (`resolve_scroll_anchor`, via `bella_engine::markdown::display_row_to_source_line` over `blocks_as_rendered()`) into `pending_scroll_anchor` before requesting the new render, then `apply_rendered` maps that source line back to a display row (`source_line_to_display_row`) once the result lands and restores `scroll` to it — otherwise a raw index clamp would leave the reader looking at unrelated content after a resize. Resolution only happens when `render_state` is not already `Loading`, so a resize that fires mid-render doesn't clobber the first request's anchor with the loading placeholder's 1-line view. `History` (`go_back`/`go_forward`) and follow-navigation set `pending_scroll_anchor` the same way, reusing this one restore path rather than assigning `scroll` directly.
 - `last_click` is cleared after a successful double-click so triple-click starts fresh.
 - `drag_origin` guards `selection_finish()` — set on Down, cleared by double-click, consumed by Up. Prevents double-calling finish on double-click sequences.
 - Checkbox toggles are visual-only; never written to disk.
@@ -410,7 +415,7 @@ Back/forward navigation stack.
 
 | Type | Description |
 |---|---|
-| `HistoryEntry` | `path: PathBuf`, `scroll: u16` |
+| `HistoryEntry` | `path: PathBuf`, `anchor: usize` (source line, 0-based — not a raw display-row scroll offset) |
 | `History` | `entries: Vec<HistoryEntry>`, `cursor: Option<usize>` |
 
 **Key functions:**
