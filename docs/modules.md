@@ -105,7 +105,7 @@ Pipeline: pulldown-cmark event stream → block tree → layout pass (word-wrap,
 
 Enabled extensions: `TABLES`, `STRIKETHROUGH`, `TASKLISTS`, `FOOTNOTES`, `SMART_PUNCTUATION`, `WIKILINKS`.
 
-Raw HTML — including HTML comments (`<!-- ... -->`) — is dropped from the visible render (`Event::Html`/`Event::InlineHtml` produce no output), so sentinel comments in status/spec docs never surface as literal text. Regression coverage: `crates/bella-engine/tests/html_comments.rs`.
+Raw HTML — including HTML comments (`<!-- ... -->`) — is dropped from the visible render (`Event::Html`/`Event::InlineHtml` produce no output), so sentinel comments in status/spec docs never surface as literal text. Regression coverage: `crates/bella-engine/tests/it/html_comments.rs`.
 
 ---
 
