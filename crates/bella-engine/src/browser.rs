@@ -161,6 +161,53 @@ impl Browser {
     }
 }
 
+/// Resolve the corpus root for `invoked` — the path bella was launched at
+/// (a file or a directory).
+///
+/// The rule: walk UPWARD from `invoked` to the nearest ancestor directory
+/// containing `brain.toml`. Failing that, walk upward again to the nearest
+/// ancestor containing a `.git` entry (the git root). Failing that, return
+/// `invoked` itself — this never errors, so a bare directory with neither
+/// marker still gets a usable root.
+///
+/// This is a property of how bella was invoked, not of any document index —
+/// BE.7.G's document index consumes this result rather than re-deriving it.
+pub fn resolve_corpus_root(invoked: &Path) -> PathBuf {
+    // Walking starts from a directory. When `invoked` names a file, start
+    // from its parent instead of treating the file itself as a candidate
+    // ancestor.
+    let start = if invoked.is_file() {
+        invoked
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| invoked.to_path_buf())
+    } else {
+        invoked.to_path_buf()
+    };
+
+    if let Some(root) = nearest_ancestor_containing(&start, "brain.toml") {
+        return root;
+    }
+    if let Some(root) = nearest_ancestor_containing(&start, ".git") {
+        return root;
+    }
+    invoked.to_path_buf()
+}
+
+/// Walk `start` and its ancestors looking for the nearest one whose
+/// directory contains an entry named `marker`. Returns `None` if no
+/// ancestor (including `start` itself) has one.
+fn nearest_ancestor_containing(start: &Path, marker: &str) -> Option<PathBuf> {
+    let mut cur = Some(start);
+    while let Some(dir) = cur {
+        if dir.join(marker).exists() {
+            return Some(dir.to_path_buf());
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
@@ -814,6 +861,77 @@ mod tests {
         assert!(
             find_entry(&b.entries, "only_visible_when_revealed").is_none(),
             "entry must be hidden again once reveal is toggled off"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Corpus-root resolver tests
+    // -----------------------------------------------------------------------
+
+    use super::resolve_corpus_root;
+
+    /// A directory under a tree containing `brain.toml` resolves to the
+    /// nearest ancestor holding it, not to the git root or the invoked
+    /// path.
+    #[test]
+    fn resolve_corpus_root_finds_nearest_brain_toml() {
+        let root = temp_dir("corpus_root_brain_toml");
+        fs::write(root.join("brain.toml"), "").expect("write brain.toml");
+        // A `.git` marker further up must NOT win — brain.toml takes
+        // priority over the git root.
+        let nested = create_dir(&root, "sub");
+        let leaf = create_dir(&nested, "leaf");
+
+        let resolved = resolve_corpus_root(&leaf);
+        assert_eq!(
+            resolved, root,
+            "must resolve to the nearest ancestor containing brain.toml"
+        );
+    }
+
+    /// A git repo with no `brain.toml` anywhere in its ancestry falls back
+    /// to the git root (nearest ancestor containing `.git`).
+    #[test]
+    fn resolve_corpus_root_falls_back_to_git_root() {
+        let root = temp_dir("corpus_root_git");
+        create_dir(&root, ".git");
+        let nested = create_dir(&root, "sub");
+        let leaf = create_dir(&nested, "leaf");
+
+        let resolved = resolve_corpus_root(&leaf);
+        assert_eq!(
+            resolved, root,
+            "must resolve to the nearest ancestor containing .git when no brain.toml exists"
+        );
+    }
+
+    /// A directory that is neither under a `brain.toml` tree nor a git repo
+    /// resolves to the invoked path itself, rather than erroring or
+    /// returning some other default.
+    #[test]
+    fn resolve_corpus_root_returns_invoked_path_when_neither_marker_exists() {
+        let dir = temp_dir("corpus_root_neither");
+
+        let resolved = resolve_corpus_root(&dir);
+        assert_eq!(
+            resolved, dir,
+            "must return the invoked path itself when neither brain.toml nor .git is found"
+        );
+    }
+
+    /// When `invoked` names a file (not a directory), resolution starts
+    /// from the file's parent — a file can never itself be a corpus root.
+    #[test]
+    fn resolve_corpus_root_starts_from_parent_when_invoked_is_a_file() {
+        let root = temp_dir("corpus_root_file_invoked");
+        fs::write(root.join("brain.toml"), "").expect("write brain.toml");
+        let file = root.join("doc.md");
+        create_file(&root, "doc.md");
+
+        let resolved = resolve_corpus_root(&file);
+        assert_eq!(
+            resolved, root,
+            "resolution must start from the invoked file's parent directory"
         );
     }
 }

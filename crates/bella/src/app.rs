@@ -158,6 +158,14 @@ pub struct App {
     /// [`Theme::dark`] passed to `request_render`; this field exists so
     /// always-on chrome can reference the same values without re-deriving them.
     pub theme: Theme,
+    /// Corpus root resolved once at startup from the invoked path: the
+    /// nearest ancestor containing `brain.toml`, failing that the git root,
+    /// failing that the invoked path itself. See
+    /// [`bella_engine::browser::resolve_corpus_root`]. A property of how
+    /// bella was invoked, not of any document index — stored here so a
+    /// later block (BE.7.G's document index) can consume it without
+    /// re-resolving.
+    pub corpus_root: PathBuf,
 }
 
 impl App {
@@ -167,6 +175,7 @@ impl App {
     /// so `viewport_height = term_height.saturating_sub(1)`.
     pub fn new(src: String, file: PathBuf, width: u16, term_height: u16) -> Self {
         let viewport_height = term_height.saturating_sub(1);
+        let corpus_root = bella_engine::browser::resolve_corpus_root(&file);
         let mut render_worker = RenderWorker::spawn();
         let base_dir = file.parent().map(Path::to_path_buf);
         let render_generation = render_worker.request_render(
@@ -206,6 +215,7 @@ impl App {
             render_generation,
             render_state: RenderState::Loading,
             theme: Theme::dark(),
+            corpus_root,
         }
     }
 
@@ -215,6 +225,7 @@ impl App {
     /// so `viewport_height = term_height.saturating_sub(1)`.
     pub fn new_browser(dir: PathBuf, width: u16, term_height: u16) -> Self {
         let viewport_height = term_height.saturating_sub(1);
+        let corpus_root = bella_engine::browser::resolve_corpus_root(&dir);
         // Reader fields are empty until a file is opened from the browser. The
         // document is empty, so there is nothing worth offloading — render it
         // synchronously and start the worker already `Ready`.
@@ -249,6 +260,7 @@ impl App {
             render_generation: 0,
             render_state: RenderState::Ready,
             theme: Theme::dark(),
+            corpus_root,
         }
     }
 
