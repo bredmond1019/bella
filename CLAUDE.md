@@ -128,8 +128,9 @@ cargo run -p bella -- <file|dir>             # run the viewer
 > `engine-rs`'s `crates/engine-core/tests/it/`.
 >
 > **Fixture directories must use `unique_temp_dir`, never a fixed name.** A fixed-name
-> `std::env::temp_dir().join("bella_...")` collides across concurrent runs (this lane runs
-> `--worktree`, and two worktrees share one `/tmp`) — the first run to finish
+> `std::env::temp_dir().join("bella_...")` collides across concurrent runs — two
+> simultaneous runs of the suite in ONE tree already share `/tmp`, and so do two worktrees when a
+> lane is run under `--worktree` — the first run to finish
 > `remove_dir_all`s the fixture out from under the second. `crate::testsupport::unique_temp_dir`
 > (in both `crates/bella/src/testsupport.rs` and `crates/bella-engine/src/testsupport.rs` —
 > bella-engine carries its own `#[cfg(test)]` copy because it cannot depend on `bella`) keys
