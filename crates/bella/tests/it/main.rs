@@ -16,4 +16,5 @@
 //! below. Do NOT add a new `tests/*.rs` file at this level — that silently reintroduces a
 //! second binary (guarded by `scripts/check_test_layout.sh`).
 
+mod golden_draw;
 mod render_async;
