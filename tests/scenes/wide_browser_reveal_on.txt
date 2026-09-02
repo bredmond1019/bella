@@ -1,15 +1,15 @@
-┌.───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│  ..                                                                                                        │
-│  crates                                                                                                    │
-│▶ docs                                                                                                      │
-│  hooks                                                                                                     │
-│  scripts                                                                                                   │
-│  tests                                                                                                     │
-│  AGENT.md                                                                                                  │
-│  CLAUDE.md                                                                                                 │
-│  GEMINI.md                                                                                                 │
-│  log.md                                                                                                    │
-│  README.md                                                                                                 │
+┌scripts/vhs/fixtures/reveal_demo────────────────────────────────────────────────────────────────────────────┐
+│▶ ..                                                                                                        │
+│  .mev-history                                                                                              │
+│  ignored_notes                                                                                             │
+│  visible                                                                                                   │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
 │                                                                                                            │
 │                                                                                                            │
 │                                                                                                            │
@@ -40,4 +40,4 @@
 │                                                                                                            │
 │                                                                                                            │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- bella · . · 3/11 · j/k nav · Enter open · r reveal (off) · q quit
+ bella · scripts/vhs/fixtures/reveal_demo · 1/4 · j/k nav · Enter open · r reveal (on) · q quit

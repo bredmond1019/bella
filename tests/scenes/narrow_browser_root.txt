@@ -24,4 +24,4 @@
 │                                                               │
 │                                                               │
 └───────────────────────────────────────────────────────────────┘
- bella · . · 1/11 · j/k nav · Enter open · q quit
+ bella · . · 1/11 · j/k nav · Enter open · r reveal (off) · q qui

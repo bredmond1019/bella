@@ -19,7 +19,8 @@
 # this tape owns (the `wide_*` half of the manifest):
 #   wide_reader_demo_top, wide_reader_demo_tasks_code, wide_reader_demo_table,
 #   wide_reader_search, wide_reader_readme_top, wide_browser_root,
-#   wide_browser_selection, wide_browser_nested
+#   wide_browser_selection, wide_browser_nested, wide_browser_reveal_off,
+#   wide_browser_reveal_on, wide_browser_planning_symlink
 #
 # SETTLE TIME (re-measured 2026-09-02 against the PREBUILT binary, on this
 # machine under concurrent-lane load, `uptime` load averages observed
@@ -94,5 +95,25 @@ Screenshot planning/artifacts/screenshots/wide_browser_selection.png
 Enter
 Sleep 1s
 Screenshot planning/artifacts/screenshots/wide_browser_nested.png
+Type "q"
+Sleep 500ms
+
+# Browser mode: reveal toggle ('r') — the reveal_demo fixture, off then on.
+Type "target/release/bella scripts/vhs/fixtures/reveal_demo"
+Enter
+Sleep 2s
+Screenshot planning/artifacts/screenshots/wide_browser_reveal_off.png
+
+Type "r"
+Sleep 500ms
+Screenshot planning/artifacts/screenshots/wide_browser_reveal_on.png
+Type "q"
+Sleep 500ms
+
+# Browser mode: a directory reached through the planning/ symlink.
+Type "target/release/bella planning"
+Enter
+Sleep 4s
+Screenshot planning/artifacts/screenshots/wide_browser_planning_symlink.png
 Type "q"
 Sleep 500ms

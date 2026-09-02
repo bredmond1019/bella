@@ -123,6 +123,39 @@ height = 43
 min_bytes = 34000
 settle = 0.6
 
+# BE.7.C task 3: reveal-toggle ('r') scenes. `reveal_demo/` is a fixture
+# reproducing the fleet's real trap in miniature: a dot-directory
+# (`.mev-history/`) containing a DIRECTORY named `status.md`, plus a
+# `.gitignore`-ignored sibling (`ignored_notes/`) and a plain visible
+# directory (`visible/`). With the toggle off, only `visible/` is listed;
+# `r` reveals all three.
+[[scene]]
+name = "wide_browser_reveal_off"
+target = "scripts/vhs/fixtures/reveal_demo"
+keys = []
+width = 110
+height = 43
+min_bytes = 25000
+
+[[scene]]
+name = "wide_browser_reveal_on"
+target = "scripts/vhs/fixtures/reveal_demo"
+keys = ["r"]
+width = 110
+height = 43
+min_bytes = 25000
+
+# A directory reached through the `planning/` symlink — bella's own
+# `.gitignore` lists `/planning`, so this scene exercises `follow_links`
+# resolving a symlinked root and listing its (real, non-empty) contents.
+[[scene]]
+name = "wide_browser_planning_symlink"
+target = "planning"
+keys = []
+width = 110
+height = 43
+min_bytes = 25000
+
 # --- Narrow (~65x27 cols) — wrap/reflow check -------------------------------
 
 [[scene]]

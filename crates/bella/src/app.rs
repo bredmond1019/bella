@@ -308,6 +308,21 @@ impl App {
         self.browser = Some(Browser::new(dir));
     }
 
+    /// Toggle the active browser's `reveal_ignored` flag and re-list the
+    /// current directory.
+    ///
+    /// No-op when there is no active browser (e.g. `Mode::Reader`). The
+    /// browser's `dropped_entries` count (surfaced directly in the status
+    /// line — see `ui::draw_browser_statusline`) makes an incomplete
+    /// listing visible to the operator without needing a separate
+    /// `status_message`.
+    pub fn toggle_reveal(&mut self) {
+        if let Some(b) = self.browser.as_mut() {
+            let new_reveal = !b.reveal_ignored;
+            b.set_reveal_ignored(new_reveal);
+        }
+    }
+
     /// Ascend to the parent directory (Backspace key).
     ///
     /// Uses the active browser's [`Browser::ascend_target`].  No-op when there
@@ -2337,6 +2352,24 @@ mod tests {
         assert_eq!(app.mode, Mode::Browser, "mode must remain Browser");
         let b = app.browser.as_ref().expect("browser must be Some");
         assert_eq!(b.dir, child, "enter_dir must re-root browser at child");
+    }
+
+    #[test]
+    fn toggle_reveal_flips_flag_and_is_noop_without_a_browser() {
+        let dir = temp_browser_dir("toggle_reveal_flag");
+        let mut app = App::new_browser(dir, 80, 25);
+        assert!(!app.browser.as_ref().unwrap().reveal_ignored);
+
+        app.toggle_reveal();
+        assert!(app.browser.as_ref().unwrap().reveal_ignored);
+
+        app.toggle_reveal();
+        assert!(!app.browser.as_ref().unwrap().reveal_ignored);
+
+        // No browser (e.g. a reader-only App) — must not panic.
+        app.browser = None;
+        app.toggle_reveal();
+        assert!(app.browser.is_none());
     }
 
     #[test]
