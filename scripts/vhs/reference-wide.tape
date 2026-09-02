@@ -56,7 +56,8 @@
 #   wide_reader_demo_top, wide_reader_demo_tasks_code, wide_reader_demo_table,
 #   wide_reader_search, wide_reader_readme_top, wide_browser_root,
 #   wide_browser_selection, wide_browser_nested, wide_browser_reveal_off,
-#   wide_browser_reveal_on, wide_browser_planning_symlink, wide_scroll_anchor_top
+#   wide_browser_reveal_on, wide_browser_planning_symlink, wide_scroll_anchor_top,
+#   wide_reader_rail_on, wide_reader_rail_off
 #
 # Run from the repo root: vhs scripts/vhs/reference-wide.tape
 
@@ -200,5 +201,27 @@ Down 4
 Wait+Screen@30s /Heading Three/
 Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_scroll_anchor_top.png
+Type "q"
+Sleep 500ms
+
+# --- TOC rail (BE.7.E task 3): rail-on and rail-off at a wide terminal ---
+Type "target/release/bella scripts/vhs/fixtures/demo.md"
+Enter
+Wait+Screen@30s /Bella Reference Demo/
+Type "t"
+# "Contents" is the rail pane's own bordered title (see ui::draw_rail) —
+# text that exists on screen ONLY once the rail is toggled open, so this
+# can't match before the keypress above.
+Wait+Screen@30s /Contents/
+Sleep 1500ms
+Screenshot planning/artifacts/screenshots/wide_reader_rail_on.png
+
+# Toggle back off. There is no equally unique "rail is closed" text to
+# Wait on — closed is the ABSENCE of "Contents" — so this relies on a
+# settle Sleep after the keypress, the same pattern already used by every
+# `Type "q"` quit sequence in this tape.
+Type "t"
+Sleep 1500ms
+Screenshot planning/artifacts/screenshots/wide_reader_rail_off.png
 Type "q"
 Sleep 500ms

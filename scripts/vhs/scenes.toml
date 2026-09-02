@@ -195,6 +195,31 @@ width = 110
 height = 43
 min_bytes = 25000
 
+# TOC rail (BE.7.E task 3): rail-on and rail-off at a wide terminal — the
+# frame/pane change this block ships. `t` toggles the rail; the rail's
+# bordered pane is titled "Contents" (see `ui::draw_rail`), a text unique
+# to the rail-visible state and used as the VHS readiness pattern for the
+# "on" scene. There is no equally unique text for the "off" state — it is
+# the ABSENCE of "Contents" — so the "off" scene (a second toggle back)
+# relies on a settle Sleep after the toggle rather than a Wait+Screen
+# match, the same way the existing quit sequences in this tape do (e.g.
+# `Type "q"` followed by a plain `Sleep`, never a Wait).
+[[scene]]
+name = "wide_reader_rail_on"
+target = "scripts/vhs/fixtures/demo.md"
+keys = ["t"]
+width = 110
+height = 43
+min_bytes = 90000
+
+[[scene]]
+name = "wide_reader_rail_off"
+target = "scripts/vhs/fixtures/demo.md"
+keys = ["t", "t"]
+width = 110
+height = 43
+min_bytes = 130000
+
 # --- Narrow (~65x27 cols) — wrap/reflow check -------------------------------
 
 [[scene]]
@@ -224,6 +249,25 @@ keys = []
 width = 65
 height = 27
 min_bytes = 19000
+
+# TOC rail auto-collapse (BE.7.E task 3): a terminal narrower than
+# `RAIL_WIDTH + MIN_BODY_WIDTH` (24 + 20 = 44 columns, see ui.rs) so
+# toggling the rail on has NO visible effect — the minimum-body-width
+# policy auto-collapses it rather than squeezing the body. Captured at a
+# dedicated width (40 cols here, its own narrower VHS tape at
+# scripts/vhs/reference-collapse.tape — neither reference-wide.tape nor
+# reference-narrow.tape's fixed terminal size is narrow enough to cross
+# the 44-column threshold). The readiness Wait matches the doc's H1 BEFORE
+# the `t` keypress (there is nothing new to wait for afterward — that
+# absence of change is exactly what this scene proves), then a settle
+# Sleep covers the toggle itself.
+[[scene]]
+name = "narrow_reader_rail_collapse"
+target = "scripts/vhs/fixtures/demo.md"
+keys = ["t"]
+width = 40
+height = 27
+min_bytes = 15000
 
 # --- Scroll anchoring (BE.7.D task 3) --------------------------------------
 #

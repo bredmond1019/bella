@@ -1,0 +1,27 @@
+
+Bella Reference Demo
+
+A single document exercising every
+render feature bella supports, used to
+generate the reference screenshot set in
+planning/artifacts/screenshots/ .
+
+Headings
+
+H3 heading
+
+H4 heading
+
+H5 heading
+
+H6 heading
+
+Text styles
+
+Plain text, bold text, italic text, bold
+italic, strikethrough, and  inline code
+.
+
+│ A blockquote, to show the quote bar
+│ and quote color.
+ bella · demo.md · 26/73  j/k scroll · /

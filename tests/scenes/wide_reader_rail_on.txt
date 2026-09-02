@@ -1,0 +1,43 @@
+┌Contents──────────────┐Bella Reference Demo
+│Bella Reference Demo  │
+│  Headings            │A single document exercising every render feature bella supports, used to generate the
+│    H3 heading        │reference screenshot set in  planning/artifacts/screenshots/ .
+│      H4 heading      │
+│        H5 heading    │Headings
+│          H6 heading  │
+│  Text styles         │H3 heading
+│  Links               │
+│  Lists               │H4 heading
+│  Task list           │
+│  Code block          │H5 heading
+│  Table               │
+│  Horizontal rule     │H6 heading
+│                      │
+│                      │Text styles
+│                      │
+│                      │Plain text, bold text, italic text, bold italic, strikethrough, and  inline code .
+│                      │
+│                      ││ A blockquote, to show the quote bar and quote color.
+│                      │
+│                      ││ │ A nested blockquote one level deeper.
+│                      │
+│                      │Links
+│                      │
+│                      │Visit the bella repo or read the README locally.
+│                      │
+│                      │Lists
+│                      │
+│                      │    • Top-level bulletNested bulletDoubly-nested bullet
+│                      │• Another top-level bullet
+│                      │
+│                      │1. First ordered item
+│                      │  1. Second ordered itemNested ordered item
+│                      │
+│                      │Task list
+│                      │
+│                      │• [ ] An unchecked task
+│                      │• [x] A checked task
+│                      │• [ ] Another unchecked task
+│                      │
+└──────────────────────┘Code block
+ bella · demo.md · 43/64  j/k scroll · / search · [ ] history · q quit
