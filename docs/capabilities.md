@@ -82,6 +82,9 @@ Everything you can do once a file is open.
 | Follow the focused link | `Enter` |
 | Follow a link by mouse | Click it; hovering highlights it first |
 | Go back / forward through visited files | `[` / `]` |
+| Toggle the table-of-contents rail | `t` — a heading outline pane on the left; auto-hides if the terminal is too narrow to fit both it and a usable body |
+| Navigate the TOC rail by keyboard | `T` to focus it, then `j`/`k`/arrows to move, `Enter` to jump, `Esc` to return focus to the body |
+| Jump to a heading by mouse | Click it in the TOC rail |
 | Clear link focus or cancel a search | `Esc` |
 | Return to the file browser | `Backspace` |
 | Quit | `q` or `Ctrl-C` |

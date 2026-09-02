@@ -79,8 +79,9 @@ cargo test -p bella -- test_scroll_clamp
 | App unit tests | `crates/bella/src/*.rs` (`#[cfg(test)]` blocks) | Scroll clamping, key mapping, history push/back/forward, selection normalisation, double-click timing, browser cursor wrap, browser entry ordering |
 | App draw tests | `crates/bella/src/ui.rs` (`#[cfg(test)]`) | `ratatui::backend::TestBackend` assertions on rendered cell content |
 | App draw integration (golden) | `crates/bella/tests/it/golden_draw.rs` | `TestBackend` structural assertions (region widths, x-offsets, pane boundaries, status-row position) for `draw_reader`/`draw_browser` across multiple terminal sizes |
+| Layout integration | `crates/bella/tests/it/layout.rs` | TOC rail geometry (rail-on, rail-off, the `RAIL_WIDTH + MIN_BODY_WIDTH` auto-collapse threshold) and the `App.width` single-writer invariant (BE.7.E) |
 
-All mappers (`map_key`, `map_browser_key`, `map_search_key`, `map_mouse`, `map_browser_mouse`) are pure functions with no terminal dependency — they are exercised directly in unit tests without any mocking.
+All mappers (`map_key`, `map_rail_key`, `map_browser_key`, `map_search_key`, `map_mouse`, `map_browser_mouse`) are pure functions with no terminal dependency — they are exercised directly in unit tests without any mocking.
 
 Each crate's integration tests live in one binary, `crates/<crate>/tests/it/main.rs`, with one
 `mod <name>;` line per test file — never a second top-level `crates/<crate>/tests/<name>.rs`,
