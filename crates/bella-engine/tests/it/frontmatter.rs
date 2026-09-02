@@ -68,10 +68,7 @@ fn setext_h2_regression_is_caught_by_the_same_fixture() {
     // false with the strip in place — this is what "observed, not
     // assumed" means for this criterion.
     let first = r.headings.first().expect("at least one heading");
-    assert_ne!(
-        first.level, 2,
-        "regression: the setext-H2 misparse is back"
-    );
+    assert_ne!(first.level, 2, "regression: the setext-H2 misparse is back");
     assert!(
         !first.text.contains("type: Plan"),
         "regression: the YAML block leaked into a heading's text"
@@ -106,7 +103,10 @@ fn all_four_shapes_end_to_end_through_render() {
     assert_eq!(
         fm.entries,
         vec![
-            ("type".to_string(), FrontmatterValue::Scalar("Plan".to_string())),
+            (
+                "type".to_string(),
+                FrontmatterValue::Scalar("Plan".to_string())
+            ),
             (
                 "title".to_string(),
                 FrontmatterValue::Scalar("a: b".to_string())
@@ -152,7 +152,10 @@ fn blank_line_inside_frontmatter_block_does_not_error() {
     assert_eq!(
         fm.entries,
         vec![
-            ("type".to_string(), FrontmatterValue::Scalar("Plan".to_string())),
+            (
+                "type".to_string(),
+                FrontmatterValue::Scalar("Plan".to_string())
+            ),
             (
                 "title".to_string(),
                 FrontmatterValue::Scalar("Hello".to_string())
@@ -216,7 +219,8 @@ fn description_folded_block_scalar_does_not_error() {
 /// in original-file space.
 #[test]
 fn line_indices_agree_across_lines_row_source_headings_and_link_map() {
-    let src = "---\ntype: Plan\ntitle: Hello\n---\n# Real Heading\n\n[a link](https://example.com)\n";
+    let src =
+        "---\ntype: Plan\ntitle: Hello\n---\n# Real Heading\n\n[a link](https://example.com)\n";
     let theme = Theme::dark();
     let r = render_with_edit(src, None, 80, &theme, None, &TableExpansions::new());
 
