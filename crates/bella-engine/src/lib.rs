@@ -10,6 +10,13 @@ pub mod palette;
 pub mod syntax;
 pub mod theme;
 
+// Test-only fixture helper (unique_temp_dir). Deliberately not re-exported
+// or added to the public surface above — this crate's public surface is a
+// cross-repo contract with bastion (see CLAUDE.md), and testsupport must not
+// be part of it.
+#[cfg(test)]
+mod testsupport;
+
 // Re-export the stable public surface consumed by the bella app crate and
 // later blocks. Names match the Engine surface line in master-plan.md.
 pub use geometry::{body_pos, select_word_at};

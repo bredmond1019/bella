@@ -49,7 +49,26 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
 ///
 /// The inner listing [`Rect`] is stored on [`App::browser_area`] after each
 /// draw so that Task 4's mouse handlers can map click coordinates to rows.
+///
+/// Reserves a 1-row status line at the bottom (mirroring [`draw_reader`]'s
+/// body+status-line split) so browser mode always shows the current
+/// directory and selection position, instead of leaving the space below a
+/// short entry list blank.
 pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
+    if app.browser.is_none() {
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),    // bordered entry list
+            Constraint::Length(1), // status line
+        ])
+        .split(area);
+    let list_area = chunks[0];
+    let status_area = chunks[1];
+
     let browser = match &app.browser {
         Some(b) => b,
         None => return,
@@ -58,13 +77,13 @@ pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
     // Bordered pane titled with the current directory.
     let title = browser.dir.to_string_lossy().into_owned();
     let block = Block::default().borders(Borders::ALL).title(title);
-    let inner = block.inner(area);
+    let inner = block.inner(list_area);
 
     // Store the inner area for Task 4 mouse hit-testing.
     app.browser_area = inner;
 
     // Render the border first.
-    frame.render_widget(block, area);
+    frame.render_widget(block, list_area);
 
     // Borrow browser again now that app.browser_area has been set.
     let browser = match &app.browser {
@@ -109,6 +128,32 @@ pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
 
         frame.render_widget(Paragraph::new(line), row_area);
     }
+
+    draw_browser_statusline(frame, status_area, browser, &app.theme);
+}
+
+/// Render browser mode's status line: current directory, selection position,
+/// and a compact keybinding hint. Styled to match [`draw_statusline`]'s
+/// theme-driven status bar for reader mode.
+fn draw_browser_statusline(
+    frame: &mut Frame,
+    area: Rect,
+    browser: &bella_engine::browser::Browser,
+    theme: &bella_engine::Theme,
+) {
+    let dir = browser.dir.to_string_lossy();
+    let total = browser.entries.len();
+    let position = if total == 0 {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", browser.selected + 1, total)
+    };
+    let text = format!(" bella · {dir} · {position} · j/k nav · Enter open · q quit");
+    let line = Line::from(vec![Span::styled(
+        text,
+        Style::default().fg(theme.status_fg).bg(theme.status_bg),
+    )]);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
@@ -374,11 +419,15 @@ fn draw_statusline(frame: &mut Frame, area: Rect, app: &App) {
         let file_name = app.file.file_name().and_then(|n| n.to_str()).unwrap_or("?");
         let total = app.lines.len();
         let current = (app.scroll as usize + app.viewport_height as usize).min(total);
-        format!(" bella · {file_name} · {current}/{total}")
+        format!(
+            " bella · {file_name} · {current}/{total}  j/k scroll · / search · [ ] history · q quit"
+        )
     };
     let line = Line::from(vec![Span::styled(
         text,
-        Style::default().fg(Color::Black).bg(Color::White),
+        Style::default()
+            .fg(app.theme.status_fg)
+            .bg(app.theme.status_bg),
     )]);
     let paragraph = Paragraph::new(line);
     frame.render_widget(paragraph, area);
@@ -536,6 +585,68 @@ mod tests {
         assert_ne!(
             row0_before, row0_after,
             "first body row should change after scrolling"
+        );
+    }
+
+    #[test]
+    fn draw_reader_status_line_shows_keybinding_hint() {
+        let src = "# Hello World\n\nSome text.";
+        let width: u16 = 120;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_app(src, width, height);
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let status_row: String = (0..width)
+            .map(|x| buf.cell((x, height - 1)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+
+        assert!(
+            status_row.contains("q quit"),
+            "reader status line must show a keybinding hint (e.g. 'q quit'); got:\n{status_row:?}"
+        );
+    }
+
+    #[test]
+    fn draw_reader_status_line_uses_theme_colors() {
+        // Regression for the theme-wiring fix: draw_statusline used to hardcode
+        // Color::Black/White regardless of App.theme. Assert the rendered status
+        // cell's style actually matches app.theme, not a fixed pair of colors.
+        let src = "# Hello World\n\nSome text.";
+        let width: u16 = 40;
+        let height: u16 = 10;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_app(src, width, height);
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let style = buf.cell((0, height - 1)).unwrap().style();
+        assert_eq!(
+            style.fg,
+            Some(app.theme.status_fg),
+            "status line fg must come from app.theme.status_fg"
+        );
+        assert_eq!(
+            style.bg,
+            Some(app.theme.status_bg),
+            "status line bg must come from app.theme.status_bg"
         );
     }
 
@@ -855,8 +966,7 @@ mod tests {
         let height: u16 = 20;
 
         // Use a real temp dir so App::new_browser succeeds.
-        let dir = std::env::temp_dir().join("bella_ui_browser_names");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_names");
 
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -898,8 +1008,7 @@ mod tests {
         let width: u16 = 80;
         let height: u16 = 20;
 
-        let dir = std::env::temp_dir().join("bella_ui_browser_prefix");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_prefix");
 
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -942,6 +1051,102 @@ mod tests {
     }
 
     #[test]
+    fn draw_browser_shows_status_line() {
+        // Wide enough that a real (possibly long) tmp-dir absolute path plus
+        // the position/hint text is never truncated — this test asserts on
+        // content, not on truncation behavior.
+        let width: u16 = 200;
+        let height: u16 = 20;
+
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_status_line");
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_browser_app(dir.clone(), width, height);
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.clear();
+        }
+        push_entry(&mut app, "alpha.md", BrowserEntryKind::Markdown);
+        push_entry(&mut app, "beta.md", BrowserEntryKind::Markdown);
+        push_entry(&mut app, "gamma.md", BrowserEntryKind::Markdown);
+        if let Some(b) = app.browser.as_mut() {
+            b.selected = 1;
+        }
+
+        terminal
+            .draw(|f| {
+                draw_browser(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+
+        // Bottom row (y = height - 1) must be the status line.
+        let bottom: String = (0..width)
+            .map(|x| buf.cell((x, height - 1)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+
+        assert!(
+            bottom.contains(dir.to_string_lossy().as_ref()),
+            "browser status line must show the current directory; got:\n{bottom:?}"
+        );
+        assert!(
+            bottom.contains("2/3"),
+            "browser status line must show the selected/total position (2/3); got:\n{bottom:?}"
+        );
+
+        // The border must now stop one row above the bottom (status row is
+        // outside the bordered box) — the bottom-left corner glyph moves up.
+        let old_bottom_left = buf.cell((0, height - 1)).map(|c| c.symbol());
+        assert_ne!(
+            old_bottom_left,
+            Some("└"),
+            "bordered box must shrink to make room for the status line, \
+             not draw its border through the status row"
+        );
+    }
+
+    #[test]
+    fn draw_browser_status_line_uses_theme_colors() {
+        // Regression for the theme-wiring fix: draw_browser_statusline used to
+        // hardcode Color::Black/White regardless of App.theme. Assert the
+        // rendered status cell's style actually matches app.theme.
+        let width: u16 = 80;
+        let height: u16 = 20;
+
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_status_line_theme");
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = make_browser_app(dir.clone(), width, height);
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.clear();
+        }
+        push_entry(&mut app, "alpha.md", BrowserEntryKind::Markdown);
+
+        terminal
+            .draw(|f| {
+                draw_browser(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let style = buf.cell((0, height - 1)).unwrap().style();
+        assert_eq!(
+            style.fg,
+            Some(app.theme.status_fg),
+            "browser status line fg must come from app.theme.status_fg"
+        );
+        assert_eq!(
+            style.bg,
+            Some(app.theme.status_bg),
+            "browser status line bg must come from app.theme.status_bg"
+        );
+    }
+
+    #[test]
     fn dir_row_style_differs_from_markdown_row_style() {
         // Render a browser with a Dir entry at row 0 and a Markdown entry at row 1
         // (both unselected — index 2 is selected).  Because Dir uses bold+cyan and
@@ -949,8 +1154,7 @@ mod tests {
         let width: u16 = 80;
         let height: u16 = 20;
 
-        let dir = std::env::temp_dir().join("bella_ui_browser_style");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_browser_style");
 
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();

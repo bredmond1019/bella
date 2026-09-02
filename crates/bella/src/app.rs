@@ -153,6 +153,11 @@ pub struct App {
     pub render_generation: u64,
     /// Whether the render for `render_generation` has landed yet.
     pub render_state: RenderState,
+    /// Active color theme — drives chrome the render worker doesn't own
+    /// (status line fg/bg in `ui.rs`). Body content is themed per-render via
+    /// [`Theme::dark`] passed to `request_render`; this field exists so
+    /// always-on chrome can reference the same values without re-deriving them.
+    pub theme: Theme,
 }
 
 impl App {
@@ -200,6 +205,7 @@ impl App {
             render_worker,
             render_generation,
             render_state: RenderState::Loading,
+            theme: Theme::dark(),
         }
     }
 
@@ -242,6 +248,7 @@ impl App {
             render_worker: RenderWorker::spawn(),
             render_generation: 0,
             render_state: RenderState::Ready,
+            theme: Theme::dark(),
         }
     }
 
@@ -1165,7 +1172,7 @@ mod tests {
     #[test]
     fn app_with_temp_file_uses_correct_base_dir() {
         // Create a real temp file so base_dir is a real directory.
-        let dir = std::env::temp_dir();
+        let dir = crate::testsupport::unique_temp_dir("bella_test_base_dir");
         let file_path = dir.join("bella_test_base_dir.md");
         let src = "[rel](sibling.md)".to_string();
         {
@@ -1388,9 +1395,7 @@ mod tests {
 
     /// Create a uniquely-named temp directory to avoid inter-test collisions.
     fn tempdir_for_test(label: &str) -> PathBuf {
-        let base = std::env::temp_dir().join(format!("bella_task4_{label}"));
-        std::fs::create_dir_all(&base).expect("create temp dir");
-        base
+        crate::testsupport::unique_temp_dir(&format!("bella_task4_{label}"))
     }
 
     // --- Task 5 tests: in-document search ---
@@ -1629,8 +1634,7 @@ mod tests {
 
     /// Helper: create two real temp files (main and target) and return their paths.
     fn make_two_temp_files(label: &str) -> (PathBuf, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("bella_task6_{label}"));
-        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let dir = crate::testsupport::unique_temp_dir(&format!("bella_task6_{label}"));
         let main_path = dir.join("main.md");
         let target_path = dir.join("target.md");
         std::fs::write(&main_path, "[go](target.md)").expect("write main");
@@ -1652,8 +1656,7 @@ mod tests {
     #[test]
     fn go_back_after_follow_restores_file_and_scroll() {
         // Write files with enough content so max_scroll > 0 and scroll=3 is valid.
-        let dir = std::env::temp_dir().join("bella_task6_go_back_scroll");
-        std::fs::create_dir_all(&dir).expect("create dir");
+        let dir = crate::testsupport::unique_temp_dir("bella_task6_go_back_scroll");
         let main_content: String = (1..=30)
             .map(|i| format!("line {i}\n\n"))
             .collect::<Vec<_>>()
@@ -2196,9 +2199,7 @@ mod tests {
     use super::Mode;
 
     fn temp_browser_dir(label: &str) -> PathBuf {
-        let base = std::env::temp_dir().join(format!("bella_task2_{label}"));
-        std::fs::create_dir_all(&base).expect("create temp dir");
-        base
+        crate::testsupport::unique_temp_dir(&format!("bella_task2_{label}"))
     }
 
     #[test]

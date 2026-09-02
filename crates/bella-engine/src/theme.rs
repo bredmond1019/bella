@@ -34,43 +34,44 @@ pub struct Theme {
 #[allow(dead_code)]
 impl Theme {
     pub fn dark() -> Self {
-        // Palette: Catppuccin Mocha — pastel hues designed for dark-bg readability.
-        // Avoids low-luminance blues (the default ANSI LightBlue ~ #5f87ff) that
-        // wash out against #1e1e1e-class terminal backgrounds.
-        let mauve = palette::rgb(0xcb, 0xa6, 0xf7);
-        let sky = palette::rgb(0x89, 0xdc, 0xeb);
-        let lavender = palette::rgb(0xb4, 0xbe, 0xfe);
-        let yellow = palette::rgb(0xf9, 0xe2, 0xaf);
-        let green = palette::rgb(0xa6, 0xe3, 0xa1);
-        let peach = palette::rgb(0xfa, 0xb3, 0x87);
-        let subtext1 = palette::rgb(0xba, 0xc2, 0xde);
-        let subtext0 = palette::rgb(0xa6, 0xad, 0xc8);
-        let overlay1 = palette::rgb(0x7f, 0x84, 0x9c);
-        let surface2 = palette::rgb(0x58, 0x5b, 0x70);
-        // Surface1 (lifted +1 from surface0) so code blocks remain visibly
-        // distinct from common terminal backgrounds (#1e1e1e..#2d2d2d).
-        let surface1 = palette::rgb(0x45, 0x47, 0x5a);
-        let crust = palette::rgb(0x11, 0x11, 0x1b);
+        // Palette: Bastiel "cool-aurora" — the shared Bastion-ecosystem brand
+        // palette (business/bastiel/src/app/globals.css, planning/decisions/D3
+        // -cool-aurora-brand.md), ported 1:1 so bella's rendering matches the
+        // flagship web app rather than carrying its own unrelated scheme.
+        // Dark-only per bastiel's D4 (no light derivation) — bella's actual
+        // `light()`/`mission_control()` variants below are unaffected.
+        let primary = palette::rgb(0x5d, 0x7b, 0xff); // --primary
+        let primary_strong = palette::rgb(0x8f, 0xa1, 0xff); // --primary-strong
+        let accent2 = palette::rgb(0x58, 0xb6, 0xff); // --accent-2 (sky blue)
+        let accent3 = palette::rgb(0xb0, 0x8c, 0xff); // --accent-3 (purple)
+        let chart4 = palette::rgb(0x3d, 0x46, 0x8a); // --chart-4 (deep indigo)
+        let chart5 = palette::rgb(0xc2, 0xc6, 0xde); // --chart-5 (pale lavender)
+        let ink = palette::rgb(0xee, 0xf0, 0xfb); // --ink (body text)
+        let ink_soft = palette::rgb(0xa6, 0xad, 0xcf); // --ink-soft
+        let ink_faint = palette::rgb(0x73, 0x7a, 0xa0); // --ink-faint (muted)
+        let surface_muted = palette::rgb(0x17, 0x1c, 0x33); // --surface-muted (code bg)
+        let line = palette::rgb(0x26, 0x2c, 0x46); // --line (rule/border)
+        let paper = palette::rgb(0x06, 0x07, 0x0f); // --paper (near-black status text)
         Theme {
             name: "dark".into(),
-            fg: Color::Reset,
+            fg: ink,
             bg: None,
-            muted: overlay1,
-            heading: [mauve, sky, lavender, yellow, green, subtext1],
+            muted: ink_faint,
+            heading: [primary, accent3, accent2, primary_strong, chart4, chart5],
             heading_modifier: Modifier::BOLD,
             emphasis: Modifier::ITALIC,
             strong: Modifier::BOLD,
-            code_fg: peach,
-            code_bg: Some(surface1),
-            link: sky,
-            link_focused: peach,
+            code_fg: ink_soft,
+            code_bg: Some(surface_muted),
+            link: accent2,
+            link_focused: accent3,
             link_modifier: Modifier::UNDERLINED,
-            quote: subtext0,
-            list_marker: mauve,
-            rule: surface2,
+            quote: ink_soft,
+            list_marker: primary,
+            rule: line,
             strikethrough: Modifier::CROSSED_OUT,
-            status_fg: crust,
-            status_bg: mauve,
+            status_fg: paper,
+            status_bg: primary,
             syntect_theme: "base16-ocean.dark",
         }
     }

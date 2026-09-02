@@ -69,7 +69,7 @@ Event stream
    headings, paragraphs, code fences, blockquotes, lists, tables, hrules, …
   │
   ▼  Layout pass (word-wrap to terminal width)
-   Vec<Line<'static>>  ← ratatui text cells, styled with Catppuccin theme colours
+   Vec<Line<'static>>  ← ratatui text cells, styled with the active Theme's colours
    LinkMap             ← hyperlink spans with (line, col_start, col_end, target)
    CheckboxMap         ← task-list item spans
    TableMap            ← table click-geometry (column x-ranges, row y-ranges)

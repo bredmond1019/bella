@@ -219,9 +219,7 @@ mod tests {
 
     /// Create a temp dir under the system temp dir with a unique name.
     fn temp_dir(label: &str) -> PathBuf {
-        let base = std::env::temp_dir().join(format!("bella_browser_{label}"));
-        fs::create_dir_all(&base).expect("create temp dir");
-        base
+        crate::testsupport::unique_temp_dir(&format!("bella_browser_{label}"))
     }
 
     fn create_file(dir: &Path, name: &str) {

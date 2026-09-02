@@ -75,11 +75,32 @@ cargo test -p bella -- test_scroll_clamp
 | Layer | Where | What it covers |
 |---|---|---|
 | Engine unit tests | `crates/bella-engine/src/*.rs` (`#[cfg(test)]` blocks) | Word-wrap, link resolution, slug generation, geometry coordinate math, checkbox detection |
-| Engine integration | `crates/bella-engine/tests/render.rs` | Full render pipeline: source → `Rendered`; checks line count, link extraction, checkbox spans |
+| Engine integration | `crates/bella-engine/tests/it/render.rs` | Full render pipeline: source → `Rendered`; checks line count, link extraction, checkbox spans |
 | App unit tests | `crates/bella/src/*.rs` (`#[cfg(test)]` blocks) | Scroll clamping, key mapping, history push/back/forward, selection normalisation, double-click timing, browser cursor wrap, browser entry ordering |
 | App draw tests | `crates/bella/src/ui.rs` (`#[cfg(test)]`) | `ratatui::backend::TestBackend` assertions on rendered cell content |
 
 All mappers (`map_key`, `map_browser_key`, `map_search_key`, `map_mouse`, `map_browser_mouse`) are pure functions with no terminal dependency — they are exercised directly in unit tests without any mocking.
+
+Each crate's integration tests live in one binary, `crates/<crate>/tests/it/main.rs`, with one
+`mod <name>;` line per test file — never a second top-level `crates/<crate>/tests/<name>.rs`,
+which cargo would link as its own binary and slow every rebuild. `scripts/check_test_layout.sh`
+gates this (`test-layout` in `planning/harness.json`); see the note in `CLAUDE.md` for the
+measured rebuild-cost rationale.
+
+Any test that needs a scratch directory on disk must call `crate::testsupport::unique_temp_dir`
+(`crates/bella/src/testsupport.rs` and `crates/bella-engine/src/testsupport.rs`, both
+`#[cfg(test)]`-only) rather than a fixed `std::env::temp_dir().join("bella_...")` path — a fixed
+name collides when two runs (e.g. two `--worktree` lanes) share one `/tmp`.
+
+### Visual QA (manual/agent review)
+
+Automated tests assert cell *content*, not appearance — for an actual visual check (spacing,
+color, layout), two scripts under `scripts/`:
+
+| Tool | What it does | Use it for |
+|---|---|---|
+| `scripts/tui_capture.sh <file\|dir> [key ...]` | Drives bella in a detached tmux session (via `bastion new`/`capture`/`kill`) and dumps the rendered screen as text | Fast structural checks — is a section present, did navigation land where expected |
+| `scripts/vhs/*.tape` (run with `vhs <tape>`, requires `brew install vhs`) | Scripts a real pty session and renders it to PNG/GIF | Pixel-level review — theme colors, alignment, wrapping. `reference-wide.tape`/`reference-narrow.tape` regenerate the baseline set in `planning/artifacts/screenshots/` (see that directory's `README.md`) |
 
 ## Lint / Format
 
@@ -130,7 +151,7 @@ the fastest way to confirm the key is even reaching you.
 
 Structured block work follows: `/generate-tasks → /implement → /test → /review-task → /document → /log-work`.
 
-The pipeline reads its validation commands from `planning/harness.json`. The current profile runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and `cargo build --release` as gating checks. Do not edit the workflow engine scripts (`.claude/workflows/*.js`) for stack reasons — only `harness.json`.
+The pipeline reads its validation commands from `planning/harness.json`. The current profile runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release`, and `scripts/check_test_layout.sh` (plus its own fixture suite, `scripts/tests/test_check_test_layout.sh`) as gating checks. Do not edit the workflow engine scripts (`.claude/workflows/*.js`) for stack reasons — only `harness.json`.
 
 To start a new block:
 
@@ -159,7 +180,7 @@ bella/
 │   │       ├── md_config.rs    ← config.toml loader (written, but NOT wired — see capabilities.md)
 │   │       ├── palette.rs      ← color-depth detection + RGB downgrade
 │   │       ├── syntax.rs       ← syntect highlighting
-│   │       └── theme.rs        ← Catppuccin themes
+│   │       └── theme.rs        ← color themes (bastiel cool-aurora default)
 │   └── bella/
 │       ├── Cargo.toml
 │       └── src/

@@ -116,8 +116,12 @@ Clicks below the last entry are ignored (no out-of-range selection).
 
 ## Colour and Theme
 
-**Bella is dark-only today.** `app.rs` and `render_worker.rs` construct `Theme::dark()` (Catppuccin
-Mocha) directly at every render site; there is no code path that selects a different palette.
+**Bella is dark-only today.** `app.rs` and `render_worker.rs` construct `Theme::dark()` directly at
+every render site; there is no code path that selects a different palette. `Theme::dark()` carries
+bastiel's "cool-aurora" brand palette (`business/bastiel/src/app/globals.css` in the company-brain
+repo — primary blue, sky-blue and purple accents on a near-black ground), ported 1:1 so bella's
+rendering matches the wider Bastion ecosystem's flagship web app rather than carrying its own
+unrelated scheme. It replaced the previous Catppuccin Mocha palette.
 
 The pieces of a theming system exist in `bella-engine` but have **no call site in the binary** —
 verified by grepping every `.rs` file in the workspace:
@@ -125,10 +129,18 @@ verified by grepping every `.rs` file in the workspace:
 | Item | Where | State |
 |---|---|---|
 | `theme::resolve(name, cfg)` | `theme.rs` | Maps `"light"` / `"dark"` / anything-else to a `Theme`. Never called. |
-| `detect_terminal_theme()` | `theme.rs` | Reads `COLORFGBG` (bg 7–15 → Latte, 0–6 → Mocha). Only reachable through `resolve`, so never called. |
-| `Theme::light()` | `theme.rs` | Catppuccin Latte. Only reachable through `resolve`. |
-| `Theme::mission_control()` | `theme.rs` | A third palette **no name maps to** — `resolve` cannot return it. |
+| `detect_terminal_theme()` | `theme.rs` | Reads `COLORFGBG` (bg 7–15 → light, 0–6 → dark). Only reachable through `resolve`, so never called. |
+| `Theme::light()` | `theme.rs` | Catppuccin Latte — unrelated to bastiel; untouched by the cool-aurora change since it has no call site. Only reachable through `resolve`. |
+| `Theme::mission_control()` | `theme.rs` | A third palette (indigo/violet/cyan, coordinated with bastion's console) **no name maps to** — `resolve` cannot return it. |
 | `md_config::load()` | `md_config.rs` | Reads `theme`, `width`, `line_numbers` from `<config-dir>/md/config.toml`. Never called, so the file is never read. |
+
+**The status line does read the active theme.** `App.theme` (set from `Theme::dark()` in both
+constructors) drives `ui::draw_statusline`/`draw_browser_statusline`'s `fg`/`bg` via
+`theme.status_fg`/`status_bg` — previously these two functions hardcoded `Color::Black`/`Color::White`
+and ignored the theme entirely, so the status bar never reflected any palette, past or present. Body
+content (headings, links, code, quotes, rules) is still themed per-render, via the `Theme` passed to
+`request_render`/`render_with_edit`, not through `App.theme` — that field exists only so always-on
+chrome the render worker doesn't own has something to read.
 
 Two consequences worth stating plainly:
 
