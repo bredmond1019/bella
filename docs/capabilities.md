@@ -157,8 +157,12 @@ Two deliberate non-behaviours, both worth knowing before you file a bug:
 - **Images are not displayed.** An image renders as a muted `[image: path]` text placeholder. The
   engine does collect resolved image paths into `Rendered.images`, but nothing consumes them.
 
-There is also **no YAML frontmatter handling** — a `---` fenced frontmatter block is parsed as
-ordinary markdown (a horizontal rule followed by text), so it shows up in the rendered output.
+**OKF frontmatter is stripped, not rendered.** A leading `---`-fenced frontmatter block is detected
+and removed before the markdown pipeline sees it (`frontmatter.rs`, re-exported as
+`Rendered.frontmatter`), so it no longer shows up as a spurious horizontal rule. The reader
+recognizes four value shapes (bare/quoted scalar, inline array, block list) and keeps anything else
+as raw text rather than erroring. Nothing in the shipped binary displays the parsed frontmatter yet
+— that is metadata-pane work, still unwired (see "Not wired up" below).
 
 ### Syntax highlighting
 
@@ -190,6 +194,7 @@ features, which was wrong.
 | Line-number gutter | `geometry.rs` supports a gutter, but every caller passes `line_numbers: false` — including the literal `false, // line_numbers` at `app.rs:735`. |
 | Editing | `render_with_edit` takes an `Option<EditCtx>`; the app always passes `None`. There is no edit keybinding and no code path that writes a file. |
 | Table expansion | The same entry point takes a `TableExpansions` map; the app always passes `TableExpansions::new()` (empty). |
+| Frontmatter metadata pane | `Rendered.frontmatter: Option<Frontmatter>` carries the parsed key/value entries; nothing in `bella` (the TUI) reads the field yet. |
 
 **Where the config file would live if it were wired:** `md_config::load()` uses
 `dirs::config_dir()`, which is platform-dependent — `~/Library/Application Support/md/config.toml`

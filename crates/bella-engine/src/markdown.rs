@@ -52,6 +52,14 @@ pub struct Rendered {
     /// by edit mode to convert mouse clicks and Up/Down keys into source
     /// byte offsets in display-row space (which respects soft-wrap).
     pub row_source: Vec<Option<std::ops::Range<usize>>>,
+    /// Parsed frontmatter block, if the document opened with a `---` fence
+    /// on line 1 and a matching close. `None` when there was no fence, or
+    /// one that never closed — in either case the source is rendered
+    /// unmodified. When present, the fenced block itself is stripped out
+    /// of the rendered body before layout, and every source-byte-offset
+    /// field on this struct (`blocks[].source_range`, `row_source[]`) is
+    /// still expressed in ORIGINAL-file byte space, not stripped space.
+    pub frontmatter: Option<crate::frontmatter::Frontmatter>,
 }
 
 /// Source-byte range + display-line range for one block. `display_start`/
@@ -96,7 +104,66 @@ pub fn render(source: &str, base_dir: Option<&Path>, width: u16, theme: &Theme) 
     )
 }
 
+/// Render markdown to terminal lines, stripping a leading OKF frontmatter
+/// block (if any) before handing the body to `pulldown-cmark`.
+///
+/// Every source-byte-offset field this function returns —
+/// `Rendered::blocks[].source_range` and `Rendered::row_source[]` — is
+/// expressed in ORIGINAL-file byte space, matching what a caller reading
+/// the file on disk would index with. `edit.cursor` is likewise supplied
+/// by the caller in original-file byte space; it is translated into
+/// stripped-body space internally before being used to locate a block or
+/// substitute inline content, and never leaks out un-translated.
+///
+/// This asymmetry is deliberate, not an oversight: `pulldown-cmark` never
+/// sees the frontmatter block (it misreads the closing `---` fence as a
+/// setext H2 underline), but every consumer of `Rendered` — the block list,
+/// row_source, and the caller constructing `EditCtx` — keeps reasoning in
+/// terms of the file as it exists on disk.
 pub fn render_with_edit(
+    source: &str,
+    base_dir: Option<&Path>,
+    width: u16,
+    theme: &Theme,
+    edit: Option<EditCtx>,
+    tables: &TableExpansions,
+) -> Rendered {
+    let frontmatter = crate::frontmatter::parse(source);
+    let delta = frontmatter
+        .as_ref()
+        .map(|fm| fm.byte_range.end)
+        .unwrap_or(0);
+    let body = match &frontmatter {
+        Some(fm) => &source[fm.byte_range.end..],
+        None => source,
+    };
+    let body_edit = edit.map(|ctx| EditCtx {
+        cursor: ctx.cursor.saturating_sub(delta),
+    });
+
+    let mut rendered = render_body(body, base_dir, width, theme, body_edit, tables);
+
+    if delta > 0 {
+        for block in &mut rendered.blocks {
+            block.source_range.start += delta;
+            block.source_range.end += delta;
+        }
+        for range in rendered.row_source.iter_mut().flatten() {
+            range.start += delta;
+            range.end += delta;
+        }
+    }
+
+    rendered.frontmatter = frontmatter;
+    rendered
+}
+
+/// Does the actual `pulldown-cmark` walk + layout pass over `source`,
+/// which by the time it reaches here has already had any frontmatter block
+/// stripped off by `render_with_edit`. Every byte offset produced here is
+/// in `source`'s own space (i.e. stripped-body space) — `render_with_edit`
+/// is responsible for translating it back to original-file space.
+fn render_body(
     source: &str,
     base_dir: Option<&Path>,
     width: u16,
@@ -1299,6 +1366,10 @@ fn layout(
         headings,
         cursor_xy,
         row_source,
+        // Set by `render_with_edit` after this function returns — `layout`
+        // operates purely on the (possibly already-stripped) body text and
+        // has no notion of the original document's frontmatter.
+        frontmatter: None,
     }
 }
 
@@ -2557,5 +2628,149 @@ mod tests {
         for cb in &r.checkbox_map.items {
             assert_eq!(&src[cb.source_offset..cb.source_offset + 1], "[");
         }
+    }
+
+    // --- BE.7.A task 2: frontmatter strip + original-file byte offsets --
+
+    #[test]
+    fn frontmatter_stripped_from_body_and_carried_on_rendered() {
+        let src = "---\ntype: Plan\ntitle: Hello\n---\n# Hello\n\nbody text\n";
+        let r = render(src, None, 80, &Theme::dark());
+        let fm = r
+            .frontmatter
+            .as_ref()
+            .expect("frontmatter should be parsed");
+        assert_eq!(
+            fm.entries,
+            vec![
+                (
+                    "type".to_string(),
+                    crate::frontmatter::FrontmatterValue::Scalar("Plan".to_string())
+                ),
+                (
+                    "title".to_string(),
+                    crate::frontmatter::FrontmatterValue::Scalar("Hello".to_string())
+                ),
+            ]
+        );
+        // The rendered body must not carry the YAML text or a bogus rule.
+        let rendered_text: String = r
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(!rendered_text.contains("type: Plan"));
+        assert!(!rendered_text.contains("title: Hello"));
+    }
+
+    #[test]
+    fn block_source_range_indexes_original_source_not_stripped_body() {
+        let src = "---\ntype: Plan\n---\n# Hello\n\nbody text\n";
+        let r = render(src, None, 80, &Theme::dark());
+        let first = r.blocks.first().expect("at least one block");
+        // Slicing the ORIGINAL string (never the stripped body) with the
+        // returned range must land exactly on the H1 line — proof the
+        // stripped-length delta was added back before the range left the
+        // pipeline.
+        assert_eq!(&src[first.source_range.clone()], "# Hello\n");
+    }
+
+    #[test]
+    fn row_source_indexes_original_source_on_stripped_document() {
+        // Force the H1 block into raw (edit-mode) substitution so
+        // `row_source` gets populated for it, then confirm the row's
+        // recorded byte range still slices the H1 out of the ORIGINAL
+        // (unstripped) source string.
+        let src = "---\ntype: Plan\n---\n# Hello\n\nbody text\n";
+        let h1_offset = src.find("# Hello").unwrap();
+        let r = render_with_edit(
+            src,
+            None,
+            80,
+            &Theme::dark(),
+            Some(EditCtx { cursor: h1_offset }),
+            &TableExpansions::new(),
+        );
+        let raw_row = r
+            .row_source
+            .iter()
+            .find_map(|row| row.clone())
+            .expect("edit mode should raw-substitute the cursor's block");
+        assert_eq!(&src[raw_row], "# Hello");
+    }
+
+    #[test]
+    fn edit_cursor_in_original_bytes_lands_in_correct_block_after_strip() {
+        let src = "---\ntype: Plan\n---\n# Hello\n\nbody text\n";
+        let body_offset = src.find("body text").unwrap();
+        let r = render_with_edit(
+            src,
+            None,
+            80,
+            &Theme::dark(),
+            Some(EditCtx {
+                cursor: body_offset,
+            }),
+            &TableExpansions::new(),
+        );
+        // The block whose ORIGINAL-space source_range contains the cursor
+        // must be the paragraph block, not the heading — proof the cursor
+        // was translated into stripped-body space before being used to
+        // pick a block, then the block's own range translated back.
+        let containing = r
+            .blocks
+            .iter()
+            .find(|b| b.source_range.start <= body_offset && body_offset <= b.source_range.end)
+            .expect("cursor should land inside some block");
+        assert!(&src[containing.source_range.clone()].contains("body text"));
+    }
+
+    #[test]
+    fn no_frontmatter_renders_unchanged() {
+        let src = "# Hello\n\nbody text\n";
+        let plain = render(src, None, 80, &Theme::dark());
+        assert!(plain.frontmatter.is_none());
+        let with_wrapper =
+            render_with_edit(src, None, 80, &Theme::dark(), None, &TableExpansions::new());
+        assert_eq!(
+            plain
+                .lines
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>(),
+            with_wrapper
+                .lines
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(plain.blocks.len(), with_wrapper.blocks.len());
+        for (a, b) in plain.blocks.iter().zip(with_wrapper.blocks.iter()) {
+            assert_eq!(a.source_range, b.source_range);
+        }
+    }
+
+    #[test]
+    fn unclosed_fence_renders_as_plain_document_not_stripped() {
+        let src = "---\ntype: Plan\n# Hello\n\nbody\n";
+        let r = render(src, None, 80, &Theme::dark());
+        assert!(r.frontmatter.is_none());
+        let rendered_text: String = r
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        // With no closing fence, nothing is stripped — the literal `---`
+        // and `type: Plan` text must still show up somewhere in the body.
+        assert!(rendered_text.contains("type: Plan"));
+    }
+
+    #[test]
+    fn empty_document_renders_without_panic() {
+        let r = render("", None, 80, &Theme::dark());
+        assert!(r.frontmatter.is_none());
+        assert!(r.blocks.is_empty());
     }
 }

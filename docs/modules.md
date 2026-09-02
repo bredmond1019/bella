@@ -36,6 +36,7 @@ Crate root. Re-exports the stable public surface consumed by the `bella` app cra
 | `body_pos`, `select_word_at` | `geometry` |
 | `CheckboxMap`, `LinkMap`, `LinkTarget`, `TableMap` | `links` |
 | `Rendered`, `render_with_edit` | `markdown` |
+| `Frontmatter`, `FrontmatterValue`, `parse_frontmatter` | `frontmatter` |
 | `Theme` | `theme` |
 
 ---
@@ -89,7 +90,7 @@ The render pipeline. 2561 lines — the largest file in the project.
 
 | Type | Description |
 |---|---|
-| `Rendered` | Output struct: `lines: Vec<Line<'static>>`, `link_map`, `checkbox_map`, `table_map`, `images`, `blocks`, `headings`, `cursor_xy`, `row_source` |
+| `Rendered` | Output struct: `lines: Vec<Line<'static>>`, `link_map`, `checkbox_map`, `table_map`, `images`, `blocks`, `headings`, `cursor_xy`, `row_source`, `frontmatter: Option<Frontmatter>` |
 | `HeadingInfo` | Outline entry: `level` (1–6), `text`, `line` (display row index) |
 | `BlockInfo` | Source-to-display mapping: `source_range`, `display_start/end` |
 | `EditCtx` | Edit-mode cursor: `cursor` (source byte offset) |
@@ -101,11 +102,39 @@ The render pipeline. 2561 lines — the largest file in the project.
 | `render(source, base_dir, width, theme) -> Rendered` | Convenience wrapper — no edit mode |
 | `render_with_edit(source, base_dir, width, theme, edit, tables) -> Rendered` | Full render with optional edit-mode cursor support |
 
-Pipeline: pulldown-cmark event stream → block tree → layout pass (word-wrap, link span extraction, table geometry). Edit mode replaces the smallest inline element containing the cursor with raw source text. Link spans that cross wrap boundaries are split — each physical line gets a separate `LinkSpan` entry.
+Pipeline: strip a leading OKF frontmatter fence (via [`frontmatter.rs`](#frontmatterrs), so pulldown-cmark never sees it — an unstripped fence misreads the closing `---` as a setext H2) → pulldown-cmark event stream → block tree → layout pass (word-wrap, link span extraction, table geometry). `render_with_edit` translates every byte offset it reports (`BlockInfo::source_range`, `row_source`, `EditCtx::cursor`) back to original-file coordinates, so callers never see stripped-body offsets. Edit mode replaces the smallest inline element containing the cursor with raw source text. Link spans that cross wrap boundaries are split — each physical line gets a separate `LinkSpan` entry.
 
 Enabled extensions: `TABLES`, `STRIKETHROUGH`, `TASKLISTS`, `FOOTNOTES`, `SMART_PUNCTUATION`, `WIKILINKS`.
 
 Raw HTML — including HTML comments (`<!-- ... -->`) — is dropped from the visible render (`Event::Html`/`Event::InlineHtml` produce no output), so sentinel comments in status/spec docs never surface as literal text. Regression coverage: `crates/bella-engine/tests/it/html_comments.rs`.
+
+---
+
+### `frontmatter.rs`
+
+A restricted OKF frontmatter reader — deliberately not a general YAML parser and takes no YAML
+crate dependency. It recognizes exactly four value shapes and never fails to parse a document; a
+shape it doesn't specifically understand is retained verbatim rather than dropped or erroring.
+
+**Key types:**
+
+| Type | Description |
+|---|---|
+| `Frontmatter` | `entries: FrontmatterEntries`, `byte_range` (the whole `---`-fenced block, both fences plus trailing newline) |
+| `FrontmatterValue` | `Scalar(String)` (bare or quoted), `List(Vec<String>)` (inline array or block list), `Raw(String)` (an unsupported shape, kept verbatim) |
+| `FrontmatterEntries` | `Vec<(String, FrontmatterValue)>` — source order, not a `HashMap`, so the metadata pane renders keys in the order the author wrote them |
+
+**Key functions:**
+
+| Function | What it does |
+|---|---|
+| `detect_fence(source) -> Option<Range<usize>>` | Byte range of a leading `---`-fenced block, or `None` if the source doesn't open with one or never closes it |
+| `parse(source) -> Option<Frontmatter>` | Detect + parse the four recognized value shapes; re-exported from `lib.rs` as `parse_frontmatter` |
+
+The four recognized shapes: bare scalar (`type: Plan`), quoted scalar (`title: "a: b"`), inline
+array (`related: [a, b]`), and a block list (`- item` lines indented under a key). Anything else —
+detected by a value's leading YAML indicator character (`{ & * ! | >`) — becomes `Raw` rather than
+an error.
 
 ---
 
