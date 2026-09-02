@@ -3,6 +3,13 @@
 # the PNGs themselves are committed as the reference set — see that
 # directory's own note).
 #
+# SETTLE TIME: reader-mode scenes settle at Sleep 4s. BROWSER-mode scenes
+# (`bella -- .`) need Sleep 8s+ — its walker has to read the directory tree
+# before the first frame renders, and a shorter settle produces a corrupt,
+# near-empty capture (measured 2026-09-02: Sleep 2s -> 2176-byte corrupt
+# narrow_browser_root.png; Sleep 8s -> 42017-byte clean capture, same
+# machine, same concurrent-lane load). Do NOT "tidy" this back down to 2s.
+#
 # Run from the repo root: vhs scripts/vhs/reference-wide.tape
 
 Output planning/artifacts/screenshots/wide.gif
@@ -17,7 +24,7 @@ Set Theme "Dracula"
 # --- Reader mode: demo fixture (headings, styles, links, lists, tasks) ---
 Type "cargo run --quiet -p bella -- scripts/vhs/fixtures/demo.md"
 Enter
-Sleep 2s
+Sleep 4s
 Screenshot planning/artifacts/screenshots/wide_reader_demo_top.png
 
 Down 18
@@ -42,15 +49,16 @@ Sleep 800ms
 # --- Reader mode: real README (prose density check) ---
 Type "cargo run --quiet -p bella -- README.md"
 Enter
-Sleep 2s
+Sleep 4s
 Screenshot planning/artifacts/screenshots/wide_reader_readme_top.png
 Type "q"
 Sleep 800ms
 
-# --- Browser mode: repo root ---
+# --- Browser mode: repo root --- (Sleep 8s: BROWSER mode's directory-tree
+# walker needs the longer settle — see header comment; do not shorten.)
 Type "cargo run --quiet -p bella -- ."
 Enter
-Sleep 2s
+Sleep 8s
 Screenshot planning/artifacts/screenshots/wide_browser_root.png
 
 # Browser mode: nested + selection
