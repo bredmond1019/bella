@@ -11,6 +11,21 @@ timestamp: "2026-09-01T19:15:00Z"
 
 ---
 
+## [run: 2026-09-02] BE.7.E
+
+Closed `BE.7.E` (horizontal frame + body-width single writer + TOC rail) via `/sdlc-flow`; all 5 tasks passed, review verdict PASS. Task 1 split `draw_reader` into a status row plus a content row (optional rail + body) and made `ui.rs` the sole writer of `App.width`/`App.body_area`, deriving width from body width and removing the three stale terminal-width writes in `app.rs`'s `App::new`/`render` and `events.rs`'s `Event::Resize` arm, with a min-body-width (20 cols, RAIL_WIDTH 24) auto-collapse policy and structural golden-buffer tests for rail-on/rail-off/collapse; the single-writer gate's fail-capability was manually observed (re-add the write, watch the test fail, revert). Task 2 drew the TOC rail from `Rendered.headings` with click-to-jump and full keyboard parity (`t` toggles, `T` focuses, `j`/`k`/arrows move, Enter activates, Esc unfocuses), made `App.file`/`App.history` reachable only through single accessors, and confirmed a rail toggle preserves reader position through BE.7.D's anchor. Task 3 added rail-on/rail-off/auto-collapse scene coverage to `scripts/vhs/scenes.toml` (a new `reference-collapse.tape` for the 44-column threshold, since neither existing tape crosses it) and re-captured/visually verified the full 19-scene reference set, recovering from one corrupted in-place PNG resave via git checkout of the untouched vault blobs. Task 4 confirmed via `git diff --stat` that `crates/bella-engine/` had an empty diff across the block, so the cross-repo bastion gate was recorded as an explicit no-impact finding rather than run. Task 5 confirmed the full authoritative validation suite (fmt, clippy, `cargo test` via `NEXTEST_POLICY_OVERRIDE=1`, release build, test-layout, `check_scenes.sh` three consecutive clean runs, VHS freshness) green with no further changes needed. `BE.7.F` (metadata pane in the rail) is now the next layout block in sequence, needing `A` + `E` (both now Done).
+
+```
+6d0b2e8 docs: update docs for BE.7.E
+13ac115 feat: implement BE.7.E-task3
+f3945da feat: implement BE.7.E-task2
+979ed89 feat: implement BE.7.E-task1
+```
+
+Next: `/sdlc-flow BE.7.F` (metadata pane in the rail).
+
+---
+
 ## [run: 2026-09-02]
 
 Closed `BE.7.D` (scroll anchoring across re-render) via `/sdlc-flow`; all 5 tasks passed, review verdict PASS. Task 1 added additive `display_row_to_source_line`/`source_line_to_display_row` lookups to `bella-engine`'s `markdown.rs`, built on `Rendered::blocks` with block-granular linear interpolation, tested in both directions including a source line spanning several display rows after wrapping. Task 2 replaced `app.rs`'s clamp-only handling of `render()`'s `scroll` field with a real anchor resolve/restore: a new `pending_scroll_anchor` field and `blocks_as_rendered()` helper let a resize re-resolve the source-line anchor after the real (unstubbed) render worker delivers, including the case where a second resize fires before the first render lands — the async race this block exists to fix, not a synchronous-only fix. Task 3 rewrote `history.rs`'s `HistoryEntry` to store a `usize` source-line anchor instead of a raw `u16` display index (back/forward now restore via the same resize-survival path), added a `RESIZE:<cols>x<rows>` pseudo-key to `capture_scenes.sh` for VHS scenes that must exercise a real terminal resize, and — after an interim bail on an incomplete vault commit — re-captured two VHS reference screenshots that had gone blank under concurrent-lane CPU contention and widened marginal post-keystroke settle times in both reference tapes to reduce recurrence. Task 4 confirmed bella-engine's two new public functions are additive-only and ran the real cross-repo bastion gate (`cargo build`/`cargo test`, 2713 passed). Task 5 confirmed the full authoritative validation suite (fmt, clippy, `cargo test` via nextest-policy override, release build, test-layout, three consecutive `check_scenes.sh` runs, VHS freshness) green with no further changes needed. `BE.7.E` (horizontal frame + body-width single writer + TOC rail) is now the next layout block in sequence.
