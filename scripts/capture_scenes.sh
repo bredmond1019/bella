@@ -146,7 +146,19 @@ capture_one() {
 
     while IFS= read -r key; do
         [[ -z "$key" ]] && continue
-        if [[ "${#key}" -eq 1 ]]; then
+        if [[ "$key" =~ ^RESIZE:([0-9]+)x([0-9]+)$ ]]; then
+            # A live mid-capture terminal resize (BE.7.D task 3's
+            # `*_scroll_anchor_after_resize` scenes) — the ONLY way this
+            # manifest can exercise the real `Event::Resize` path bella's
+            # scroll-anchoring reacts to; VHS's own tapes cannot do this
+            # (`Set Width`/`Set Height` mid-tape is silently ignored, per
+            # VHS's own warning: "Move the directive to the top of the
+            # file"), which is why the resize scenes live only in this
+            # tmux-based text-capture tier, not the VHS PNG tier.
+            # `resize-window` (not `resize-pane`) works against a detached
+            # session with no attached client forcing its own size.
+            tmux resize-window -t "$session" -x "${BASH_REMATCH[1]}" -y "${BASH_REMATCH[2]}"
+        elif [[ "${#key}" -eq 1 ]]; then
             # Single character (e.g. "/", "t", "k") — send literally so tmux
             # never tries to interpret it as a named key.
             tmux send-keys -t "$session" -l -- "$key"

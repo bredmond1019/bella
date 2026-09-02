@@ -20,7 +20,7 @@
 #   wide_reader_demo_top, wide_reader_demo_tasks_code, wide_reader_demo_table,
 #   wide_reader_search, wide_reader_readme_top, wide_browser_root,
 #   wide_browser_selection, wide_browser_nested, wide_browser_reveal_off,
-#   wide_browser_reveal_on, wide_browser_planning_symlink
+#   wide_browser_reveal_on, wide_browser_planning_symlink, wide_scroll_anchor_top
 #
 # SETTLE TIME (re-measured 2026-09-02 against the PREBUILT binary, on this
 # machine under concurrent-lane load, `uptime` load averages observed
@@ -118,5 +118,23 @@ Type "target/release/bella planning"
 Enter
 Sleep 8s
 Screenshot planning/artifacts/screenshots/wide_browser_planning_symlink.png
+Type "q"
+Sleep 500ms
+
+# Scroll anchoring (BE.7.D task 3): the scroll_anchor.md fixture, scrolled
+# to a mid-document position, at bella's normal wide reference size. Its
+# text-capture counterpart in scripts/vhs/scenes.toml (same scene name,
+# same fixture, same scroll count, at width 80x10) is the one that ALSO
+# resizes live via tmux before capturing — VHS cannot do that mid-tape (see
+# scenes.toml's `keys` field doc), so this PNG only supplies the "before"
+# half of the pair; the "after resize" half is narrow_scroll_anchor_after_resize
+# in reference-narrow.tape, captured at a fresh narrow launch instead of a
+# live resize, for the same reason.
+Type "target/release/bella scripts/vhs/fixtures/scroll_anchor.md"
+Enter
+Sleep 4s
+Down 4
+Sleep 500ms
+Screenshot planning/artifacts/screenshots/wide_scroll_anchor_top.png
 Type "q"
 Sleep 500ms

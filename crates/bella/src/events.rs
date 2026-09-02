@@ -317,16 +317,19 @@ pub(crate) fn apply(action: Action, app: &mut App) {
             app.clear_focus();
         }
         Action::Follow => {
-            // follow_focused() returns Some((prev_file, prev_scroll)) when a file
-            // navigation occurred.  The History cursor model requires that BOTH the
-            // previous and the new positions are in the stack (cursor at the new one),
-            // so `back()` can return the previous entry.
-            if let Some((prev_path, prev_scroll)) = app.follow_focused() {
+            // follow_focused() returns Some((prev_file, prev_anchor)) when a file
+            // navigation occurred, where prev_anchor is a source-line anchor
+            // (BE.7.D), not a raw display-line scroll index. The History
+            // cursor model requires that BOTH the previous and the new
+            // positions are in the stack (cursor at the new one), so
+            // `back()` can return the previous entry.
+            if let Some((prev_path, prev_anchor)) = app.follow_focused() {
                 // Push the previous position (where we were before navigating).
-                app.history.push(HistoryEntry::new(prev_path, prev_scroll));
+                app.history.push(HistoryEntry::new(prev_path, prev_anchor));
                 // Push the new current position (already loaded into app).
-                app.history
-                    .push(HistoryEntry::new(app.file.clone(), app.scroll));
+                // `load_file` always resets scroll to the top of the new
+                // document, i.e. source line 0.
+                app.history.push(HistoryEntry::new(app.file.clone(), 0));
             }
         }
         // History navigation
@@ -377,10 +380,10 @@ pub(crate) fn apply(action: Action, app: &mut App) {
                 app.selection_finish();
             } else if app.drag_origin.is_some() && content_row != usize::MAX {
                 // No drag — treat as a plain click: follow link or toggle checkbox.
-                if let Some((prev_path, prev_scroll)) = app.click_at(content_row, col) {
-                    app.history.push(HistoryEntry::new(prev_path, prev_scroll));
-                    app.history
-                        .push(HistoryEntry::new(app.file.clone(), app.scroll));
+                if let Some((prev_path, prev_anchor)) = app.click_at(content_row, col) {
+                    app.history.push(HistoryEntry::new(prev_path, prev_anchor));
+                    // `load_file` always resets scroll to source line 0.
+                    app.history.push(HistoryEntry::new(app.file.clone(), 0));
                 }
             }
             // Always clear the drag origin on mouse-up.

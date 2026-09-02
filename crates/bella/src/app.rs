@@ -671,16 +671,17 @@ impl App {
     /// - `Anchor` — scroll to the heading's line within the current document.
     /// - `FileAnchor` — load the file then scroll to the anchor.
     ///
-    /// Returns `Some((prev_file, prev_scroll))` when the open file changed so
-    /// that Task 6 can record the previous location in the history stack.
+    /// Returns `Some((prev_file, prev_anchor))` when the open file changed so
+    /// that Task 6 can record the previous location (as a source-line anchor,
+    /// BE.7.D — not a raw display-line scroll index) in the history stack.
     /// Returns `None` for URL opens (no file change), anchor-only scrolls, and
     /// when no link is focused or file loading fails.
-    pub fn follow_focused(&mut self) -> Option<(PathBuf, u16)> {
+    pub fn follow_focused(&mut self) -> Option<(PathBuf, usize)> {
         let idx = self.focused_link?;
         let span = self.link_map.links.get(idx)?.clone();
         match span.target {
             LinkTarget::LocalFile(path) => {
-                let prev = (self.file.clone(), self.scroll);
+                let prev = (self.file.clone(), self.resolve_scroll_anchor().unwrap_or(0));
                 if let Err(msg) = self.load_file(path) {
                     self.status_message = Some(msg);
                     return None;
@@ -703,7 +704,7 @@ impl App {
                 None
             }
             LinkTarget::FileAnchor(path, slug) => {
-                let prev = (self.file.clone(), self.scroll);
+                let prev = (self.file.clone(), self.resolve_scroll_anchor().unwrap_or(0));
                 if let Err(msg) = self.load_file(path) {
                     self.status_message = Some(msg);
                     return None;
@@ -721,7 +722,11 @@ impl App {
 
     /// Go back one step in the navigation history.
     ///
-    /// Restores the previous file and its recorded scroll position.
+    /// Restores the previous file and scrolls it to the recorded
+    /// **source-line anchor** (BE.7.D) — not a raw display-line index, which
+    /// would land in the wrong place whenever the target file's line count
+    /// differs from what it was when the entry was pushed (e.g. a resize
+    /// happened in between, or the two files simply wrap differently).
     /// No-op when there is no back history.  Does NOT push a new entry —
     /// the history cursor moves without adding to the stack.
     pub fn go_back(&mut self) {
@@ -729,36 +734,39 @@ impl App {
         // If we moved the cursor unconditionally (via history.back()) and
         // load_file then failed, the cursor would be permanently out of sync
         // with the displayed file.
-        let Some(HistoryEntry { path, scroll }) = self.history.peek_back().cloned() else {
+        let Some(HistoryEntry { path, anchor }) = self.history.peek_back().cloned() else {
             return;
         };
         if let Err(msg) = self.load_file(path) {
             self.status_message = Some(msg);
         } else {
             self.history.back();
-            // `load_file` just kicked off an async render, so `max_scroll()`
-            // still reflects the *previous* document (or the `Loading`
-            // placeholder) — clamping against it now would wrongly truncate
-            // a valid scroll position. Store the target as-is; `apply_rendered`
-            // re-clamps once the real content for this file lands.
-            self.scroll = scroll;
+            // `load_file` just kicked off an async render, so `self.blocks`
+            // still reflects the *previous* document (or nothing, for the
+            // `Loading` placeholder) — resolving the anchor to a display row
+            // now would resolve it against the wrong layout. Defer the
+            // resolve to `apply_rendered`, which runs once the real render
+            // for the target file lands and reuses the same
+            // anchor-restore machinery `render()` uses across a resize.
+            self.pending_scroll_anchor = Some(anchor);
         }
     }
 
     /// Go forward one step in the navigation history.
     ///
-    /// Restores the next file and its recorded scroll position.
+    /// Restores the next file and scrolls it to the recorded source-line
+    /// anchor (see [`Self::go_back`]).
     /// No-op when there is no forward history.  Does NOT push a new entry.
     pub fn go_forward(&mut self) {
-        let Some(HistoryEntry { path, scroll }) = self.history.peek_forward().cloned() else {
+        let Some(HistoryEntry { path, anchor }) = self.history.peek_forward().cloned() else {
             return;
         };
         if let Err(msg) = self.load_file(path) {
             self.status_message = Some(msg);
         } else {
             self.history.forward();
-            // See the comment in `go_back`: clamp on arrival, not here.
-            self.scroll = scroll;
+            // See the comment in `go_back`: resolve on arrival, not here.
+            self.pending_scroll_anchor = Some(anchor);
         }
     }
 
@@ -780,9 +788,9 @@ impl App {
     ///   `toggled_checkboxes` (visual-only — no source mutation).
     /// - Otherwise, clears any hover state.
     ///
-    /// Returns `Some((prev_file, prev_scroll))` when a file navigation occurred
+    /// Returns `Some((prev_file, prev_anchor))` when a file navigation occurred
     /// (passed up to the event loop for history recording), otherwise `None`.
-    pub fn click_at(&mut self, content_row: usize, col: u16) -> Option<(PathBuf, u16)> {
+    pub fn click_at(&mut self, content_row: usize, col: u16) -> Option<(PathBuf, usize)> {
         // Check link hit first.
         if let Some(idx) = self.link_map.at(content_row, col as usize) {
             // Mirror the keyboard Follow path: set focused_link then follow.
@@ -1790,15 +1798,22 @@ mod tests {
         app.block_until_ready();
         app.viewport_height = 10;
 
-        // Verify scroll=3 is within range.
+        // Verify scroll=6 is within range.
         assert!(
-            app.max_scroll() >= 3,
-            "precondition: max_scroll must be >= 3 for this test to be meaningful"
+            app.max_scroll() >= 6,
+            "precondition: max_scroll must be >= 6 for this test to be meaningful"
         );
 
-        // Set a non-zero scroll offset so we can verify it is restored.
-        app.scroll = 3;
-        let prev_scroll = app.scroll;
+        // Set a non-zero scroll offset so we can verify it is restored, and
+        // resolve it to a source-line anchor (BE.7.D) the way `follow_focused`
+        // does, rather than storing the raw display row. Row 6 sits at a
+        // block's `display_start` (each "line N" paragraph here is its own
+        // one-row block, separated by a blank-line gap row that belongs to
+        // no block) so the round trip is exact rather than merely "within
+        // one row" (the block record's accepted tolerance for a row that
+        // falls inside a gap).
+        app.scroll = 6;
+        let prev_anchor = app.resolve_scroll_anchor().unwrap_or(0);
         let prev_file = app.file.clone();
 
         // Simulate following a link using the History cursor model:
@@ -1806,24 +1821,112 @@ mod tests {
         // sits on the new entry and `back()` returns the previous one.
         use crate::history::HistoryEntry;
         app.history
-            .push(HistoryEntry::new(prev_file.clone(), prev_scroll));
+            .push(HistoryEntry::new(prev_file.clone(), prev_anchor));
         app.load_file(target_path.clone()).expect("load target");
-        app.history
-            .push(HistoryEntry::new(app.file.clone(), app.scroll));
+        app.block_until_ready();
+        // New position: top of the freshly-loaded document is always source
+        // line 0.
+        app.history.push(HistoryEntry::new(app.file.clone(), 0));
 
         // Sanity: we are now on the target.
         assert_ne!(app.file, prev_file, "precondition: file must have changed");
 
-        // Now go back.
+        // Now go back. The restore happens once the async render for
+        // main.md lands, so drain it before asserting.
         app.go_back();
+        app.block_until_ready();
 
         assert_eq!(
             app.file, prev_file,
             "go_back must restore the previous file"
         );
+        // No wrapping happens at width 80 for these single-line paragraphs,
+        // so the source-line anchor resolves back to the same display row
+        // it was captured from.
         assert_eq!(
-            app.scroll, prev_scroll,
-            "go_back must restore the previous scroll offset"
+            app.scroll, 6,
+            "go_back must restore the source-line anchor to the same display row"
+        );
+    }
+
+    #[test]
+    fn history_back_lands_on_same_source_line_across_a_resize_between_push_and_pop() {
+        // The Task 3 (BE.7.D) acceptance criterion: a two-entry history with
+        // a RESIZE between the push and the pop must restore by source
+        // LINE, not by the raw display-row index that was current when the
+        // entry was pushed — that raw index means something different once
+        // the document re-wraps to a different row count.
+        let dir = crate::testsupport::unique_temp_dir("bella_task3_resize_history");
+        let main_path = dir.join("main.md");
+        std::fs::write(
+            &main_path,
+            format!("{SCROLL_ANCHOR_FIXTURE}\n[go](target.md)"),
+        )
+        .expect("write main");
+        let target_path = dir.join("target.md");
+        std::fs::write(&target_path, "# Target\n\nContent.").expect("write target");
+
+        let src = std::fs::read_to_string(&main_path).unwrap();
+        let mut app = App::new(src, main_path.clone(), 80, 6);
+        app.block_until_ready();
+
+        let max_at_80 = app.max_scroll();
+        assert!(
+            max_at_80 > 0,
+            "precondition: fixture must overflow a 5-row viewport at width 80"
+        );
+        // A mid-document row, not the trivial top/bottom edge case.
+        let raw_row_at_80 = (max_at_80 / 2).max(1);
+        app.scroll = raw_row_at_80;
+        let prev_anchor = app
+            .resolve_scroll_anchor()
+            .expect("anchor must resolve at width 80");
+
+        // Push the previous position (main, as a source-line anchor) then
+        // follow to target — mirroring `follow_focused`'s push order.
+        use crate::history::HistoryEntry;
+        app.history
+            .push(HistoryEntry::new(main_path.clone(), prev_anchor));
+        app.load_file(target_path.clone()).expect("load target");
+        app.block_until_ready();
+        app.history.push(HistoryEntry::new(target_path.clone(), 0));
+
+        // Resize while sitting on target — strictly BETWEEN the push above
+        // and the go_back below.
+        app.render(30);
+        app.block_until_ready();
+        assert_eq!(app.width, 30, "precondition: the resize must have applied");
+        let max_at_30 = app.max_scroll();
+
+        // Go back to main at the new (post-resize) width.
+        app.go_back();
+        app.block_until_ready();
+        assert_eq!(app.file, main_path, "go_back must restore main.md");
+
+        let restored_anchor = app
+            .resolve_scroll_anchor()
+            .expect("anchor must resolve after go_back");
+        assert!(
+            prev_anchor.abs_diff(restored_anchor) <= 1,
+            "go_back must land on the same source line across a resize \
+             (within one row): pushed anchor={prev_anchor}, restored anchor={restored_anchor}"
+        );
+
+        // Show this is not merely because the raw row happened to still be
+        // valid: had History stored the raw display-row index instead (the
+        // pre-BE.7.D behavior) and `go_back` just clamped it, it would have
+        // landed at `raw_row_at_80` clamped to the NEW (width-30) max
+        // instead of being resolved through the anchor. With this fixture
+        // the two differ, so an assertion that the two DO differ is real
+        // evidence the anchor path — not a lucky clamp — produced the
+        // correct restore.
+        let raw_index_clamp_result = raw_row_at_80.min(max_at_30);
+        assert_ne!(
+            app.scroll, raw_index_clamp_result,
+            "go_back's restored row must come from the anchor, not from clamping \
+             the pre-resize raw row (raw_row_at_80={raw_row_at_80}, max_at_30={max_at_30}, \
+             would-be raw-clamp result={raw_index_clamp_result}, actual restored row={})",
+            app.scroll
         );
     }
 
@@ -1903,14 +2006,14 @@ mod tests {
         assert_eq!(app.file, main_path, "precondition: back to main");
 
         // Now follow a new link from main — this should truncate the forward
-        // history (target@0 at index 1).  Push prev (main@scroll_now) at cursor+1
+        // history (target@0 at index 1).  Push prev (main@anchor_now) at cursor+1
         // (truncating target@0), then push new target.
         let prev_file = app.file.clone();
-        let prev_scroll = app.scroll;
-        app.history.push(HistoryEntry::new(prev_file, prev_scroll));
+        let prev_anchor = app.scroll as usize;
+        app.history.push(HistoryEntry::new(prev_file, prev_anchor));
         app.load_file(target_path.clone()).expect("reload target");
         app.history
-            .push(HistoryEntry::new(app.file.clone(), app.scroll));
+            .push(HistoryEntry::new(app.file.clone(), app.scroll as usize));
         // After truncation and two pushes: [main@0, main@0, target@0], cursor=2
         // (or similar — the key invariant is no entries after cursor).
 

@@ -17,7 +17,17 @@
 #             carryover `rapid-keypresses-blank-the-render`). Each entry is
 #             either a literal single character/string (sent with `-l`) or
 #             one of tmux's named keys: Down, Up, Enter, Escape, Tab, BTab,
-#             PPage, NPage, Home, End.
+#             PPage, NPage, Home, End. A `RESIZE:<cols>x<rows>` entry (BE.7.D
+#             task 3) is a pseudo-key handled by capture_scenes.sh itself —
+#             not sent to the app — that live-resizes the tmux window via
+#             `tmux resize-window`, the only way this manifest can exercise
+#             the real `Event::Resize` path scroll anchoring reacts to. The
+#             VHS tapes cannot reproduce a live mid-capture resize (`Set
+#             Width`/`Set Height` mid-tape is silently ignored by VHS), so a
+#             `RESIZE`-using scene's `Screenshot` counterpart there is a
+#             fresh launch already at the post-resize size, not a real
+#             resize — the tmux/text capture is the one tier that actually
+#             exercises the resize path for this scene.
 #   width   — pinned terminal columns
 #   height  — pinned terminal rows
 #   settle  — optional override (seconds) of [defaults].key_settle for this
@@ -185,3 +195,32 @@ keys = []
 width = 65
 height = 27
 min_bytes = 19000
+
+# --- Scroll anchoring (BE.7.D task 3) --------------------------------------
+#
+# The two scenes below are a pair sharing one document, one scroll position,
+# and one starting width (80x10) — a small viewport so the fixture actually
+# overflows and there is something to scroll through. The first captures
+# BEFORE any resize; the second scrolls to the identical position and then
+# resizes live (via the `RESIZE:` pseudo-key, tmux tier only — see the
+# `keys` field doc above) to width 30 before capturing. Diffing the two
+# baselines under tests/scenes/ is the visual proof that BE.7.D's anchor
+# keeps the same source line at the top of the viewport across the resize,
+# not the seams spike's measured ~36% teleport a raw display-row index
+# would produce.
+
+[[scene]]
+name = "wide_scroll_anchor_top"
+target = "scripts/vhs/fixtures/scroll_anchor.md"
+keys = ["Down", "Down", "Down", "Down"]
+width = 80
+height = 10
+min_bytes = 200000
+
+[[scene]]
+name = "narrow_scroll_anchor_after_resize"
+target = "scripts/vhs/fixtures/scroll_anchor.md"
+keys = ["Down", "Down", "Down", "Down", "RESIZE:30x10"]
+width = 80
+height = 10
+min_bytes = 150000
