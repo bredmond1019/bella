@@ -115,6 +115,30 @@ cargo run -p bella -- <file|dir>             # run the viewer
 > block). Keep the `<test>`/`<build>` commands here in sync with that file's
 > `validation.checks[]` so humans and the pipeline run the same thing.
 
+> **One integration-test binary per crate.** Every crate's integration tests live under
+> `crates/<crate>/tests/it/`, behind a single `crates/<crate>/tests/it/main.rs` that carries
+> one `mod <name>;` line per test file — never a second top-level `crates/<crate>/tests/
+> <name>.rs`, which cargo links as its own binary. Adding integration test files without this
+> multiplies build cost: measured on this repo 2026-09-01, 8 extra binaries in `bella-engine`
+> took a one-line-edit rebuild from 2.5s to 4.2s, and 6 extra in `bella` took it from 1.9s to
+> 3.1s — about 0.2s per binary per edit cycle on crates that are still small (`mev` is the
+> same trap at scale: 58 files, 53s to relink). `scripts/check_test_layout.sh` gates this as
+> the `test-layout` check in `planning/harness.json`; `scripts/tests/test_check_test_layout.sh`
+> (the `test-layout-tests` check) covers it. Same pattern as `mev`'s `tests/it/` and
+> `engine-rs`'s `crates/engine-core/tests/it/`.
+>
+> **Fixture directories must use `unique_temp_dir`, never a fixed name.** A fixed-name
+> `std::env::temp_dir().join("bella_...")` collides across concurrent runs (this lane runs
+> `--worktree`, and two worktrees share one `/tmp`) — the first run to finish
+> `remove_dir_all`s the fixture out from under the second. `crate::testsupport::unique_temp_dir`
+> (in both `crates/bella/src/testsupport.rs` and `crates/bella-engine/src/testsupport.rs` —
+> bella-engine carries its own `#[cfg(test)]` copy because it cannot depend on `bella`) keys
+> the directory name on pid, nanos, and a process-wide atomic counter, mirroring
+> `core/bastion/src/testsupport.rs::unique_temp_dir`. BE.7.M fixed all 19 fixed-name sites
+> across four files — `crates/bella/src/events.rs` (8), `crates/bella/src/ui.rs` (5),
+> `crates/bella/src/app.rs` (5), `crates/bella-engine/src/browser.rs` (1) — and any new test
+> touching the filesystem must call the helper rather than reintroduce a fixed name.
+
 ## Directory map
 
 ```
