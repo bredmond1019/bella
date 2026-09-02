@@ -1,0 +1,43 @@
+Plain text, bold text, italic text, bold italic, strikethrough, and  inline code .
+
+│ A blockquote, to show the quote bar and quote color.
+
+│ │ A nested blockquote one level deeper.
+
+Links
+
+Visit the bella repo or read the README locally.
+
+Lists
+
+    • Top-level bulletNested bulletDoubly-nested bullet
+• Another top-level bullet
+
+1. First ordered item
+  1. Second ordered itemNested ordered item
+
+Task list
+
+• [ ] An unchecked task
+• [x] A checked task
+• [ ] Another unchecked task
+
+Code block
+
+  fn main() {
+      let theme = Theme::dark();
+      println!("cool-aurora, {:?}", theme.name);
+  }
+
+Table
+
+┌───────────────────────────────┬─────────────────────────────────┬──────────────────────────────────────────┐
+│ Requirement                   │ Why                             │ If missing                               │
+├───────────────────────────────┼─────────────────────────────────┼──────────────────────────────────────────┤
+│ Rust stable toolchain         │ Building the workspace          │ Install via rustup                       │
+│ A terminal with mouse support │ Hover/click/drag gestures       │ Most modern emulators work               │
+│ A system clipboard provider   │ Drag-select / double-click copy │ On Linux without a display server, inst… │
+└───────────────────────────────┴─────────────────────────────────┴──────────────────────────────────────────┘
+
+Horizontal rule
+ bella · demo.md · 60/64  j/k scroll · / search · [ ] history · q quit
