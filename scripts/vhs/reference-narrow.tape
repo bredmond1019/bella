@@ -48,7 +48,7 @@ Sleep 4s
 Screenshot planning/artifacts/screenshots/narrow_reader_demo_top.png
 
 Down 20
-Sleep 800ms
+Sleep 2s
 Screenshot planning/artifacts/screenshots/narrow_reader_demo_table.png
 Type "q"
 Sleep 800ms

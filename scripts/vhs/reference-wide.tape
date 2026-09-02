@@ -111,9 +111,12 @@ Type "q"
 Sleep 500ms
 
 # Browser mode: a directory reached through the planning/ symlink.
+# Sleep 8s: same BROWSER-mode settle as the repo-root scene above — see
+# header comment; a symlinked, many-entry directory is at least as slow to
+# first render as the plain root walk, and this scene blanked twice at 4s.
 Type "target/release/bella planning"
 Enter
-Sleep 4s
+Sleep 8s
 Screenshot planning/artifacts/screenshots/wide_browser_planning_symlink.png
 Type "q"
 Sleep 500ms
