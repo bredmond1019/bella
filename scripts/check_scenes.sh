@@ -24,11 +24,40 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASELINE_DIR="$REPO_ROOT/tests/scenes"
+MANIFEST="$REPO_ROOT/scripts/vhs/scenes.toml"
+TAPES=("$REPO_ROOT/scripts/vhs/reference-wide.tape" "$REPO_ROOT/scripts/vhs/reference-narrow.tape")
 MIN_NONBLANK_LINES=3
 
 if ! command -v tmux >/dev/null 2>&1; then
     echo "check_scenes.sh: tmux not found on PATH — scenes check skipped" >&2
     exit 0
+fi
+
+# --- Tape/manifest parity (BE.7.L task 5) -----------------------------
+# Every `Screenshot` target basename across both reference tapes must have
+# a matching `[[scene]]` name in scenes.toml, and vice versa — a scene
+# added to one and not the other is meant to be caught here, not silently
+# left to drift.
+manifest_names="$(grep -E '^name = "' "$MANIFEST" | sed -E 's/^name = "([^"]+)".*/\1/' | sort -u)"
+tape_names="$( (for tape in "${TAPES[@]}"; do
+    grep -E '^Screenshot ' "$tape" | sed -E 's#^Screenshot .*/([A-Za-z0-9_]+)\.png#\1#'
+done) | sort -u)"
+
+missing_from_tapes="$(comm -23 <(echo "$manifest_names") <(echo "$tape_names"))"
+missing_from_manifest="$(comm -13 <(echo "$manifest_names") <(echo "$tape_names"))"
+
+PARITY_FAIL=0
+if [[ -n "$missing_from_tapes" ]]; then
+    echo "check_scenes.sh: FAIL — scene(s) declared in scenes.toml but not screenshotted by either reference-wide.tape or reference-narrow.tape: $missing_from_tapes" >&2
+    PARITY_FAIL=1
+fi
+if [[ -n "$missing_from_manifest" ]]; then
+    echo "check_scenes.sh: FAIL — scene(s) screenshotted by a reference tape but not declared in scripts/vhs/scenes.toml: $missing_from_manifest" >&2
+    PARITY_FAIL=1
+fi
+if [[ "$PARITY_FAIL" -ne 0 ]]; then
+    echo "check_scenes.sh: FAILED — tape/manifest parity check failed (see above)." >&2
+    exit 1
 fi
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bella-check-scenes.XXXXXX")"

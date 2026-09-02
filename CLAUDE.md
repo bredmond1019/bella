@@ -90,6 +90,8 @@ cargo test                                   # full suite (authoritative)
 cargo clippy --all-targets -- -D warnings    # lint gate
 cargo fmt --check                            # format gate
 cargo run -p bella -- <file|dir>             # run the viewer
+bash scripts/capture_scenes.sh               # regenerate tier-2 text scene baselines (tests/scenes/)
+bash scripts/check_scenes.sh                 # diff tier-2 text scenes against baselines; gates as `scenes`
 ```
 
 > **Stack note:** the SDLC harness/skills default to npm/Next assumptions. This is a Rust

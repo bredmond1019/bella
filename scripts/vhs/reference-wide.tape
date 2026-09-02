@@ -3,6 +3,14 @@
 # the PNGs themselves are committed as the reference set — see that
 # directory's own note).
 #
+# PINNED TO scripts/vhs/scenes.toml — this tape's `Screenshot` targets and
+# scenes.toml's `[[scene]]` names must agree, or `scripts/check_scenes.sh`'s
+# parity assertion (BE.7.L task 5) fails naming the missing side. Scenes
+# this tape owns (the `wide_*` half of the manifest):
+#   wide_reader_demo_top, wide_reader_demo_tasks_code, wide_reader_demo_table,
+#   wide_reader_search, wide_reader_readme_top, wide_browser_root,
+#   wide_browser_selection, wide_browser_nested
+#
 # SETTLE TIME: reader-mode scenes settle at Sleep 4s. BROWSER-mode scenes
 # (`bella -- .`) need Sleep 8s+ — its walker has to read the directory tree
 # before the first frame renders, and a shorter settle produces a corrupt,
