@@ -307,13 +307,19 @@ Central state container. 2183 lines — the largest app-crate file.
 | `link_map` | `LinkMap` | Hit-testable link spans |
 | `scroll` | `usize` | Top visible display line |
 | `viewport_height` | `u16` | Body height (updated each frame) |
-| `width` | `u16` | Terminal width |
-| `file` | `Option<PathBuf>` | Currently open file |
+| `width` | `u16` | Body region width — sole writer is `ui::draw_reader` (BE.7.E); `App::new`/`App::render` also set it directly for their own explicit-width requests. See [`architecture.md`](architecture.md) |
+| `headings` | `Vec<HeadingInfo>` | Heading metadata from the last render, backing the TOC rail |
+| `rail_open` | `bool` | User's rail toggle preference (per-session, no persistence) |
+| `rail_visible` | `bool` | Whether the rail actually drew last frame; written only by `ui::draw_reader` — can be `false` even when `rail_open` is `true` if the terminal is too narrow (auto-collapse) |
+| `rail_area` | `Rect` | Rail viewport rectangle, mirrors `body_area`; `Rect::default()` when not visible |
+| `rail_focused` | `bool` | Whether keyboard focus is on the rail rather than the body |
+| `rail_selected` | `usize` | Index into `headings` of the rail row under keyboard focus |
+| *(private)* `file` | `PathBuf` | Currently open file — read via `app.file()` (BE.7.E: single accessor, no direct field access outside `app.rs`) |
 | `focused_link` | `Option<usize>` | Tab-focused link index |
 | `hovered_link` | `Option<usize>` | Mouse-hovered link index |
 | `toggled_checkboxes` | `HashSet<usize>` | Visual-only toggles (not persisted) |
 | `search` | `SearchState` | Search state |
-| `history` | `History` | Back/forward stack |
+| *(private)* `history` | `History` | Back/forward stack — read via `app.history()`, written via `app.history_mut()` (BE.7.E: single accessor pair) |
 | `blocks` | `Vec<BlockInfo>` | The current render's block map, kept alongside `lines` so scroll position can be re-anchored to a source line across a re-render (resize) |
 | `pending_scroll_anchor` | `Option<usize>` (private) | Source line to restore scroll to once the in-flight render lands; set by resize, `HistoryBack`/`HistoryForward`, and follow-navigation |
 | `body_area` | `Rect` | Stored by draw_reader for mouse hit-testing |
@@ -334,6 +340,12 @@ Central state container. 2183 lines — the largest app-crate file.
 - `last_click` is cleared after a successful double-click so triple-click starts fresh.
 - `drag_origin` guards `selection_finish()` — set on Down, cleared by double-click, consumed by Up. Prevents double-calling finish on double-click sequences.
 - Checkbox toggles are visual-only; never written to disk.
+
+**TOC rail methods (BE.7.E):** `toggle_rail()` flips `rail_open` (and clears `rail_focused` on
+close); `focus_rail()` gives the rail keyboard focus, a no-op when `rail_visible` is `false`;
+`rail_move(delta)` moves `rail_selected` by `delta`, clamped, no wraparound; `activate_rail_selection()`
+jumps to the focused row; `jump_to_heading(idx)` scrolls the body so `headings[idx]` is at the top
+(a no-op, never a panic, on an out-of-range `idx`).
 
 ---
 
@@ -364,6 +376,12 @@ Event loop, key/mouse mappers, and action dispatcher.
 | `BrowserClickAt{row}` | Mouse `Down` in browser |
 | `BrowserScroll(i32)` | Mouse scroll wheel in browser |
 | `BrowserBack` | `Backspace` in reader mode |
+| `RailToggle` | `t` — open/close the TOC rail |
+| `RailFocus` | `T` — give the rail keyboard focus (no-op if not visible) |
+| `RailUnfocus` | `Esc` while the rail is focused |
+| `RailMove(i32)` | `j/k`/arrows while the rail is focused — moves the selected heading, clamped, no wraparound |
+| `RailActivate` | `Enter` while the rail is focused — jumps the body to the selected heading |
+| `RailClickAt{row}` | Mouse click inside `rail_area` (not on the border) — jumps to that heading |
 | `Quit` | `q`, `Ctrl-C` |
 
 **Key functions:**
@@ -371,14 +389,16 @@ Event loop, key/mouse mappers, and action dispatcher.
 | Function | What it does |
 |---|---|
 | `map_key(key, viewport_height) -> Action` | Reader key mapper (pure) |
+| `map_rail_key(key) -> Action` | Rail-focused key mapper (pure) — `j/k`/arrows move, `Enter` activates, `Esc` unfocuses, `t` still toggles |
 | `map_browser_key(key) -> Action` | Browser key mapper (pure) |
 | `map_search_key(key) -> Action` | Search input mapper (pure) |
 | `map_mouse(mouse, app) -> Action` | Reader mouse mapper (pure) |
 | `map_browser_mouse(mouse, app) -> Action` | Browser mouse mapper (pure) |
 | `apply(action, app)` | Dispatch action → App state mutations |
+| `handle_resize(app, width, height)` | `Event::Resize` handler — updates `viewport_height` and re-clamps browser scroll; deliberately does NOT write `App.width` (BE.7.E — see [`architecture.md`](architecture.md)) |
 | `run_loop(terminal, app) -> Result<()>` | Main event loop |
 
-`run_loop` polls for terminal events with a timeout (`EVENT_POLL_TIMEOUT`, 50ms) rather than blocking on `event::read()`, and calls `app.poll_render()` each tick to drain any background render result that has landed. This keeps input responsive while `render_worker.rs` (see below) parses a document off-thread.
+`run_loop` polls for terminal events with a timeout (`EVENT_POLL_TIMEOUT`, 50ms) rather than blocking on `event::read()`, and calls `app.poll_render()` each tick to drain any background render result that has landed. This keeps input responsive while `render_worker.rs` (see below) parses a document off-thread. While the rail has keyboard focus (`app.rail_focused`), `run_loop` routes key events through `map_rail_key` instead of `map_key`, mirroring the existing `map_search_key` routing for search-input mode.
 
 ---
 
@@ -461,8 +481,15 @@ Ratatui draw functions. No state mutation — read-only access to App.
 
 | Function | What it does |
 |---|---|
-| `draw_reader(frame, area, app) -> u16` | Draw body + status line; return body height |
+| `draw_reader(frame, area, app) -> u16` | Draw status line + content row (optional rail + body); return body height |
+| `draw_rail(frame, area, app)` | Draw the TOC heading list pane, highlighting the keyboard-focused row |
 | `draw_browser(frame, area, app)` | Draw bordered directory listing |
+| `rail_should_show(rail_open, content_width) -> bool` | Auto-collapse policy: `rail_open && content_width >= RAIL_WIDTH + MIN_BODY_WIDTH` (BE.7.E; `RAIL_WIDTH = 24`, `MIN_BODY_WIDTH = 20`) |
+
+`draw_reader` splits the content row into `rail_area` + `body_area` when `rail_should_show(...)` is
+true, writes the result to `App.rail_visible`/`App.rail_area`/`App.body_area`, and derives
+`App.width` from the resulting body width — see [`architecture.md`](architecture.md) for why this
+is the width field's single writer.
 
 **Overlay stack in `draw_reader` (later = higher z-order):**
 1. Search matches — Yellow bg

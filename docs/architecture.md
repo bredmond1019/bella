@@ -120,14 +120,24 @@ terminal.draw(|frame| ui::draw_reader(frame, …))
   │
   ├─ timed out, no event → loop back to draw (picks up the render just applied)
   │
-  ├─ KeyEvent   → map_key / map_browser_key / map_search_key  →  Action
+  ├─ KeyEvent   → map_key / map_browser_key / map_search_key / map_rail_key  →  Action
   ├─ MouseEvent → map_mouse / map_browser_mouse               →  Action
-  └─ ResizeEvent → recompute viewport_height + app.render(width) (kicks off an async re-render)
+  └─ ResizeEvent → events::handle_resize(app, width, height) (recomputes viewport_height; does NOT write App.width)
   │
   ▼  events::apply(action, &mut app)   ← pure state mutation
   │
   ▼  loop
 ```
+
+**`App.width` has exactly one writer: `ui::draw_reader`** (BE.7.E). It derives width from the
+*body* region once the rail/no-rail split is computed, then re-renders through the same
+anchor-preserving path that already handles a plain resize (see Coordinate System below) — so a
+rail toggle is just another body-width change flowing through that one path. `events::handle_resize`
+only updates `viewport_height` and re-clamps browser scroll; it deliberately leaves `App.width`
+untouched, because a second writer would disagree with `draw_reader` as soon as a rail is open
+(body width != terminal width in that case). `App::new`/`App::render` still set `self.width`
+directly for their own initial/explicit-width render requests — the single-writer rule applies to
+the *resize* path (`events.rs`) and *layout* path (`ui.rs`), not to those entry points.
 
 The loop polls with a timeout (`events::EVENT_POLL_TIMEOUT`, 50ms) instead of blocking on `crossterm::event::read()`, and drains the render worker each tick — so a markdown parse in flight never stalls input handling. All three key/mouse mapper functions are **pure** (no terminal I/O, no App mutation) so they are unit-tested without a real terminal. `apply` takes `&mut App` and dispatches to the appropriate App method. The draw call comes first each iteration so the initial render (or the `Loading…` placeholder) is visible before waiting for input.
 
@@ -136,16 +146,20 @@ The loop polls with a timeout (`events::EVENT_POLL_TIMEOUT`, 50ms) instead of bl
 Terminal positions use `(col, row)` — 0-indexed, top-left origin. The render area is split at draw time:
 
 ```
-┌─────────────────────────────┐  ← row 0
-│                             │
-│   body_area (Rect)          │  ← markdown content lines, scrolled
-│                             │
-├─────────────────────────────┤  ← row viewport_height
+┌───────────┬─────────────────┐  ← row 0
+│           │                 │
+│ rail_area │   body_area     │  ← markdown content lines, scrolled
+│ (Rect)    │   (Rect)        │
+├───────────┴─────────────────┤  ← row viewport_height
 │   status line (1 row)       │
 └─────────────────────────────┘
 ```
 
-`draw_reader` stores the `body_area` Rect in `App` after each frame so mouse events can convert screen coordinates to content positions.
+The TOC rail (BE.7.E) is optional: `rail_area` is `Rect::default()` and the split collapses to the
+single-column layout above it whenever the rail is off (`App.rail_open == false`) or the terminal
+is too narrow to fit both the rail and a usable body — see `rail_should_show` in
+[`modules.md`](modules.md#uirs). `draw_reader` stores both `body_area` and `rail_area` in `App`
+after each frame so mouse events can convert screen coordinates to content positions.
 
 The conversion is:
 

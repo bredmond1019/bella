@@ -12,31 +12,129 @@ use ratatui::{
 use crate::app::App;
 use bella_engine::browser::BrowserEntryKind;
 
-/// Draw the full viewer: body (scrolled markdown) + 1-row status line.
+/// Fixed column width of the TOC rail when it is drawn.
+const RAIL_WIDTH: u16 = 24;
+
+/// The narrowest a body region may ever be drawn at. Below
+/// `RAIL_WIDTH + MIN_BODY_WIDTH` total content width, the rail auto-collapses
+/// rather than squeezing the body under this floor — see [`rail_should_show`].
+const MIN_BODY_WIDTH: u16 = 20;
+
+/// Whether the rail should actually be drawn this frame, given the user's
+/// toggle preference (`rail_open`) and the available content width.
+///
+/// This is the minimum-body-width policy: even with the rail toggled on,
+/// a `content_width` too narrow to fit both `RAIL_WIDTH` and
+/// `MIN_BODY_WIDTH` auto-collapses the rail so the body is never squeezed
+/// below its usable floor. A zero-width body is unreachable through this
+/// path — when the rail is hidden the body takes the full `content_width`,
+/// which is only zero if the terminal itself is.
+fn rail_should_show(rail_open: bool, content_width: u16) -> bool {
+    rail_open && content_width >= RAIL_WIDTH + MIN_BODY_WIDTH
+}
+
+/// Draw the full viewer: an optional TOC rail beside the body (scrolled
+/// markdown), plus a 1-row status line.
+///
+/// `ui.rs` is the SOLE writer of [`App::width`] (BE.7.E) — it is derived
+/// here from the BODY region's width, which is only known once this layout
+/// has been computed (with a rail open, body width != terminal width). No
+/// other call site may assign `app.width`; `events.rs`'s resize handling
+/// intentionally leaves it untouched and relies on the next draw to pick up
+/// any width change through this function instead.
 ///
 /// Returns the body area height so the caller can push it back into `App`
 /// with [`App::set_viewport_height`].
 pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
-    let chunks = Layout::default()
+    let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(0),    // body
+            Constraint::Min(0),    // content row (rail + body)
             Constraint::Length(1), // status line
         ])
         .split(area);
 
-    let body_area = chunks[0];
-    let status_area = chunks[1];
+    let content_area = outer[0];
+    let status_area = outer[1];
+
+    let rail_visible = rail_should_show(app.rail_open, content_area.width);
+    app.rail_visible = rail_visible;
+    if !rail_visible {
+        // Auto-collapse (or the rail simply being off) must not leave
+        // keyboard focus on an invisible target.
+        app.rail_focused = false;
+    } else if !app.headings.is_empty() {
+        app.rail_selected = app.rail_selected.min(app.headings.len() - 1);
+    }
+
+    let (rail_area, body_area) = if rail_visible {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(RAIL_WIDTH), Constraint::Min(0)])
+            .split(content_area);
+        (chunks[0], chunks[1])
+    } else {
+        (Rect::default(), content_area)
+    };
 
     // Feed the real body height back into the app so max_scroll stays accurate.
     app.set_viewport_height(body_area.height);
-    // Store the body area for mouse coordinate conversion in event handlers.
+    // Store the body/rail areas for mouse coordinate conversion in event handlers.
     app.body_area = body_area;
+    app.rail_area = rail_area;
+
+    // The single write site for `App.width`: re-render whenever the body
+    // region's width (not the terminal's) has changed since the last render.
+    if body_area.width != app.width {
+        app.width = body_area.width;
+        app.render(body_area.width);
+    }
 
     draw_body(frame, body_area, app);
+    if rail_visible {
+        draw_rail(frame, rail_area, app);
+    }
     draw_statusline(frame, status_area, app);
 
     body_area.height
+}
+
+/// Draw the TOC rail region: a bordered pane listing `app.headings`, one
+/// per row (indented by level, deepest levels clipped by the fixed
+/// [`RAIL_WIDTH`] the same way any long line is). The row under keyboard
+/// focus ([`App::rail_selected`], only meaningful while
+/// [`App::rail_focused`]) is highlighted so [`App::activate_rail_selection`]
+/// has a visible target — see BE.7.E task 2's keyboard-parity requirement.
+fn draw_rail(frame: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Contents")
+        .style(Style::default().fg(app.theme.status_bg));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let lines: Vec<Line> = app
+        .headings
+        .iter()
+        .enumerate()
+        .map(|(idx, h)| {
+            let indent = "  ".repeat((h.level.saturating_sub(1)) as usize);
+            let text = format!("{indent}{}", h.text);
+            let selected = app.rail_focused && idx == app.rail_selected;
+            let style = if selected {
+                Style::default()
+                    .fg(app.theme.status_bg)
+                    .bg(app.theme.status_fg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            Line::from(Span::styled(text, style))
+        })
+        .collect();
+
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, inner);
 }
 
 /// Draw the directory browser: a bordered full-screen pane titled with the
@@ -424,7 +522,11 @@ fn draw_statusline(frame: &mut Frame, area: Rect, app: &App) {
         // that clears or replaces it.
         format!(" bella · {msg}")
     } else {
-        let file_name = app.file.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+        let file_name = app
+            .file()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?");
         let total = app.lines.len();
         let current = (app.scroll as usize + app.viewport_height as usize).min(total);
         format!(

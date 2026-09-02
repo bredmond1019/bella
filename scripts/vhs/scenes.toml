@@ -8,6 +8,18 @@
 # BE.7.L task 5 adds a parity check to check_scenes.sh that fails when the
 # scene names here and the tapes' `Screenshot` targets disagree.
 #
+# RULE (BE.ticket.vhs-wait-for-readiness task 0): a scene's `target` must be
+# a committed fixture (under scripts/vhs/fixtures/) or another stable
+# in-repo path (a tracked file like README.md, or the repo root `.`) —
+# NEVER a shared vault path such as `planning/`, which is a symlink into
+# the cross-repo HQ vault and mutates whenever ANY spec directory is
+# created anywhere in the fleet, including by the SDLC task running this
+# very check. The baseline captured for a scene is a golden file; a
+# directory this repo does not control cannot back one. See the
+# `wide_browser_planning_symlink` scene below for the fixture pattern that
+# replaces a live-directory target while still exercising the same code
+# path.
+#
 # Fields per [[scene]]:
 #   name    — scene id; also the basename of tests/scenes/<name>.txt
 #   target  — file or directory bella is opened on, repo-relative
@@ -162,16 +174,51 @@ width = 110
 height = 43
 min_bytes = 25000
 
-# A directory reached through the `planning/` symlink — bella's own
-# `.gitignore` lists `/planning`, so this scene exercises `follow_links`
+# A directory reached through a symlink — exercises `follow_links`
 # resolving a symlinked root and listing its (real, non-empty) contents.
+#
+# This used to target the repo's own `planning` symlink, which resolves
+# into the shared cross-repo HQ vault (`core/_planning/bella/`) — a LIVE
+# directory that changes whenever any spec directory is created anywhere in
+# bella's planning tree, including by the very SDLC task running this
+# check. That made the golden baseline flaky by construction (count drifted
+# 29 -> 30 mid-run from the running task's own scaffolding, BE.7.M).
+# Repointed (BE.ticket.vhs-wait-for-readiness task 0) at a committed
+# fixture — `scripts/vhs/fixtures/symlink_demo/linked` is a real symlink to
+# `real_target/`, a small fixed directory — which exercises the same
+# `follow_links` mechanism deterministically.
 [[scene]]
 name = "wide_browser_planning_symlink"
-target = "planning"
+target = "scripts/vhs/fixtures/symlink_demo/linked"
 keys = []
 width = 110
 height = 43
 min_bytes = 25000
+
+# TOC rail (BE.7.E task 3): rail-on and rail-off at a wide terminal — the
+# frame/pane change this block ships. `t` toggles the rail; the rail's
+# bordered pane is titled "Contents" (see `ui::draw_rail`), a text unique
+# to the rail-visible state and used as the VHS readiness pattern for the
+# "on" scene. There is no equally unique text for the "off" state — it is
+# the ABSENCE of "Contents" — so the "off" scene (a second toggle back)
+# relies on a settle Sleep after the toggle rather than a Wait+Screen
+# match, the same way the existing quit sequences in this tape do (e.g.
+# `Type "q"` followed by a plain `Sleep`, never a Wait).
+[[scene]]
+name = "wide_reader_rail_on"
+target = "scripts/vhs/fixtures/demo.md"
+keys = ["t"]
+width = 110
+height = 43
+min_bytes = 90000
+
+[[scene]]
+name = "wide_reader_rail_off"
+target = "scripts/vhs/fixtures/demo.md"
+keys = ["t", "t"]
+width = 110
+height = 43
+min_bytes = 130000
 
 # --- Narrow (~65x27 cols) — wrap/reflow check -------------------------------
 
@@ -202,6 +249,25 @@ keys = []
 width = 65
 height = 27
 min_bytes = 19000
+
+# TOC rail auto-collapse (BE.7.E task 3): a terminal narrower than
+# `RAIL_WIDTH + MIN_BODY_WIDTH` (24 + 20 = 44 columns, see ui.rs) so
+# toggling the rail on has NO visible effect — the minimum-body-width
+# policy auto-collapses it rather than squeezing the body. Captured at a
+# dedicated width (40 cols here, its own narrower VHS tape at
+# scripts/vhs/reference-collapse.tape — neither reference-wide.tape nor
+# reference-narrow.tape's fixed terminal size is narrow enough to cross
+# the 44-column threshold). The readiness Wait matches the doc's H1 BEFORE
+# the `t` keypress (there is nothing new to wait for afterward — that
+# absence of change is exactly what this scene proves), then a settle
+# Sleep covers the toggle itself.
+[[scene]]
+name = "narrow_reader_rail_collapse"
+target = "scripts/vhs/fixtures/demo.md"
+keys = ["t"]
+width = 40
+height = 27
+min_bytes = 15000
 
 # --- Scroll anchoring (BE.7.D task 3) --------------------------------------
 #

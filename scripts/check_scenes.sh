@@ -25,7 +25,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASELINE_DIR="$REPO_ROOT/tests/scenes"
 MANIFEST="$REPO_ROOT/scripts/vhs/scenes.toml"
-TAPES=("$REPO_ROOT/scripts/vhs/reference-wide.tape" "$REPO_ROOT/scripts/vhs/reference-narrow.tape")
+TAPES=("$REPO_ROOT/scripts/vhs/reference-wide.tape" "$REPO_ROOT/scripts/vhs/reference-narrow.tape" "$REPO_ROOT/scripts/vhs/reference-collapse.tape")
 MIN_NONBLANK_LINES=3
 
 if ! command -v tmux >/dev/null 2>&1; then
