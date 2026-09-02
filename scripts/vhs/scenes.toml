@@ -8,6 +8,18 @@
 # BE.7.L task 5 adds a parity check to check_scenes.sh that fails when the
 # scene names here and the tapes' `Screenshot` targets disagree.
 #
+# RULE (BE.ticket.vhs-wait-for-readiness task 0): a scene's `target` must be
+# a committed fixture (under scripts/vhs/fixtures/) or another stable
+# in-repo path (a tracked file like README.md, or the repo root `.`) —
+# NEVER a shared vault path such as `planning/`, which is a symlink into
+# the cross-repo HQ vault and mutates whenever ANY spec directory is
+# created anywhere in the fleet, including by the SDLC task running this
+# very check. The baseline captured for a scene is a golden file; a
+# directory this repo does not control cannot back one. See the
+# `wide_browser_planning_symlink` scene below for the fixture pattern that
+# replaces a live-directory target while still exercising the same code
+# path.
+#
 # Fields per [[scene]]:
 #   name    — scene id; also the basename of tests/scenes/<name>.txt
 #   target  — file or directory bella is opened on, repo-relative
@@ -162,12 +174,22 @@ width = 110
 height = 43
 min_bytes = 25000
 
-# A directory reached through the `planning/` symlink — bella's own
-# `.gitignore` lists `/planning`, so this scene exercises `follow_links`
+# A directory reached through a symlink — exercises `follow_links`
 # resolving a symlinked root and listing its (real, non-empty) contents.
+#
+# This used to target the repo's own `planning` symlink, which resolves
+# into the shared cross-repo HQ vault (`core/_planning/bella/`) — a LIVE
+# directory that changes whenever any spec directory is created anywhere in
+# bella's planning tree, including by the very SDLC task running this
+# check. That made the golden baseline flaky by construction (count drifted
+# 29 -> 30 mid-run from the running task's own scaffolding, BE.7.M).
+# Repointed (BE.ticket.vhs-wait-for-readiness task 0) at a committed
+# fixture — `scripts/vhs/fixtures/symlink_demo/linked` is a real symlink to
+# `real_target/`, a small fixed directory — which exercises the same
+# `follow_links` mechanism deterministically.
 [[scene]]
 name = "wide_browser_planning_symlink"
-target = "planning"
+target = "scripts/vhs/fixtures/symlink_demo/linked"
 keys = []
 width = 110
 height = 43

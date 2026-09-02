@@ -1,33 +1,33 @@
-┌planning────────────────────────────────────────────────────────────────────────────────────────────────────┐
+┌scripts/vhs/fixtures/symlink_demo/linked────────────────────────────────────────────────────────────────────┐
 │▶ ..                                                                                                        │
-│  archive                                                                                                   │
-│  archive-report                                                                                            │
-│  artifacts                                                                                                 │
-│  BE.7.A                                                                                                    │
-│  BE.7.B                                                                                                    │
-│  BE.7.C                                                                                                    │
-│  BE.7.D                                                                                                    │
-│  BE.7.L                                                                                                    │
-│  BE.7.M                                                                                                    │
-│  BE.ticket.browser-status-bar                                                                              │
-│  BE.ticket.keybinding-hint                                                                                 │
-│  BE.ticket.reader-keybinding-hint                                                                          │
-│  BE.ticket.vhs-capture-trustworthiness                                                                     │
-│  blocks                                                                                                    │
-│  chore-unique-temp-dirs-in-tests                                                                           │
-│  decisions                                                                                                 │
-│  ide-layout                                                                                                │
-│  modeless-editor                                                                                           │
-│  orchestration-run                                                                                         │
-│  polish-standard                                                                                           │
-│  context.md                                                                                                │
-│  handoff.md                                                                                                │
-│  harness.examples.md                                                                                       │
-│  index.md                                                                                                  │
-│  knowledge.md                                                                                              │
-│  master-plan.md                                                                                            │
-│  memory.md                                                                                                 │
-│  status.md                                                                                                 │
+│  hello.md                                                                                                  │
+│  notes.md                                                                                                  │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
 │                                                                                                            │
 │                                                                                                            │
 │                                                                                                            │
@@ -40,4 +40,4 @@
 │                                                                                                            │
 │                                                                                                            │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- bella · planning · 1/29 · j/k nav · Enter open · r reveal (off) · q quit
+ bella · scripts/vhs/fixtures/symlink_demo/linked · 1/3 · j/k nav · Enter open · r reveal (off) · q quit
