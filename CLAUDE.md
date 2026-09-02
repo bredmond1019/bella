@@ -56,7 +56,7 @@ stays `null` — a normal, expected state, never a defect to chase.
    bastion's ops framing (D3).
 7. **Use `cargo nextest run`, never plain `cargo test`, for any test run you invoke yourself
    during a task** (scoped: `cargo nextest run -p <crate> <module::path>`; full fast pass:
-   `cargo nextest run --lib --bins --workspace`). The one exception is the task explicitly designated to
+   `cargo nextest run --workspace`). The one exception is the task explicitly designated to
    own full-suite validation for a spec — that task runs the real `cargo test` / `cargo build
    --release` gates, per `planning/harness.json`'s `command` (not `fastCommand`). See "Build /
    test / run" below for the full rationale.
@@ -85,7 +85,7 @@ stays `null` — a normal, expected state, never a defect to chase.
 # Rust Cargo workspace (crates/bella-engine + crates/bella).
 cargo build                                  # build all crates (debug)
 cargo build --release                        # release build
-cargo nextest run --lib --bins --workspace          # fast — use this, not plain `cargo test`
+cargo nextest run --workspace                # fast — use this, not plain `cargo test`
 cargo test                                   # full suite (authoritative)
 cargo clippy --all-targets -- -D warnings    # lint gate
 cargo fmt --check                            # format gate
@@ -95,7 +95,7 @@ cargo run -p bella -- <file|dir>             # run the viewer
 > **Stack note:** the SDLC harness/skills default to npm/Next assumptions. This is a Rust
 > project — `planning/harness.json` is already set to the `rust` profile (fmt/clippy/test/build).
 
-> **Always prefer `cargo nextest run --lib --bins --workspace` over plain `cargo test` in this repo.**
+> **Always prefer `cargo nextest run --workspace` over plain `cargo test` in this repo.**
 > This is wired as the `fastCommand` on the `test` check in `planning/harness.json`, which the
 > SDLC engines use for per-task (`testDepth: "fast"`) runs — reach for it manually too whenever
 > iterating outside the harness. Requires `cargo-nextest` on PATH (`brew install cargo-nextest`);
