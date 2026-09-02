@@ -103,6 +103,14 @@ color, layout), two scripts under `scripts/`:
 | `scripts/tui_capture.sh <file\|dir> [key ...]` | Drives bella in a detached tmux session (via `bastion new`/`capture`/`kill`) and dumps the rendered screen as text | Fast structural checks — is a section present, did navigation land where expected |
 | `scripts/vhs/*.tape` (run with `vhs <tape>`, requires `brew install vhs`) | Scripts a real pty session and renders it to PNG/GIF | Pixel-level review — theme colors, alignment, wrapping. `reference-wide.tape`/`reference-narrow.tape` regenerate the baseline set in `planning/artifacts/screenshots/` (see that directory's `README.md`) |
 
+Beyond these two manual-review tools, bella also gates on two **automated** regression checks —
+run `bash scripts/check_scenes.sh` and `bash scripts/check_vhs_fresh.sh` to reproduce what the
+harness's `scenes` and `vhs-fresh` checks run (`planning/harness.json`). Both are driven off one
+shared scene manifest, `scripts/vhs/scenes.toml`, and both are documented in full — what each
+tier catches, why VHS output is checked for freshness/sanity rather than pixel-diffed, and how to
+regenerate baselines — in `planning/artifacts/screenshots/README.md`. `scripts/capture_scenes.sh`
+regenerates the tier-2 text baselines under `tests/scenes/`.
+
 ## Lint / Format
 
 ```bash
@@ -152,7 +160,7 @@ the fastest way to confirm the key is even reaching you.
 
 Structured block work follows: `/generate-tasks → /implement → /test → /review-task → /document → /log-work`.
 
-The pipeline reads its validation commands from `planning/harness.json`. The current profile runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release`, and `scripts/check_test_layout.sh` (plus its own fixture suite, `scripts/tests/test_check_test_layout.sh`) as gating checks. Do not edit the workflow engine scripts (`.claude/workflows/*.js`) for stack reasons — only `harness.json`.
+The pipeline reads its validation commands from `planning/harness.json`. The current profile runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release`, `scripts/check_test_layout.sh` (plus its own fixture suite, `scripts/tests/test_check_test_layout.sh`), `scripts/check_scenes.sh`, and `scripts/check_vhs_fresh.sh` (see "Visual QA" above) as gating checks. Do not edit the workflow engine scripts (`.claude/workflows/*.js`) for stack reasons — only `harness.json`.
 
 To start a new block:
 
