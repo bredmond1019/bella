@@ -11,6 +11,20 @@ timestamp: "2026-09-01T19:15:00Z"
 
 ---
 
+## [run: 2026-09-01]
+
+Implemented `BE.7.M` (test layout + collision-proof fixtures) end to end via `/sdlc-flow`, 7/7 tasks passed, review verdict PASS. Consolidated `bella-engine`'s and `bella`'s integration tests into one `tests/it/main.rs` binary per crate (mirroring `mev`/`engine-rs`'s pattern); added `#[cfg(test)]`-only `unique_temp_dir` helpers to both crates and replaced all 19 fixed-name `std::env::temp_dir()` fixture sites (found via measurement to be 19 across 4 files, not the block record's original 8/12 estimate — `app.rs` was missing from the file list entirely) with the collision-proof helper, removing every `remove_dir_all`-before-use pattern; added `scripts/check_test_layout.sh` plus its fixture suite as a gating `harness.json` check to keep the one-binary-per-crate layout from silently regressing; documented the layout rule, the helper, and measured relink timings in `CLAUDE.md`. Notable decisions: the pre-fix concurrency collision was not reproduced live in either baseline or post-fix runs (nextest's per-process isolation and non-deterministic scheduling), so the safety argument rests on removing the structural hazard rather than an observed-then-fixed repro — stated plainly rather than rounded off; relink-timing savings at this block's 2-3 file scale measured as noise (~0.2s), consistent with but not itself demonstrating the larger-scale win the block record claims for ~10 added files; `testsupport` modules confirmed absent from the release binary's symbol table via `nm`/`strings`, not just `cfg(test)` alone. Full validation suite (fmt, clippy -D warnings, the authoritative full-suite gate, release build, the new layout check) all green — 256 tests total. `BE.7.A` and `BE.7.B` are now startable.
+
+Next: `BE.7.A` (frontmatter strip + restricted OKF parse) and `BE.7.B` (browser resize fix + structural golden buffer), runnable concurrently.
+
+```
+42aaf38 docs: update docs for BE.7.M
+3126fa6 feat: implement BE.7.M-task5
+9da850d feat: implement BE.7.M-task4
+b3c56c3 feat: implement BE.7.M-task3
+858b310 feat: implement BE.7.M-task2
+```
+
 ## [2026-09-01]
 
 ### Ported bastiel's cool-aurora theme, wired the status bar, built visual-QA tooling
