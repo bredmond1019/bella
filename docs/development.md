@@ -174,6 +174,7 @@ bella/
 │   │   └── src/
 │   │       ├── lib.rs          ← public re-exports
 │   │       ├── browser.rs      ← directory listing model
+│   │       ├── frontmatter.rs  ← restricted OKF frontmatter reader
 │   │       ├── geometry.rs     ← coordinate conversion
 │   │       ├── links.rs        ← link/checkbox/table hit-testing
 │   │       ├── markdown.rs     ← render pipeline
