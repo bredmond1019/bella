@@ -485,6 +485,35 @@ pub(crate) fn apply(action: Action, app: &mut App) {
 /// enough to avoid a busy-spin.
 const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(50);
 
+/// Re-clamp the browser's scroll offset to the current pane height, called
+/// from the `Event::Resize` arm of [`run_loop`].
+///
+/// `app.browser_area` is the single source of browser pane geometry — it is
+/// written by `ui::draw_browser` from `block.inner(list_area)` on every draw
+/// (one status row plus two `Borders::ALL` border rows subtracted from the
+/// raw terminal height, not the old two-border-rows-only estimate), and it is already
+/// what [`bella_engine::browser::Browser::move_cursor`] clamps against for
+/// the cursor actions above. Reading it here instead of recomputing from
+/// the raw terminal height keeps this arm in sync with that single source
+/// rather than drifting out of it by one row.
+///
+/// Extracted out of the `Event::Resize` match arm, and `pub` (rather than
+/// crate-private), so it can be exercised directly — with a stubbed `App`
+/// and no real terminal — both by the unit test below and by the
+/// integration-test golden buffer (`tests/it/golden_draw.rs`), which needs
+/// to assert the post-resize scroll clamp without driving a real
+/// `crossterm::event::Event::Resize` through `run_loop`.
+pub fn reclamp_browser_scroll_on_resize(app: &mut App) {
+    let browser_inner_h = app.browser_area.height as usize;
+    if let Some(b) = app.browser.as_mut() {
+        let max_scroll = b.entries.len().saturating_sub(browser_inner_h) as u16;
+        b.scroll = b.scroll.min(max_scroll);
+        if b.selected < b.scroll as usize {
+            b.scroll = b.selected as u16;
+        }
+    }
+}
+
 /// Event loop. Draws, then polls for the next terminal event with a timeout
 /// (rather than blocking on it) so a background markdown render never stalls
 /// input handling; each tick also drains any render result that has landed.
@@ -547,14 +576,7 @@ pub fn run_loop(
                     app.render(width);
                 }
                 // Re-clamp browser scroll to the new terminal height.
-                let browser_inner_h = height.saturating_sub(2) as usize;
-                if let Some(b) = app.browser.as_mut() {
-                    let max_scroll = b.entries.len().saturating_sub(browser_inner_h) as u16;
-                    b.scroll = b.scroll.min(max_scroll);
-                    if b.selected < b.scroll as usize {
-                        b.scroll = b.selected as u16;
-                    }
-                }
+                reclamp_browser_scroll_on_resize(&mut app);
             }
             Event::Mouse(mouse) => {
                 let action = match app.mode {
@@ -1645,6 +1667,91 @@ mod tests {
         std::fs::write(&md_path, "# Hello\n\nContent.").expect("write md");
         let app = App::new_browser(dir.clone(), 80, 25);
         (app, md_path)
+    }
+
+    // --- Resize off-by-one (BE.7.B task 2) ---
+    //
+    // Reproducible without a real terminal: `reclamp_browser_scroll_on_resize`
+    // is unit-tested directly against a stubbed `App.browser_area`, mirroring
+    // what `Event::Resize` does in `run_loop`.
+
+    #[test]
+    fn reclamp_browser_scroll_on_resize_uses_browser_area_not_raw_height() {
+        use bella_engine::browser::{BrowserEntry, BrowserEntryKind};
+        use ratatui::layout::Rect;
+
+        let mut app = make_browser_app("resize_clamp");
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.clear();
+            for i in 0..10 {
+                b.entries.push(BrowserEntry {
+                    path: PathBuf::from(format!("entry_{i}")),
+                    display: format!("entry_{i}"),
+                    kind: BrowserEntryKind::Markdown,
+                });
+            }
+            // Start scrolled all the way down for a pane that could only fit 5 rows.
+            b.scroll = 5;
+            b.selected = 9;
+        }
+
+        // Simulate what `ui::draw_browser` writes on the draw immediately
+        // following a resize to a pane inset 1 cell on each side of a
+        // bordered region, with a 1-row status line reserved below it: for
+        // a 10-row terminal that leaves an inner listing height of 6, not
+        // the 8 that the old two-border-rows-only estimate (the pre-fix
+        // computation) would have produced.
+        app.browser_area = Rect {
+            x: 1,
+            y: 1,
+            width: 78,
+            height: 6,
+        };
+
+        super::reclamp_browser_scroll_on_resize(&mut app);
+
+        let b = app.browser.as_ref().expect("browser must exist");
+        // max_scroll = entries.len() (10) - browser_area.height (6) = 4.
+        assert_eq!(
+            b.scroll, 4,
+            "scroll must clamp to browser_area.height (6), not the raw \
+             terminal height minus 2 (which would clamp to a max_scroll of \
+             8 and leave scroll at the pre-resize 5)"
+        );
+    }
+
+    #[test]
+    fn reclamp_browser_scroll_on_resize_is_a_no_op_when_area_still_fits_all_entries() {
+        use bella_engine::browser::{BrowserEntry, BrowserEntryKind};
+        use ratatui::layout::Rect;
+
+        let mut app = make_browser_app("resize_clamp_noop");
+        if let Some(b) = app.browser.as_mut() {
+            b.entries.clear();
+            for i in 0..3 {
+                b.entries.push(BrowserEntry {
+                    path: PathBuf::from(format!("entry_{i}")),
+                    display: format!("entry_{i}"),
+                    kind: BrowserEntryKind::Markdown,
+                });
+            }
+            b.scroll = 0;
+            b.selected = 0;
+        }
+        app.browser_area = Rect {
+            x: 1,
+            y: 1,
+            width: 78,
+            height: 20,
+        };
+
+        super::reclamp_browser_scroll_on_resize(&mut app);
+
+        let b = app.browser.as_ref().expect("browser must exist");
+        assert_eq!(
+            b.scroll, 0,
+            "a pane taller than the entry count must not force any scroll"
+        );
     }
 
     #[test]

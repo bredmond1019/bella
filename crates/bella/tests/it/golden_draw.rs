@@ -218,3 +218,109 @@ fn reader_and_browser_geometry_pinned_at_80x24() {
         "term height (24) - 1 status row - 2 border rows"
     );
 }
+
+/// BE.7.B task 2's real deliverable: the resize off-by-one, caught
+/// structurally.
+///
+/// Drives `draw_browser` through `TestBackend` at a size that leaves room
+/// for every entry, then again at a smaller size — mirroring what
+/// `ratatui::Terminal::draw`'s autoresize does in `run_loop` *before* the
+/// `Event::Resize` arm runs, which is why `App::browser_area` is already
+/// correct by the time that arm executes. It then calls
+/// `bella::events::reclamp_browser_scroll_on_resize` directly (the extracted
+/// resize-clamp logic) with a stale scroll offset left over from the larger
+/// pane, and asserts the last entry is visible IMMEDIATELY — before any
+/// cursor move. `Browser::move_cursor` re-clamps from `App.browser_area`
+/// too, so a test that moved the cursor first would pass against the
+/// pre-fix code and prove nothing.
+#[test]
+fn browser_last_entry_visible_immediately_after_resize_before_cursor_move() {
+    use bella::events::reclamp_browser_scroll_on_resize;
+
+    const ENTRY_COUNT: usize = 12;
+
+    let (wide_w, wide_h): (u16, u16) = (80, 24); // inner height = 24 - 3 = 21 (fits all 12).
+    let (narrow_w, narrow_h): (u16, u16) = (80, 9); // inner height = 9 - 3 = 6 (does not fit).
+
+    let mut app = make_browser_app(wide_w, wide_h);
+    if let Some(b) = app.browser.as_mut() {
+        b.entries.clear();
+        for i in 0..ENTRY_COUNT {
+            b.entries.push(BrowserEntry {
+                path: PathBuf::from(format!("entry_{i}.md")),
+                display: format!("entry_{i}"),
+                kind: BrowserEntryKind::Markdown,
+            });
+        }
+    }
+
+    // Draw at the wide size: everything fits, so the pane is fully
+    // scrolled down in the sense that scroll = entries.len() would be a
+    // stale, over-scrolled value once the pane shrinks. `browser_area` is
+    // set here to the wide-pane geometry.
+    let wide_backend = TestBackend::new(wide_w, wide_h);
+    let mut wide_terminal = Terminal::new(wide_backend).unwrap();
+    wide_terminal
+        .draw(|f| {
+            draw_browser(f, f.area(), &mut app);
+        })
+        .unwrap();
+    assert_eq!(
+        app.browser_area.height, 21,
+        "precondition: wide pane must fit all 12 entries (inner height 21)"
+    );
+
+    // Simulate a stale scroll offset carried over from a viewport taller
+    // than the one the terminal is about to shrink to — the exact
+    // situation the resize clamp must correct. `selected` is the last
+    // entry: the clamp keeps the selected row visible, so it must land on
+    // the last entry to reproduce the "user is at the bottom of a long
+    // list" scenario the bug affects.
+    if let Some(b) = app.browser.as_mut() {
+        b.scroll = ENTRY_COUNT as u16;
+        b.selected = ENTRY_COUNT - 1;
+    }
+
+    // Resize down. This draw call is the equivalent of the draw at the top
+    // of `run_loop`'s next iteration, which (via ratatui's autoresize)
+    // already reflects the smaller terminal and writes the smaller
+    // `browser_area` BEFORE the `Event::Resize` arm ever runs.
+    let narrow_backend = TestBackend::new(narrow_w, narrow_h);
+    let mut narrow_terminal = Terminal::new(narrow_backend).unwrap();
+    narrow_terminal
+        .draw(|f| {
+            draw_browser(f, f.area(), &mut app);
+        })
+        .unwrap();
+    assert_eq!(
+        app.browser_area.height, 6,
+        "precondition: narrow pane inner height must be term_height(9) - 1 \
+         status row - 2 border rows"
+    );
+
+    // This is the exact moment the `Event::Resize` arm runs in `run_loop` —
+    // BEFORE any cursor move.
+    reclamp_browser_scroll_on_resize(&mut app);
+
+    let b = app.browser.as_ref().expect("browser must exist");
+    let inner_h = app.browser_area.height as usize;
+    let last_visible_row_entry_idx = b.scroll as usize + inner_h.saturating_sub(1);
+
+    assert_eq!(
+        b.scroll as usize,
+        ENTRY_COUNT - inner_h,
+        "scroll must clamp to exactly entries.len() - browser_area.height \
+         (the correct max_scroll for the NEW pane), not one row short of it \
+         (scroll={}, inner_h={inner_h})",
+        b.scroll
+    );
+    assert!(
+        last_visible_row_entry_idx >= ENTRY_COUNT - 1,
+        "the last entry (index {}) must be within the visible window \
+         immediately after the resize, before any cursor move — got \
+         scroll={}, inner_h={inner_h}, so the last visible row shows entry \
+         index {last_visible_row_entry_idx}",
+        ENTRY_COUNT - 1,
+        b.scroll
+    );
+}
