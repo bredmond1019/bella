@@ -5,7 +5,7 @@
 │  hooks                                                                                                     │
 │  scripts                                                                                                   │
 │  tests                                                                                                     │
-│  AGENT.md                                                                                                  │
+│  AGENTS.md                                                                                                 │
 │  CLAUDE.md                                                                                                 │
 │  GEMINI.md                                                                                                 │
 │  log.md                                                                                                    │
