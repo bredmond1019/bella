@@ -65,7 +65,7 @@ fn run(
 ) -> Result<()> {
     let size = terminal.size().context("get terminal size")?;
 
-    let app = match file {
+    let mut app = match file {
         // No argument → browser at the current working directory.
         None => {
             let cwd = std::env::current_dir().context("get current directory")?;
@@ -80,6 +80,15 @@ fn run(
             app::App::new(src, path, size.width, size.height)
         }
     };
+
+    // Both constructors default to Theme::dark(); resolve the real theme once
+    // here — "auto" checks ~/.config/md/config.toml's `theme` field first,
+    // then falls back to $COLORFGBG terminal detection (bella-engine's
+    // theme::resolve/md_config::load, dormant since BE.2.F was parked
+    // wontfix; revived per OP.revive-theming-from-wontfix-be-2-f, D5).
+    let cfg = bella_engine::md_config::load();
+    let theme = bella_engine::theme::resolve("auto", &cfg);
+    app.set_theme(theme);
 
     events::run_loop(terminal, app)
 }

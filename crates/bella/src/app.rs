@@ -224,11 +224,12 @@ impl App {
         let corpus_root = bella_engine::browser::resolve_corpus_root(&file);
         let mut render_worker = RenderWorker::spawn();
         let base_dir = file.parent().map(Path::to_path_buf);
+        let theme = Theme::dark();
         let render_generation = render_worker.request_render(
             src.clone(),
             base_dir,
             width,
-            Theme::dark(),
+            theme.clone(),
             None,
             TableExpansions::new(),
         );
@@ -265,7 +266,7 @@ impl App {
             render_generation,
             render_state: RenderState::Loading,
             pending_scroll_anchor: None,
-            theme: Theme::dark(),
+            theme,
             corpus_root,
             rail_focused: false,
             rail_selected: 0,
@@ -279,10 +280,11 @@ impl App {
     pub fn new_browser(dir: PathBuf, width: u16, term_height: u16) -> Self {
         let viewport_height = term_height.saturating_sub(1);
         let corpus_root = bella_engine::browser::resolve_corpus_root(&dir);
+        let theme = Theme::dark();
         // Reader fields are empty until a file is opened from the browser. The
         // document is empty, so there is nothing worth offloading — render it
         // synchronously and start the worker already `Ready`.
-        let (lines, link_map, checkbox_map, headings) = render_metadata("", width, None);
+        let (lines, link_map, checkbox_map, headings) = render_metadata("", width, None, &theme);
         let browser = Browser::new(dir.clone());
         Self {
             src: String::new(),
@@ -317,11 +319,31 @@ impl App {
             render_generation: 0,
             render_state: RenderState::Ready,
             pending_scroll_anchor: None,
-            theme: Theme::dark(),
+            theme,
             corpus_root,
             rail_focused: false,
             rail_selected: 0,
         }
+    }
+
+    /// Override the active theme post-construction and re-render the current
+    /// document against it. Both constructors default to [`Theme::dark`] so
+    /// every existing call site (tests included) is unaffected; the real
+    /// terminal-detected/config-resolved theme is applied here instead, once,
+    /// right after construction — see `main.rs`.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+        let base_dir = self.file.parent().map(Path::to_path_buf);
+        self.render_generation = self.render_worker.request_render(
+            self.src.clone(),
+            base_dir,
+            self.width,
+            self.theme.clone(),
+            None,
+            TableExpansions::new(),
+        );
+        self.render_state = RenderState::Loading;
+        self.lines = loading_lines();
     }
 
     /// Open a file from the browser.
@@ -509,7 +531,7 @@ impl App {
             self.src.clone(),
             base_dir,
             width,
-            Theme::dark(),
+            self.theme.clone(),
             None,
             TableExpansions::new(),
         );
@@ -765,7 +787,7 @@ impl App {
             self.src.clone(),
             base_dir,
             self.width,
-            Theme::dark(),
+            self.theme.clone(),
             None,
             TableExpansions::new(),
         );
@@ -1122,9 +1144,9 @@ fn render_metadata(
     src: &str,
     width: u16,
     base_dir: Option<&Path>,
+    theme: &Theme,
 ) -> (Vec<Line<'static>>, LinkMap, CheckboxMap, Vec<HeadingInfo>) {
-    let theme = Theme::dark();
-    let rendered = render_with_edit(src, base_dir, width, &theme, None, &TableExpansions::new());
+    let rendered = render_with_edit(src, base_dir, width, theme, None, &TableExpansions::new());
     (
         rendered.lines,
         rendered.link_map,
@@ -1142,7 +1164,9 @@ mod tests {
     use std::io::Write as _;
     use std::path::PathBuf;
 
-    use super::App;
+    use bella_engine::Theme;
+
+    use super::{App, RenderState};
     use crate::history::HistoryEntry;
 
     fn make_app(line_count: usize, viewport: u16) -> App {
@@ -3074,5 +3098,23 @@ mod tests {
             app.history().can_back(),
             "a push through history_mut() must be visible through history()"
         );
+    }
+
+    #[test]
+    fn set_theme_updates_self_theme_and_triggers_a_new_render() {
+        let mut app = make_app(1, 5);
+        app.block_until_ready();
+        assert_eq!(app.theme.name, "dark", "precondition: default theme");
+        let prior_generation = app.render_generation;
+
+        app.set_theme(Theme::light());
+
+        assert_eq!(app.theme.name, "light");
+        assert!(
+            app.render_generation > prior_generation,
+            "set_theme must request a fresh render, not just flip the field"
+        );
+        app.block_until_ready();
+        assert_eq!(app.render_state, RenderState::Ready);
     }
 }
