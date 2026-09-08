@@ -743,7 +743,8 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
     let entries = keymap_entries();
 
     // Group entries by mode for display (Reader, Browser, Tree/Rail, Search).
-    let mut by_mode: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    let mut by_mode: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
     for entry in entries {
         let mode_label = entry.mode.label().to_string();
         let key_str = format_key(entry.code);
@@ -757,7 +758,7 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
             key_str
         };
         let binding = format!("{:<12} {}", mods_str, entry.description);
-        by_mode.entry(mode_label).or_insert_with(Vec::new).push(binding);
+        by_mode.entry(mode_label).or_default().push(binding);
     }
 
     // Render grouped sections with mode headings.
@@ -780,10 +781,10 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
     }
 
     // Remove trailing blank line if present
-    if let Some(last) = lines.last() {
-        if last.spans.is_empty() || last.spans.iter().all(|s| s.content.is_empty()) {
-            lines.pop();
-        }
+    if let Some(last) = lines.last()
+        && (last.spans.is_empty() || last.spans.iter().all(|s| s.content.is_empty()))
+    {
+        lines.pop();
     }
 
     frame.render_widget(Paragraph::new(lines), inner);
