@@ -11,6 +11,51 @@ timestamp: "2026-09-02T14:45:00Z"
 
 ---
 
+## [run: 2026-09-08] BE.7.G BAILED
+
+**What:** Drove `BE.7.G` (scoped `doc_id` index + navigable `related:`) through `/sdlc-flow`,
+tasks 1-4 attempted, 3/4 passed, final verdict **BAILED**. Task 1 added
+`crates/bella-engine/src/docindex.rs`: a pure, synchronous `doc_id`-to-path index (Resolved /
+Unresolved / Ambiguous) walking one corpus root and following symlinks, plus a new
+`LinkTarget::DocId` variant. Task 2 gave `App` a lazy, off-render-thread, at-most-once-per-session
+index build (NotBuilt/Building/Ready/Failed) driven by a new one-shot `DocIndexWorker`, with a
+measured real-corpus build cost of ~43s / 42,683 files against the whole HQ fleet root. Task 3 made
+the rail's `related:` rows clickable and keyboard-activatable through the same follow/history path
+as body links, with distinct display states per resolution outcome. Task 4 added the
+`wide_reader_related_states` scene (celia.toml + fixture corpus) covering all three outcomes on one
+scene; the text-tier check passed 3x and the cross-repo bastion gate was green (build+test, 2988
+passed), but task 4 also surfaced a confirmed, out-of-scope production defect —
+`App::poll_doc_index()` is never called anywhere in `events.rs::run_loop`, so the rail's `related:`
+rows never leave the "Building..." state in the real binary, which blocks the image-tier VHS
+capture for the new scene. The run then **BAILED** during `task_validation_1` (celia text-tier
+check invoked directly from this wrap-up context): tmux infrastructure was unavailable for scene
+capture — `tmux send-keys`/`capture-pane` failed with "can't find pane" / "no server running" across
+all three scenes attempted, exit code 4 — an environment failure (IMMEDIATE-BAIL reason 3), not a
+code defect.
+
+**Notable decisions:** task 4 consolidated all three required display states onto one scene rather
+than three, since each scene launch re-pays the ~43s real-corpus index build; the blocking
+`poll_doc_index()` gap was left unfixed (belongs to task 3's files, not task 4's) and documented as
+a follow-up. Spec status stays "In progress" — see `planning/status.md` Current focus and
+`planning/blocks/BE.7.G.json`'s D18 amendment for the full finding.
+
+**Next:** a follow-up task/patch must wire `app.poll_doc_index()` into `events.rs::run_loop`
+(beside the existing `app.poll_render()`) before this block's image-tier VHS gate can pass, then
+resume `/sdlc-flow BE.7.G` from task 4 once tmux infra is available for scene capture.
+
+```
+231af98 feat: implement BE.7.G-task4
+49cd205 feat: implement BE.7.G-task3
+e9f5526 feat: implement BE.7.G-task2
+5529e70 feat: implement BE.7.G-task1
+732e933 Merge BE.7.K: durable message log + diagnostics view
+6c597b0 feat: implement BE.7.K-task3 (code) — diagnostic routing + scene manifest
+b46745a feat: implement BE.7.K-task3 — route silent diagnostics into the log
+39ccfa8 feat: implement BE.7.K-task2
+```
+
+---
+
 ## [run: 2026-09-08] BE.7.F done
 
 **What:** Drove `BE.7.F` (metadata pane in the rail) through `/sdlc-flow`, 3/3 tasks passed, review
