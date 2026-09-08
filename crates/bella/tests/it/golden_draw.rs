@@ -66,11 +66,13 @@ fn make_browser_app(width: u16, height: u16) -> App {
             path: PathBuf::from("docs"),
             display: "docs".to_string(),
             kind: BrowserEntryKind::Dir,
+            ..Default::default()
         });
         b.entries.push(BrowserEntry {
             path: PathBuf::from("README.md"),
             display: "README.md".to_string(),
             kind: BrowserEntryKind::Markdown,
+            ..Default::default()
         });
     }
     app
@@ -250,6 +252,7 @@ fn browser_last_entry_visible_immediately_after_resize_before_cursor_move() {
                 path: PathBuf::from(format!("entry_{i}.md")),
                 display: format!("entry_{i}"),
                 kind: BrowserEntryKind::Markdown,
+                ..Default::default()
             });
         }
     }

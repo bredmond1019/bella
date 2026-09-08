@@ -559,6 +559,16 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         Action::BrowserDescend => {
             // Collect what to do before taking a mutable borrow.
             let descend_dir = app.browser.as_ref().and_then(|b| b.descend());
+            // `matches!` is equality-shaped, not exhaustive — it is invisible
+            // to the compiler's exhaustiveness check that `descend()` relies
+            // on, so a new `BrowserEntryKind` variant does not surface here
+            // as a compile error. Examined for `ExpandedDir` (BE.7.H task 1):
+            // deliberately still excluded from "open as file" — an
+            // ExpandedDir entry is a directory row (already handled by
+            // `descend_dir` above, which returns `Some` for it), so it must
+            // never also be treated as an openable file. If a future
+            // directory-shaped variant is added, decide this site
+            // explicitly too, the way this comment does now.
             let open_file = app.browser.as_ref().and_then(|b| {
                 b.selected_entry().and_then(|e| {
                     if matches!(e.kind, BrowserEntryKind::Markdown) {
@@ -594,6 +604,12 @@ pub(crate) fn apply(action: Action, app: &mut App) {
             }
             // Then descend/open the now-selected entry.
             let descend_dir = app.browser.as_ref().and_then(|b| b.descend());
+            // Same site-by-site examination as `Action::BrowserDescend`
+            // above: `matches!` is equality-shaped, not exhaustive, so a
+            // new `BrowserEntryKind` variant is invisible to it. `ExpandedDir`
+            // (BE.7.H task 1) is deliberately excluded here too — it is a
+            // directory row, already routed through `descend_dir`, and must
+            // never double as an openable file.
             let open_file = app.browser.as_ref().and_then(|b| {
                 b.selected_entry().and_then(|e| {
                     if matches!(e.kind, BrowserEntryKind::Markdown) {
@@ -1932,6 +1948,7 @@ mod tests {
                     path: PathBuf::from(format!("entry_{i}")),
                     display: format!("entry_{i}"),
                     kind: BrowserEntryKind::Markdown,
+                    ..Default::default()
                 });
             }
             // Start scrolled all the way down for a pane that could only fit 5 rows.
@@ -1977,6 +1994,7 @@ mod tests {
                     path: PathBuf::from(format!("entry_{i}")),
                     display: format!("entry_{i}"),
                     kind: BrowserEntryKind::Markdown,
+                    ..Default::default()
                 });
             }
             b.scroll = 0;

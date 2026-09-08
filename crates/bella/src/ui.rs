@@ -472,7 +472,14 @@ pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
         let prefix = if is_selected { "▶ " } else { "  " };
 
         let style = match entry.kind {
-            BrowserEntryKind::ParentDir | BrowserEntryKind::Dir => dir_style,
+            // `ExpandedDir` (BE.7.H task 1's widening) is still a
+            // directory-styled row here — the expand/collapse marker and
+            // indentation the tree pane needs are BE.7.H task 2's own
+            // deliverable, not this block's; this arm only keeps the match
+            // exhaustive so the enum widening compiles.
+            BrowserEntryKind::ParentDir | BrowserEntryKind::Dir | BrowserEntryKind::ExpandedDir => {
+                dir_style
+            }
             BrowserEntryKind::Markdown => file_style,
         };
 
@@ -1418,6 +1425,7 @@ mod tests {
                 path: std::path::PathBuf::from(display),
                 display: display.to_string(),
                 kind,
+                ..Default::default()
             });
         }
     }
