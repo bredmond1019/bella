@@ -344,6 +344,43 @@ height = 43
 min_bytes = 25000
 tape = "scripts/vhs/reference-wide.tape"
 
+# --- related: rows (BE.7.G task 4) ----------------------------------------
+#
+# A single scene shows all THREE display states at once, per
+# `related_demo.md`'s own doc comment: `related:` carries one doc_id
+# claimed by exactly one document (Resolved), one claimed by none
+# (Unresolved), and one claimed by two (Ambiguous) — the same shape as
+# `ui.rs`'s
+# `metadata_pane_related_rows_render_resolved_unresolved_and_ambiguous_distinctly`
+# golden test. One scene rather than three: each scene launch pays the
+# SAME real, whole-fleet doc_id index build BE.7.G task 2 measured at
+# ~43s on this machine (`resolve_corpus_root` walks up to this fleet's
+# `brain.toml`, not `core/bella` alone), so three separate scenes would
+# only triple that cost for no extra visual coverage — the one screenshot
+# already carries all three states legibly, exactly like the golden test
+# it mirrors.
+#
+# `settle = 60.0` overrides the manifest's 0.4s default for BOTH the
+# sleep after the "t" key AND the driver's own post-loop settle (celia's
+# `TmuxDriver::run_scene` sleeps `settle` after every key AND once more
+# before capture) — 120s total, comfortably past the ~43s measured build
+# time even under load. This is a deliberate outlier next to this
+# manifest's other per-scene overrides (0.5s, 0.6s above); it exists
+# because celia's text tier has no readiness-wait primitive
+# (unlike the image tier's `Wait+Screen`, see reference-wide.tape's
+# matching scene) — a fixed sleep is the only tool available, so it must
+# outlast the real build rather than approximate it.
+[[scene]]
+# target: scripts/vhs/fixtures/related_demo.md
+name = "wide_reader_related_states"
+args = ["scripts/vhs/fixtures/related_demo.md"]
+keys = ["t"]
+settle = 60.0
+width = 110
+height = 43
+min_bytes = 30000
+tape = "scripts/vhs/reference-wide.tape"
+
 # --- The image tier: bella's existing VHS tapes -------------------------
 #
 # output_dir is carried verbatim from the tapes' own `Screenshot` lines
