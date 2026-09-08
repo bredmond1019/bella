@@ -11,6 +11,7 @@ pub mod app;
 pub mod buildstamp;
 pub mod events;
 pub mod history;
+pub mod messages;
 pub mod render_worker;
 pub mod selection;
 pub mod ui;

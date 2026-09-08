@@ -17,6 +17,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use crate::history::{History, HistoryEntry};
+use crate::messages::MessageLog;
 use crate::render_worker::{RenderWorker, is_latest};
 use crate::selection::{self, Selection};
 use bella_engine::browser::Browser;
@@ -159,8 +160,22 @@ pub struct App {
     /// Active search state, if any.
     pub search: Option<SearchState>,
     /// Non-fatal status message to display in the status line (e.g. file-not-found).
-    /// Cleared on the next successful action that overwrites it.
+    /// Cleared on the next successful action that overwrites it, and on
+    /// `load_file`.
+    ///
+    /// This is the transient half of bella's diagnostic channel; the
+    /// durable half is [`Self::message_log`]. Today this field is still an
+    /// independently-written copy rather than a computed view of the log —
+    /// routing the existing diagnostic call sites through the log (so this
+    /// becomes a pure view of its most recent entry) is BE.7.K task 3; this
+    /// field's read shape and clearing behavior are unchanged so that task
+    /// does not have to touch every call site that reads it.
     pub status_message: Option<String>,
+    /// Durable diagnostic log (BE.7.K). Bounded, timestamped, severity
+    /// tagged. Unlike `status_message`, `load_file` never clears this — a
+    /// message raised before a file load is still readable in the
+    /// diagnostics overlay (task 2) after it happens.
+    pub message_log: MessageLog,
     /// Back/forward navigation history stack (Task 6).
     ///
     /// Private (BE.7.E task 2): every external read/write goes through
@@ -305,6 +320,7 @@ impl App {
             toggled_checkboxes: HashSet::new(),
             search: None,
             status_message: None,
+            message_log: MessageLog::default(),
             history: History::new(),
             body_area: Rect::default(),
             rail_open: false,
@@ -362,6 +378,7 @@ impl App {
             toggled_checkboxes: HashSet::new(),
             search: None,
             status_message: None,
+            message_log: MessageLog::default(),
             history: History::new(),
             body_area: Rect::default(),
             rail_open: false,
@@ -3322,5 +3339,93 @@ mod tests {
         );
         app.block_until_ready();
         assert_eq!(app.render_state, RenderState::Ready);
+    }
+
+    // --- message log (BE.7.K task 1) ---
+
+    #[test]
+    fn messages_retained_across_load_file_while_status_message_clears() {
+        use crate::messages::Severity;
+
+        let dir = tempdir_for_test("message_log_retention");
+        let target_content = "# Loaded\n\nSome content.";
+        let target_path = write_temp_file(&dir, "loaded.md", target_content);
+
+        let mut app = App::new("Original".to_string(), PathBuf::from("orig.md"), 80, 25);
+        app.block_until_ready();
+        app.status_message = Some("something happened".to_string());
+        app.message_log.push("something happened", Severity::Info);
+        assert_eq!(app.message_log.len(), 1, "precondition: one message logged");
+
+        app.load_file(target_path.clone())
+            .expect("load_file must succeed");
+        app.block_until_ready();
+
+        assert!(
+            app.status_message.is_none(),
+            "load_file must still clear the transient status line"
+        );
+        assert_eq!(
+            app.message_log.len(),
+            1,
+            "load_file must NOT clear the durable message log"
+        );
+        assert_eq!(
+            app.message_log
+                .latest()
+                .expect("log must still hold the message")
+                .text,
+            "something happened",
+            "the retained message's text must be unchanged"
+        );
+    }
+
+    // Retention-gate capability check (acceptance criterion 2): the test
+    // above (`messages_retained_across_load_file_while_status_message_clears`)
+    // was shown capable of failing. Temporarily inserted, at the top of
+    // `load_file` right after `self.file = path;`:
+    //
+    //   self.message_log = crate::messages::MessageLog::default();
+    //
+    // then ran `cargo nextest run -p bella messages_retained` and observed:
+    //
+    //   thread 'app::tests::messages_retained_across_load_file_while_status_message_clears'
+    //   panicked at crates/bella/src/app.rs:3369:9:
+    //   assertion `left == right` failed: load_file must NOT clear the durable message log
+    //     left: 0
+    //    right: 1
+    //
+    // Reverted immediately after observing the failure; `load_file` does not
+    // touch `message_log` in the committed code (see above).
+    #[test]
+    fn message_log_survives_multiple_loads() {
+        use crate::messages::Severity;
+
+        let dir = tempdir_for_test("message_log_multi_load");
+        let path_a = write_temp_file(&dir, "a.md", "# A");
+        let path_b = write_temp_file(&dir, "b.md", "# B");
+
+        let mut app = App::new("Original".to_string(), PathBuf::from("orig.md"), 80, 25);
+        app.block_until_ready();
+        app.message_log.push("first", Severity::Warning);
+
+        app.load_file(path_a).expect("load a");
+        app.block_until_ready();
+        app.message_log.push("second", Severity::Error);
+
+        app.load_file(path_b).expect("load b");
+        app.block_until_ready();
+
+        assert_eq!(
+            app.message_log.len(),
+            2,
+            "both messages must survive two successive load_file calls"
+        );
+        let texts: Vec<&str> = app
+            .message_log
+            .iter_newest_first()
+            .map(|m| m.text.as_str())
+            .collect();
+        assert_eq!(texts, vec!["second", "first"]);
     }
 }
