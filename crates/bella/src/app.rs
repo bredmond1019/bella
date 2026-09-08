@@ -257,6 +257,11 @@ pub struct App {
     /// is a pure function of this flag plus `message_log`, so toggling it
     /// off and redrawing reproduces the exact pre-overlay frame.
     pub diagnostics_open: bool,
+    /// Whether the help overlay (BE.7.I task 2) is currently open.
+    /// Opens from Reader, Browser and rail focus via the same key; drawing
+    /// is a pure function of this flag plus the keymap table, so toggling it
+    /// off and redrawing reproduces the exact pre-overlay frame.
+    pub help_open: bool,
     /// Back/forward navigation history stack (Task 6).
     ///
     /// Private (BE.7.E task 2): every external read/write goes through
@@ -435,6 +440,7 @@ impl App {
             status_message: None,
             message_log: MessageLog::default(),
             diagnostics_open: false,
+            help_open: false,
             history: History::new(),
             body_area: Rect::default(),
             rail_open: false,
@@ -502,6 +508,7 @@ impl App {
             status_message: None,
             message_log: MessageLog::default(),
             diagnostics_open: false,
+            help_open: false,
             history: History::new(),
             body_area: Rect::default(),
             rail_open: false,

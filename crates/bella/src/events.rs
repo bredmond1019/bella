@@ -116,6 +116,9 @@ pub enum Action {
     /// the same key from both Reader and Browser focus so the operator has
     /// one thing to remember regardless of mode.
     ToggleDiagnostics,
+    /// Toggle the help overlay (BE.7.I task 2) open/closed. Shows keybindings
+    /// derived from the keymap table, dismissible via '?' or 'Esc'.
+    ToggleHelp,
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +368,13 @@ pub fn keymap_entries() -> Vec<KeymapEntry> {
             "Toggle the diagnostics overlay",
         ),
         KeymapEntry::new(
+            KeyCode::Char('?'),
+            None,
+            Reader,
+            || Action::ToggleHelp,
+            "Toggle the help overlay",
+        ),
+        KeymapEntry::new(
             KeyCode::Backspace,
             None,
             Reader,
@@ -430,6 +440,13 @@ pub fn keymap_entries() -> Vec<KeymapEntry> {
             || Action::ToggleDiagnostics,
             "Toggle the diagnostics overlay",
         ),
+        KeymapEntry::new(
+            KeyCode::Char('?'),
+            None,
+            Browser,
+            || Action::ToggleHelp,
+            "Toggle the help overlay",
+        ),
         KeymapEntry::new(KeyCode::Char('q'), None, Browser, || Action::Quit, "Quit"),
         KeymapEntry::new(
             KeyCode::Char('c'),
@@ -494,6 +511,13 @@ pub fn keymap_entries() -> Vec<KeymapEntry> {
             Rail,
             || Action::RailToggle,
             "Toggle the rail open/closed",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('?'),
+            None,
+            Rail,
+            || Action::ToggleHelp,
+            "Toggle the help overlay",
         ),
         KeymapEntry::new(KeyCode::Char('q'), None, Rail, || Action::Quit, "Quit"),
         KeymapEntry::new(
@@ -1038,6 +1062,9 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         Action::ToggleDiagnostics => {
             app.diagnostics_open = !app.diagnostics_open;
         }
+        Action::ToggleHelp => {
+            app.help_open = !app.help_open;
+        }
     }
 }
 
@@ -1149,23 +1176,29 @@ pub fn run_loop(
 
         match event::read()? {
             Event::Key(key) => {
-                let action = match app.mode {
-                    Mode::Browser => map_browser_key(key),
-                    Mode::Reader => {
-                        // In search input mode, character keys feed into the query instead of
-                        // the normal key bindings.
-                        let in_search_input =
-                            app.search.as_ref().map(|s| s.input_mode).unwrap_or(false);
-                        if in_search_input {
-                            map_search_key(key)
-                        } else if app.rail_focused {
-                            map_rail_key(key)
-                        } else {
-                            map_key(key, app.viewport_height)
+                // Handle 'Esc' to dismiss the help overlay if it's open
+                // (BE.7.I task 2). If closed, let normal key dispatch proceed.
+                if key.code == KeyCode::Esc && app.help_open {
+                    app.help_open = false;
+                } else {
+                    let action = match app.mode {
+                        Mode::Browser => map_browser_key(key),
+                        Mode::Reader => {
+                            // In search input mode, character keys feed into the query instead of
+                            // the normal key bindings.
+                            let in_search_input =
+                                app.search.as_ref().map(|s| s.input_mode).unwrap_or(false);
+                            if in_search_input {
+                                map_search_key(key)
+                            } else if app.rail_focused {
+                                map_rail_key(key)
+                            } else {
+                                map_key(key, app.viewport_height)
+                            }
                         }
-                    }
-                };
-                apply(action, &mut app);
+                    };
+                    apply(action, &mut app);
+                }
             }
             Event::Resize(width, height) => {
                 // Reader-mode re-render at the new width happens on the next

@@ -12,6 +12,7 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::App;
+use crate::events::keymap_entries;
 use crate::messages::{Message, MessageLog, Severity};
 use bella_engine::FrontmatterValue;
 use bella_engine::browser::BrowserEntryKind;
@@ -172,6 +173,12 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
     // pre-overlay buffer — nothing above this point reads `diagnostics_open`.
     if app.diagnostics_open {
         draw_diagnostics_overlay(frame, area, &app.message_log);
+    }
+
+    // Help overlay (BE.7.I task 2): drawn after diagnostics so it can appear
+    // on top if both are somehow open (though toggling one closes the other).
+    if app.help_open {
+        draw_help_overlay(frame, area);
     }
 
     body_area.height
@@ -626,6 +633,12 @@ pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.diagnostics_open {
         draw_diagnostics_overlay(frame, area, &app.message_log);
     }
+
+    // Help overlay (BE.7.I task 2): drawn after diagnostics so it can appear
+    // on top if both are somehow open (though toggling one closes the other).
+    if app.help_open {
+        draw_help_overlay(frame, area);
+    }
 }
 
 /// Render browser mode's status line: current directory, selection position,
@@ -711,6 +724,91 @@ fn draw_diagnostics_overlay(frame: &mut Frame, area: Rect, log: &MessageLog) {
             .collect()
     };
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Render the help overlay: keybindings from the declarative keymap table
+/// (BE.7.I task 1), grouped by mode (Reader/Browser/Tree/Search), derived
+/// rather than hand-written so adding a binding is a one-edit (the table itself).
+/// Dismissal via '?' or 'Esc' reproduces the exact pre-overlay frame (BE.7.I task 2).
+fn draw_help_overlay(frame: &mut Frame, area: Rect) {
+    let overlay_area = centered_rect(90, 80, area);
+    frame.render_widget(Clear, overlay_area);
+
+    let block = Block::default().borders(Borders::ALL).title(" Help ");
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    // Build lines from keymap table, grouped by mode, with truncation.
+    let mut lines: Vec<Line> = Vec::new();
+    let entries = keymap_entries();
+
+    // Group entries by mode for display (Reader, Browser, Tree/Rail, Search).
+    let mut by_mode: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for entry in entries {
+        let mode_label = entry.mode.label().to_string();
+        let key_str = format_key(entry.code);
+        let mods_str = if let Some(mods) = entry.required_modifiers {
+            if mods.contains(ratatui::crossterm::event::KeyModifiers::CONTROL) {
+                "Ctrl-".to_string() + &key_str
+            } else {
+                key_str
+            }
+        } else {
+            key_str
+        };
+        let binding = format!("{:<12} {}", mods_str, entry.description);
+        by_mode.entry(mode_label).or_insert_with(Vec::new).push(binding);
+    }
+
+    // Render grouped sections with mode headings.
+    let max_width = inner.width.saturating_sub(2) as usize;
+    for (mode_label, bindings) in by_mode.iter() {
+        // Mode heading
+        lines.push(Line::from(Span::styled(
+            mode_label.clone(),
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+
+        // Bindings for this mode
+        for binding in bindings {
+            let truncated = truncate_to_width(binding, max_width);
+            lines.push(Line::from(Span::raw(truncated)));
+        }
+
+        // Blank line between sections
+        lines.push(Line::from(""));
+    }
+
+    // Remove trailing blank line if present
+    if let Some(last) = lines.last() {
+        if last.spans.is_empty() || last.spans.iter().all(|s| s.content.is_empty()) {
+            lines.pop();
+        }
+    }
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Format a KeyCode for display in the help overlay.
+fn format_key(code: ratatui::crossterm::event::KeyCode) -> String {
+    use ratatui::crossterm::event::KeyCode;
+    match code {
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Up => "↑".to_string(),
+        KeyCode::Down => "↓".to_string(),
+        KeyCode::Left => "←".to_string(),
+        KeyCode::Right => "→".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "PgUp".to_string(),
+        KeyCode::PageDown => "PgDn".to_string(),
+        KeyCode::Delete => "Del".to_string(),
+        KeyCode::Backspace => "Bksp".to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        _ => format!("{:?}", code),
+    }
 }
 
 /// Compute a centered `Rect` occupying `percent_x`/`percent_y` of `area`.
