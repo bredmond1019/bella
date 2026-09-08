@@ -457,6 +457,18 @@ height = 43
 min_bytes = 90000
 tape = "scripts/vhs/reference-wide.tape"
 
+[[scene]]
+# BE.7.I task 2: help overlay opened from Reader focus via '?'
+# Shows keybindings derived from the table, grouped by mode (Reader/Browser/Tree/Search)
+# Dismissible via '?' again or 'Esc'
+name = "wide_reader_help_overlay"
+args = ["scripts/vhs/fixtures/demo.md"]
+keys = ["?"]
+width = 110
+height = 43
+min_bytes = 100000
+tape = "scripts/vhs/reference-wide.tape"
+
 # --- The image tier: bella's existing VHS tapes -------------------------
 #
 # output_dir is carried verbatim from the tapes' own `Screenshot` lines

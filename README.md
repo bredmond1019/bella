@@ -69,6 +69,7 @@ cargo install --path crates/bella
 | `n` / `N` | Next / previous search match |
 | `Esc` | Clear link focus, or cancel an in-progress search |
 | `Backspace` | Return to the file browser |
+| `?` | Toggle the help overlay — every binding for the current mode, grouped by section |
 | `q` / `Ctrl-C` | Quit |
 
 ### Browser mode (no file open — navigating a directory)
@@ -79,6 +80,7 @@ cargo install --path crates/bella
 | `k` / `↑` | Move cursor up |
 | `Enter` | Open the selected file, or descend into the selected directory |
 | `Backspace` | Ascend to the parent directory |
+| `?` | Toggle the help overlay |
 | `q` / `Ctrl-C` | Quit |
 
 ### Mouse — reader mode
