@@ -1,0 +1,281 @@
+# celia.toml — bella's celia manifest, replacing scripts/vhs/scenes.toml.
+#
+# CE.1.D task 2: a TRANSLATION of scripts/vhs/scenes.toml, field by field.
+# Every name, key sequence, dimension pair, settle override and min_bytes
+# below is copied verbatim from that file — none of it is re-derived or
+# "improved". Do not hand-tune a value here without re-deriving it from a
+# verified-good capture the way scenes.toml's own comments describe.
+#
+# KNOWN GAP, NOT SILENTLY WORKED AROUND (found authoring this file,
+# 2026-09-07): celia's `Scene` (crates/celia-core/src/manifest.rs) has no
+# per-scene override of `[target]` — `program`/`args`/`cwd` are one value
+# for the WHOLE manifest, resolved once in `driver.rs::run_scene` as
+# `&manifest.target`. bella's own scenes.toml drives the SAME binary at SIX
+# distinct positional targets across these 19 scenes (`scripts/vhs/fixtures/
+# demo.md`, `README.md`, `.`, `scripts/vhs/fixtures/reveal_demo`,
+# `scripts/vhs/fixtures/symlink_demo/linked`,
+# `scripts/vhs/fixtures/scroll_anchor.md`) — celia's schema cannot express
+# that with one `[target]` table, exactly the same shape of gap task 1 found
+# and fixed for per-scene terminal dimensions (`width`/`height` on `Scene`).
+# This is CE.1.D task 2's own acceptance criteria (AC1) deliberately does
+# NOT list "target" among the fields this file must match verbatim — only
+# name, key sequence, dimensions, settle override and min_bytes, which is
+# exactly celia's current per-scene field set. The `# target:` comment on
+# each `[[scene]]` below preserves bella's original value losslessly so a
+# follow-up prerequisite task (a `Scene::program`/`Scene::args` override,
+# same `Option<T>`-inherits-the-manifest-default shape as `width`/`height`)
+# can wire it up without re-deriving anything. Until that lands, `celia
+# check` against this manifest (CE.1.D task 3) will mismatch every scene
+# whose target differs from `[target]` below.
+#
+# SECOND GAP, also carried forward verbatim rather than papered over: the
+# `narrow_scroll_anchor_after_resize` scene's last key is the literal
+# `RESIZE:30x10` pseudo-key. bella's own `capture_scenes.sh` special-cased
+# this token as a live `tmux resize-window` (never sent to the app) — the
+# only way that manifest can exercise the real `Event::Resize` path bella's
+# scroll anchoring reacts to. celia's `driver.rs::send_key_argv` has no
+# such special case: a token longer than one character is sent as a literal
+# tmux named-key argument, so `RESIZE:30x10` would be forwarded to `tmux
+# send-keys` as an (invalid) key name today. Kept verbatim per this task's
+# "do not re-derive the key sequence" rule; task 3's `celia check` run is
+# where this will surface.
+
+golden_dir = "tests/scenes"
+
+[target]
+# No per-scene override exists yet (see the gap above) — this is bella's
+# release binary with no fixed positional argument, matching
+# capture_scenes.sh's own `BINARY="$REPO_ROOT/target/release/bella"`. Each
+# scene's actual bella invocation argument is recorded verbatim in that
+# scene's `# target:` comment below.
+program = "./target/release/bella"
+args = []
+cwd = "."
+
+[settle]
+# scenes.toml's [defaults] table, carried verbatim.
+launch_settle = 2.0
+key_settle = 0.4
+
+# --- Wide (~110x43 cols) -----------------------------------------------
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+name = "wide_reader_demo_top"
+keys = []
+width = 110
+height = 43
+min_bytes = 130000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+name = "wide_reader_demo_tasks_code"
+keys = [
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+]
+width = 110
+height = 43
+min_bytes = 150000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+name = "wide_reader_demo_table"
+keys = [
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down",
+]
+width = 110
+height = 43
+min_bytes = 140000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+name = "wide_reader_search"
+keys = [
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down",
+  "/", "t", "a", "s", "k", "Enter",
+]
+width = 110
+height = 43
+settle = 0.5
+min_bytes = 135000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: README.md
+name = "wide_reader_readme_top"
+keys = []
+width = 110
+height = 43
+min_bytes = 230000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: .
+name = "wide_browser_root"
+keys = []
+width = 110
+height = 43
+min_bytes = 30000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: .
+name = "wide_browser_selection"
+keys = ["Down", "Down"]
+width = 110
+height = 43
+min_bytes = 30000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: .
+name = "wide_browser_nested"
+keys = ["Down", "Down", "Enter"]
+width = 110
+height = 43
+settle = 0.6
+min_bytes = 34000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/reveal_demo
+name = "wide_browser_reveal_off"
+keys = []
+width = 110
+height = 43
+min_bytes = 25000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/reveal_demo
+name = "wide_browser_reveal_on"
+keys = ["r"]
+width = 110
+height = 43
+min_bytes = 25000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/symlink_demo/linked
+name = "wide_browser_planning_symlink"
+keys = []
+width = 110
+height = 43
+min_bytes = 25000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+name = "wide_reader_rail_on"
+keys = ["t"]
+width = 110
+height = 43
+min_bytes = 90000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+name = "wide_reader_rail_off"
+keys = ["t", "t"]
+width = 110
+height = 43
+min_bytes = 130000
+tape = "scripts/vhs/reference-wide.tape"
+
+# --- Narrow (~65x27 cols) — wrap/reflow check ---------------------------
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+name = "narrow_reader_demo_top"
+keys = []
+width = 65
+height = 27
+min_bytes = 75000
+tape = "scripts/vhs/reference-narrow.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+name = "narrow_reader_demo_table"
+keys = [
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down",
+  "Down", "Down",
+]
+width = 65
+height = 27
+min_bytes = 25000
+tape = "scripts/vhs/reference-narrow.tape"
+
+[[scene]]
+# target: .
+name = "narrow_browser_root"
+keys = []
+width = 65
+height = 27
+min_bytes = 19000
+tape = "scripts/vhs/reference-narrow.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+name = "narrow_reader_rail_collapse"
+keys = ["t"]
+width = 40
+height = 27
+min_bytes = 15000
+tape = "scripts/vhs/reference-collapse.tape"
+
+# --- Scroll anchoring ----------------------------------------------------
+
+[[scene]]
+# target: scripts/vhs/fixtures/scroll_anchor.md
+name = "wide_scroll_anchor_top"
+keys = ["Down", "Down", "Down", "Down"]
+width = 80
+height = 10
+min_bytes = 200000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/scroll_anchor.md
+# See the "SECOND GAP" note at the top of this file: RESIZE:30x10 is a
+# live mid-capture tmux resize in bella's original driver, carried verbatim
+# even though celia's driver does not yet special-case it.
+name = "narrow_scroll_anchor_after_resize"
+keys = ["Down", "Down", "Down", "Down", "RESIZE:30x10"]
+width = 80
+height = 10
+min_bytes = 150000
+tape = "scripts/vhs/reference-narrow.tape"
+
+# --- The image tier: bella's existing VHS tapes -------------------------
+#
+# output_dir is carried verbatim from the tapes' own `Screenshot` lines
+# (reference-wide.tape, reference-narrow.tape, reference-collapse.tape all
+# write to planning/artifacts/screenshots/<scene>.png) — the tapes are not
+# modified by this task, so this must match what they already do, even
+# though celia's own docs advise against a vault-symlink path for a
+# consumer's OWN golden output. This is bella's pre-existing setup, not a
+# regression introduced by this migration.
+[image]
+output_dir = "planning/artifacts/screenshots"
+render_source_paths = [
+  "crates/bella/src/ui.rs",
+  "crates/bella/src/theme.rs",
+  "crates/bella-engine/src/markdown.rs",
+  "crates/bella-engine/src/theme.rs",
+  "crates/bella-engine/src/palette.rs",
+]
+
+[image.tool]
+command = "vhs"
+args = ["{tape}"]
