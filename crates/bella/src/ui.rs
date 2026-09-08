@@ -730,6 +730,12 @@ fn draw_diagnostics_overlay(frame: &mut Frame, area: Rect, log: &MessageLog) {
 /// (BE.7.I task 1), grouped by mode (Reader/Browser/Tree/Search), derived
 /// rather than hand-written so adding a binding is a one-edit (the table itself).
 /// Dismissal via '?' or 'Esc' reproduces the exact pre-overlay frame (BE.7.I task 2).
+///
+/// Covered by `tests/it/golden_draw.rs`'s `help_overlay` module: opening
+/// from Reader/Browser/Tree focus, exact-frame dismissal via a golden
+/// buffer, and a capability-checked assertion that every row's content
+/// comes from [`crate::events::keymap_entries`] with no second, hand-written
+/// copy to keep in sync.
 fn draw_help_overlay(frame: &mut Frame, area: Rect) {
     let overlay_area = centered_rect(90, 80, area);
     frame.render_widget(Clear, overlay_area);

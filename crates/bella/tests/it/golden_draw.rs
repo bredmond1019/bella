@@ -482,6 +482,207 @@ mod diagnostics_overlay {
     }
 }
 
+/// BE.7.I task 2: the `?` help overlay opens over the frame from Reader,
+/// Browser AND Tree/rail focus, its content is derived from
+/// [`bella::events::keymap_entries`] (never a hand-written literal), and
+/// dismissal restores the exact pre-overlay frame — the same contract
+/// [`diagnostics_overlay`] pins for BE.7.K's overlay, reused rather than a
+/// second overlay mechanism invented for this one.
+mod help_overlay {
+    use bella::app::RailSection;
+    use bella::events::keymap_entries;
+
+    use super::*;
+
+    /// Large enough that every one of [`keymap_entries`]'s ~50 rows (plus
+    /// four mode headings and their separating blank lines) fits inside the
+    /// overlay's `centered_rect(90, 80, area)` without truncation — measured
+    /// against the table's current size with headroom for it to grow.
+    const HELP_WIDTH: u16 = 140;
+    const HELP_HEIGHT: u16 = 80;
+
+    fn buf_to_rows(buf: &ratatui::buffer::Buffer, width: u16, height: u16) -> Vec<String> {
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn opens_over_reader_focus() {
+        let mut app = make_reader_app(HELP_WIDTH, HELP_HEIGHT);
+        app.help_open = true;
+
+        let backend = TestBackend::new(HELP_WIDTH, HELP_HEIGHT);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let rows = buf_to_rows(&buf, HELP_WIDTH, HELP_HEIGHT);
+        assert!(
+            rows.iter().any(|r| r.contains("Scroll down")),
+            "overlay must be drawn over reader focus when help_open is set; rows: {rows:#?}"
+        );
+    }
+
+    #[test]
+    fn opens_over_browser_focus() {
+        let mut app = make_browser_app(HELP_WIDTH, HELP_HEIGHT);
+        app.help_open = true;
+
+        let backend = TestBackend::new(HELP_WIDTH, HELP_HEIGHT);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_browser(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let rows = buf_to_rows(&buf, HELP_WIDTH, HELP_HEIGHT);
+        assert!(
+            rows.iter().any(|r| r.contains("Browser")),
+            "overlay must be drawn over browser focus when help_open is set, with a \
+             'Browser' mode heading; rows: {rows:#?}"
+        );
+    }
+
+    /// Opens from Tree/rail focus too — the third of the three focuses the
+    /// acceptance criteria name (Reader, Browser, tree).
+    #[test]
+    fn opens_over_tree_focus() {
+        let mut app = make_reader_app(HELP_WIDTH, HELP_HEIGHT);
+        app.rail_open = true;
+        app.rail_focused = true;
+        app.rail_section = RailSection::Tree;
+        app.help_open = true;
+
+        let backend = TestBackend::new(HELP_WIDTH, HELP_HEIGHT);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let rows = buf_to_rows(&buf, HELP_WIDTH, HELP_HEIGHT);
+        assert!(
+            rows.iter().any(|r| r.contains("Tree / Rail")),
+            "overlay must be drawn over tree/rail focus when help_open is set, with a \
+             'Tree / Rail' mode heading; rows: {rows:#?}"
+        );
+    }
+
+    /// Dismissal must restore the previous frame EXACTLY — asserted against
+    /// a golden buffer, not by eye. Mirrors
+    /// [`diagnostics_overlay::dismissal_restores_previous_frame_exactly`].
+    #[test]
+    fn dismissal_restores_previous_frame_exactly() {
+        let mut app = make_reader_app(HELP_WIDTH, HELP_HEIGHT);
+
+        let backend = TestBackend::new(HELP_WIDTH, HELP_HEIGHT);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Draw closed — the baseline frame.
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf_before = terminal.backend().buffer().clone();
+
+        // Open the overlay and draw — must differ from the baseline.
+        app.help_open = true;
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf_open = terminal.backend().buffer().clone();
+        assert_ne!(
+            buf_before, buf_open,
+            "opening the help overlay must change the rendered frame"
+        );
+
+        // Dismiss (mirrors the '?'/Esc key handler setting help_open =
+        // false) and draw again — must match the baseline exactly.
+        app.help_open = false;
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf_after = terminal.backend().buffer().clone();
+        assert_eq!(
+            buf_before, buf_after,
+            "dismissing the help overlay must restore the exact pre-overlay frame"
+        );
+    }
+
+    /// Content is DERIVED from [`keymap_entries`], never a second,
+    /// hand-written literal: every entry's description renders somewhere in
+    /// the overlay, read straight from the same table `map_key` and its
+    /// siblings dispatch from.
+    ///
+    /// CAPABILITY CHECK (acceptance criterion 3: "add a binding to the table
+    /// and confirm it appears in the overlay with no other edit"):
+    /// temporarily added, as the last row of `keymap_entries()`'s Reader
+    /// section:
+    ///
+    ///   KeymapEntry::new(
+    ///       KeyCode::Char('y'),
+    ///       None,
+    ///       Reader,
+    ///       || Action::RailCycleSection,
+    ///       "zzz probe binding for BE.7.I task 2",
+    ///   ),
+    ///
+    /// — with no edit to `draw_help_overlay` or to this test. Ran
+    /// `cargo nextest run -p bella help_overlay::content_is_derived_from_the_keymap_table`
+    /// and observed:
+    ///
+    ///   PASS [   0.017s] (1/1) bella::it golden_draw::help_overlay::content_is_derived_from_the_keymap_table
+    ///
+    /// This test iterates every live entry and asserts each one's
+    /// description is present in the rendered rows, so a PASS here means the
+    /// temporary 51st row's probe description was found rendered alongside
+    /// the other 50 — proof the overlay reads straight from the table with
+    /// no second, hand-written copy to update. Reverted immediately after
+    /// observing it; the committed `keymap_entries()` carries no `'y'` row.
+    #[test]
+    fn content_is_derived_from_the_keymap_table() {
+        let mut app = make_reader_app(HELP_WIDTH, HELP_HEIGHT);
+        app.help_open = true;
+
+        let backend = TestBackend::new(HELP_WIDTH, HELP_HEIGHT);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let rows = buf_to_rows(&buf, HELP_WIDTH, HELP_HEIGHT);
+        let full = rows.join("\n");
+
+        for entry in keymap_entries() {
+            assert!(
+                full.contains(entry.description),
+                "keymap entry description {:?} (mode {:?}) must appear in the help \
+                 overlay rendered from keymap_entries() with no separate literal; \
+                 rows:\n{full}",
+                entry.description,
+                entry.mode
+            );
+        }
+    }
+}
+
 /// BE.7.K task 2: `draw_browser_statusline` must display the latest
 /// retained message — before this task it took only
 /// `frame`/`area`/`browser`/`theme` and had no way to show one at all, so a
