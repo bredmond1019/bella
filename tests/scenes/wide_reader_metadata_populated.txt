@@ -1,0 +1,43 @@
+┌Contents──────────────┐
+│Bella Metadata Demo   │Bella Metadata Demo
+│  Body                │
+│                      │A single document whose OKF frontmatter exercises the metadata rail pane (BE.7.F): a
+│                      │bare scalar ( type ), an inline list ( keywords ), and a folded block scalar ( summary
+│                      │) that the restricted frontmatter reader keeps as  Raw  text.  description  is
+│                      │deliberately long enough to force the rail’s truncation-with-ellipsis path at the
+│                      │default rail width.
+│                      │
+│                      │Body
+│                      │
+│                      │This body exists only so the document isn’t a bare frontmatter block — the metadata
+│                      │pane renders from parsed frontmatter, not from the body, but a realistic fixture has
+│                      │both.
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+└──────────────────────┘
+┌Metadata──────────────┐
+│type: Reference       │
+│title: Bella Metadata…│
+│description: A fixtur…│
+│status: active        │
+│keywords: metadata, r…│
+│summary: >- A folded …│
+└──────────────────────┘
+ bella · metadata_demo.md · 15/15  j/k scroll · / search · [ ] history · q quit

@@ -57,7 +57,8 @@
 #   wide_reader_search, wide_reader_readme_top, wide_browser_root,
 #   wide_browser_selection, wide_browser_nested, wide_browser_reveal_off,
 #   wide_browser_reveal_on, wide_browser_planning_symlink, wide_scroll_anchor_top,
-#   wide_reader_rail_on, wide_reader_rail_off
+#   wide_reader_rail_on, wide_reader_rail_off, wide_reader_metadata_populated,
+#   wide_reader_metadata_empty
 #
 # Run from the repo root: vhs scripts/vhs/reference-wide.tape
 
@@ -223,5 +224,32 @@ Screenshot planning/artifacts/screenshots/wide_reader_rail_on.png
 Type "t"
 Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_reader_rail_off.png
+Type "q"
+Sleep 500ms
+
+# --- Metadata pane (BE.7.F task 3): populated, then the empty state ---
+Type "target/release/bella scripts/vhs/fixtures/metadata_demo.md"
+Enter
+Wait+Screen@30s /Bella Metadata Demo/
+Type "t"
+# "Metadata" is the pane's own bordered section title (see
+# ui::draw_rail_metadata) — on screen only once the rail is toggled open,
+# so this can't match before the keypress above.
+Wait+Screen@30s /Metadata/
+Sleep 1500ms
+Screenshot planning/artifacts/screenshots/wide_reader_metadata_populated.png
+Type "q"
+Sleep 500ms
+
+Type "target/release/bella scripts/vhs/fixtures/demo.md"
+Enter
+Wait+Screen@30s /Bella Reference Demo/
+Type "t"
+# "(no frontmatter)" is the Metadata section's explicit empty-state text
+# (METADATA_EMPTY_STATE) — demo.md carries no frontmatter fence, so this
+# only ever appears once the rail is toggled open on this fixture.
+Wait+Screen@30s /no frontmatter/
+Sleep 1500ms
+Screenshot planning/artifacts/screenshots/wide_reader_metadata_empty.png
 Type "q"
 Sleep 500ms

@@ -209,6 +209,35 @@ height = 43
 min_bytes = 130000
 tape = "scripts/vhs/reference-wide.tape"
 
+# --- Metadata pane (BE.7.F task 3) --------------------------------------
+#
+# New scenes, not a translation from scenes.toml — BE.7.F.3 owes coverage
+# of the metadata pane populated and its empty state. `wide_reader_rail_on`
+# above already shows the rail's Contents section on `demo.md`; these two
+# add the Metadata section beside it. `demo.md` has no frontmatter (its own
+# `---` at line 63 is a body blockquote/hr, not a fence at byte 0), so it
+# doubles as the empty-state fixture rather than adding a second one.
+
+[[scene]]
+# target: scripts/vhs/fixtures/metadata_demo.md
+name = "wide_reader_metadata_populated"
+args = ["scripts/vhs/fixtures/metadata_demo.md"]
+keys = ["t"]
+width = 110
+height = 43
+min_bytes = 30000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+name = "wide_reader_metadata_empty"
+args = ["scripts/vhs/fixtures/demo.md"]
+keys = ["t"]
+width = 110
+height = 43
+min_bytes = 90000
+tape = "scripts/vhs/reference-wide.tape"
+
 # --- Narrow (~65x27 cols) — wrap/reflow check ---------------------------
 
 [[scene]]
