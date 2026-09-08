@@ -247,17 +247,21 @@ fn rail_row_at(rail_area: Rect, col: u16, row: u16) -> Option<usize> {
 }
 
 /// Resolve a screen position to `(section, row)` against whichever rail
-/// section's own inner rect it falls in (BE.7.F) — `App::rail_contents_area`
-/// tried first, then `App::rail_metadata_area`. A position on a section's
-/// border/title, in the gap between sections, or outside the rail
-/// entirely is `None`: a no-op, never a panic, and never misattributed to
-/// the wrong section.
+/// section's own inner rect it falls in (BE.7.F, extended by BE.7.H task
+/// 2's Tree section) — `App::rail_contents_area` tried first, then
+/// `App::rail_metadata_area`, then `App::rail_tree_area`. A position on a
+/// section's border/title, in the gap between sections, or outside the
+/// rail entirely is `None`: a no-op, never a panic, and never
+/// misattributed to the wrong section.
 fn rail_section_row_at(app: &App, col: u16, row: u16) -> Option<(RailSection, usize)> {
     if let Some(r) = rail_row_at(app.rail_contents_area, col, row) {
         return Some((RailSection::Contents, r));
     }
     if let Some(r) = rail_row_at(app.rail_metadata_area, col, row) {
         return Some((RailSection::Metadata, r));
+    }
+    if let Some(r) = rail_row_at(app.rail_tree_area, col, row) {
+        return Some((RailSection::Tree, r));
     }
     None
 }
@@ -2560,11 +2564,19 @@ mod tests {
             app.rail_selected, 0,
             "Metadata is empty in this task, so selection must re-clamp to 0"
         );
+        // BE.7.H task 2 widens the cycle to three sections: Metadata ->
+        // Tree is next, not back around to Contents.
+        super::apply(Action::RailCycleSection, &mut app);
+        assert_eq!(
+            app.rail_section,
+            RailSection::Tree,
+            "cycle must move focus to Tree next"
+        );
         super::apply(Action::RailCycleSection, &mut app);
         assert_eq!(
             app.rail_section,
             RailSection::Contents,
-            "cycling again must return focus to Contents"
+            "third cycle must wrap back around to Contents"
         );
     }
 
@@ -2649,6 +2661,120 @@ mod tests {
                 row: 0
             }
         );
+    }
+
+    #[test]
+    fn map_mouse_click_inside_rail_tree_section_produces_rail_click_at() {
+        // BE.7.H task 2: the Tree section is the rail's third stacked
+        // area, mirroring `rail_metadata_area` above — same click-routing
+        // mechanism, no new dispatch code needed at the mouse layer.
+        let mut app = make_app();
+        app.rail_visible = true;
+        app.rail_contents_area = Rect {
+            x: 0,
+            y: 0,
+            width: 24,
+            height: 5,
+        };
+        app.rail_metadata_area = Rect {
+            x: 0,
+            y: 5,
+            width: 24,
+            height: 5,
+        };
+        app.rail_tree_area = Rect {
+            x: 0,
+            y: 10,
+            width: 24,
+            height: 5,
+        };
+        let ev = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 11,
+            modifiers: KeyModifiers::empty(),
+        };
+        assert_eq!(
+            super::map_mouse(ev, &app),
+            Action::RailClickAt {
+                section: RailSection::Tree,
+                row: 0
+            }
+        );
+    }
+
+    #[test]
+    fn apply_rail_click_at_on_tree_dir_expands_and_a_second_click_collapses() {
+        // Keyboard-parity + click-to-expand/collapse (BE.7.H task 2), driven
+        // through the same `Action::RailClickAt` a Contents/Metadata click
+        // uses — the tree adds no new Action variant.
+        let mut app = make_app();
+        let dir = crate::testsupport::unique_temp_dir("bella_events_tree_click");
+        std::fs::create_dir_all(dir.join("child")).expect("create child dir");
+        app.tree = Some(bella_engine::browser::Browser::new(dir));
+        let idx = app
+            .tree
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .position(|e| e.display == "child")
+            .expect("child dir must be listed");
+
+        super::apply(
+            Action::RailClickAt {
+                section: RailSection::Tree,
+                row: idx,
+            },
+            &mut app,
+        );
+        assert_eq!(
+            app.tree.as_ref().unwrap().entries[idx].kind,
+            bella_engine::browser::BrowserEntryKind::ExpandedDir,
+            "a click on a collapsed Dir row must expand it"
+        );
+
+        super::apply(
+            Action::RailClickAt {
+                section: RailSection::Tree,
+                row: idx,
+            },
+            &mut app,
+        );
+        assert_eq!(
+            app.tree.as_ref().unwrap().entries[idx].kind,
+            bella_engine::browser::BrowserEntryKind::Dir,
+            "a second click on the same (now expanded) row must collapse it"
+        );
+    }
+
+    #[test]
+    fn apply_rail_activate_on_tree_markdown_opens_it_via_keyboard_only() {
+        // Pure `map_rail_key`/`apply` path, no terminal — BE.7.E's
+        // keyboard-parity requirement extended to the tree: `Enter` while
+        // the rail is focused on the Tree section must open a Markdown
+        // row exactly as a click on it would.
+        let mut app = make_app();
+        let dir = crate::testsupport::unique_temp_dir("bella_events_tree_key_open");
+        std::fs::write(dir.join("doc.md"), "# doc").expect("write doc.md");
+        app.tree = Some(bella_engine::browser::Browser::new(dir.clone()));
+        app.rail_visible = true;
+        app.rail_focused = true;
+        app.rail_section = RailSection::Tree;
+        let idx = app
+            .tree
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .position(|e| e.display == "doc.md")
+            .expect("doc.md must be listed");
+        app.rail_selected = idx;
+
+        assert_eq!(map_rail_key(key(KeyCode::Enter)), Action::RailActivate);
+        super::apply(Action::RailActivate, &mut app);
+
+        assert_eq!(app.file(), dir.join("doc.md"));
     }
 
     #[test]
