@@ -9,8 +9,68 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
 use crate::app::App;
+use bella_engine::FrontmatterValue;
 use bella_engine::browser::BrowserEntryKind;
+
+/// Text shown in the Metadata section when the document has no frontmatter
+/// at all (or a fence with zero parsed entries) — BE.7.F task 2's empty
+/// state. Never a panic, never a blank pane: this is always the sole row
+/// whenever [`App::frontmatter`] has nothing to show.
+const METADATA_EMPTY_STATE: &str = "(no frontmatter)";
+
+/// Render one [`FrontmatterValue`] as a single display string.
+///
+/// `List` values (`keywords`, `related`, `layer` are all lists in this
+/// corpus) are joined with `", "` rather than rendered one item per rail
+/// row — a rail row IS the frontmatter *key*, not a nested list, and this
+/// pane has no sub-indentation model, so folding the list onto its key's
+/// one row is the shape that fits without inventing one. `Raw` values are
+/// shown verbatim; whatever shape the parser couldn't specifically
+/// understand is still the value the document actually has.
+fn format_frontmatter_value(value: &FrontmatterValue) -> String {
+    match value {
+        FrontmatterValue::Scalar(s) => s.clone(),
+        FrontmatterValue::List(items) => items.join(", "),
+        FrontmatterValue::Raw(s) => s.clone(),
+    }
+}
+
+/// Truncate `text` to at most `max_width` display columns, appending an
+/// ellipsis when it had to cut. TRUNCATES, NEVER WRAPS (BE.7.F task 2's
+/// contract for the Metadata pane) — the rail's region width must never
+/// change and no line may overflow into the body.
+///
+/// Cuts on CHARACTER boundaries via [`UnicodeWidthChar`], never on a byte
+/// index — this corpus's frontmatter is full of em dashes and accented
+/// text, and a byte-slice cut (`text.as_bytes()[..n]` / `&text[..n]` at an
+/// arbitrary byte offset) panics the instant `n` lands inside a multi-byte
+/// character's encoding. Width, not byte or char count, is what must fit
+/// the column budget — a wide glyph and an ASCII letter don't cost the
+/// same screen column.
+fn truncate_to_width(text: &str, max_width: usize) -> String {
+    if text.width() <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    // Reserve 1 column for the ellipsis itself.
+    let budget = max_width - 1;
+    let mut taken_bytes = 0usize;
+    let mut taken_width = 0usize;
+    for (byte_idx, ch) in text.char_indices() {
+        let cw = ch.width().unwrap_or(0);
+        if taken_width + cw > budget {
+            break;
+        }
+        taken_width += cw;
+        taken_bytes = byte_idx + ch.len_utf8();
+    }
+    format!("{}…", &text[..taken_bytes])
+}
 
 /// Fixed column width of the TOC rail when it is drawn.
 const RAIL_WIDTH: u16 = 24;
@@ -217,16 +277,71 @@ fn draw_rail_contents(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, inner);
 }
 
-/// Draw the Metadata section's frame. Established by BE.7.F task 1; the
-/// frontmatter content and its empty state are drawn here by task 2 — for
-/// now this section is always empty (`rail_section_len` returns 0), so it
-/// only ever renders its border/title.
+/// Draw the Metadata section: the current document's parsed frontmatter,
+/// one row per entry, in SOURCE order (never re-sorted — see
+/// `bella_engine::frontmatter`'s module doc, which names this pane as the
+/// reason the type is a `Vec` and not a map). A document with no
+/// frontmatter (or a fence with zero entries) renders
+/// [`METADATA_EMPTY_STATE`] instead of an empty pane, so the pane is never
+/// indistinguishable from a broken one. The row under keyboard focus
+/// (mirrors [`draw_rail_contents`]'s highlight) is only ever a real entry
+/// row's index — [`App::rail_section_len`] floors at `1` so the empty
+/// state has a row to occupy, but `rail_selected == 0` on an empty section
+/// highlights the empty-state line itself, which is harmless (there is
+/// nothing to activate onto either way — see [`App::rail_click`]).
 fn draw_rail_metadata(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Metadata")
         .style(Style::default().fg(app.theme.status_bg));
+    let inner = block.inner(area);
     frame.render_widget(block, area);
+
+    let section_focused = app.rail_focused && app.rail_section == crate::app::RailSection::Metadata;
+    let inner_width = inner.width as usize;
+
+    let entries: &[(String, FrontmatterValue)] = app
+        .frontmatter
+        .as_ref()
+        .map(|f| f.entries.as_slice())
+        .unwrap_or(&[]);
+
+    let lines: Vec<Line> = if entries.is_empty() {
+        let style = if section_focused && app.rail_selected == 0 {
+            Style::default()
+                .fg(app.theme.status_bg)
+                .bg(app.theme.status_fg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        vec![Line::from(Span::styled(
+            truncate_to_width(METADATA_EMPTY_STATE, inner_width),
+            style,
+        ))]
+    } else {
+        entries
+            .iter()
+            .enumerate()
+            .map(|(idx, (key, value))| {
+                let text = format!("{key}: {}", format_frontmatter_value(value));
+                let truncated = truncate_to_width(&text, inner_width);
+                let selected = section_focused && idx == app.rail_selected;
+                let style = if selected {
+                    Style::default()
+                        .fg(app.theme.status_bg)
+                        .bg(app.theme.status_fg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                Line::from(Span::styled(truncated, style))
+            })
+            .collect()
+    };
+
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, inner);
 }
 
 /// Draw the directory browser: a bordered full-screen pane titled with the
@@ -645,9 +760,9 @@ mod tests {
 
     use ratatui::{Terminal, backend::TestBackend};
 
-    use crate::app::App;
+    use crate::app::{App, RailSection};
 
-    use super::draw_reader;
+    use super::{RAIL_WIDTH, draw_reader};
 
     /// Build an app from a multi-line markdown document.
     fn make_app(src: &str, width: u16, height: u16) -> App {
@@ -1474,5 +1589,299 @@ mod tests {
             "Dir entry row (y=1) must have a different style than Markdown row (y=2) \
              in the text columns; the Dir should be bold+cyan"
         );
+    }
+
+    // --- BE.7.F task 2: `truncate_to_width` unit tests ---
+
+    #[test]
+    fn truncate_to_width_returns_unchanged_when_it_fits() {
+        assert_eq!(super::truncate_to_width("short", 20), "short");
+        assert_eq!(super::truncate_to_width("exact", 5), "exact");
+    }
+
+    #[test]
+    fn truncate_to_width_appends_ellipsis_when_it_overflows() {
+        let out = super::truncate_to_width("a much longer string than fits", 10);
+        assert!(out.ends_with('…'), "expected an ellipsis, got {out:?}");
+        assert!(
+            unicode_width::UnicodeWidthStr::width(out.as_str()) <= 10,
+            "truncated output must not exceed the width budget: {out:?}"
+        );
+    }
+
+    #[test]
+    fn truncate_to_width_handles_a_width_narrower_than_the_shortest_content() {
+        // max_width smaller than even one character plus the ellipsis.
+        let out = super::truncate_to_width("hello", 1);
+        assert_eq!(
+            out, "…",
+            "budget of 1 leaves room only for the ellipsis itself"
+        );
+    }
+
+    #[test]
+    fn truncate_to_width_zero_budget_is_empty_never_a_panic() {
+        assert_eq!(super::truncate_to_width("hello", 0), "");
+    }
+
+    #[test]
+    fn truncate_to_width_cuts_on_character_boundaries_never_a_byte_index() {
+        // A run of 2-byte-wide `é` characters (width 1 each): any byte-slice
+        // truncation at an arbitrary offset within this string is highly
+        // likely to land mid-character and panic. `char_indices`-based
+        // truncation must not, regardless of which budget is chosen.
+        let text: String = std::iter::repeat_n('é', 40).collect();
+        for width in 0..45 {
+            let out = super::truncate_to_width(&text, width);
+            assert!(
+                unicode_width::UnicodeWidthStr::width(out.as_str()) <= width,
+                "truncated output at width {width} exceeded budget: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn truncate_to_width_em_dash_straddling_the_cut_does_not_panic() {
+        // ASCII prefix, then a long run of em dashes (3 bytes, width 1
+        // each in UTF-8) — a naive `&text[..budget]` byte slice at almost
+        // any budget in range lands inside one of the dashes' multi-byte
+        // encoding. `truncate_to_width` must not panic at any width here.
+        let text = format!("Title {}", "—".repeat(30));
+        for width in 0..40 {
+            let out = super::truncate_to_width(&text, width);
+            assert!(
+                unicode_width::UnicodeWidthStr::width(out.as_str()) <= width,
+                "truncated output at width {width} exceeded budget: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn format_frontmatter_value_renders_all_three_arms() {
+        use bella_engine::FrontmatterValue;
+
+        assert_eq!(
+            super::format_frontmatter_value(&FrontmatterValue::Scalar("Plan".to_string())),
+            "Plan"
+        );
+        assert_eq!(
+            super::format_frontmatter_value(&FrontmatterValue::List(vec![
+                "alpha".to_string(),
+                "beta".to_string(),
+            ])),
+            "alpha, beta"
+        );
+        assert_eq!(
+            super::format_frontmatter_value(&FrontmatterValue::Raw("folded text".to_string())),
+            "folded text"
+        );
+    }
+
+    // --- BE.7.F task 2: metadata pane fixtures through `draw_reader` ---
+
+    /// Fixture with frontmatter whose SOURCE order differs from
+    /// alphabetical order (`type`, `keywords`, `description` — alphabetical
+    /// would be `description`, `keywords`, `type`), and which exercises all
+    /// three `FrontmatterValue` arms: `type` is a `Scalar`, `keywords` is a
+    /// `List`, and `description`'s folded `>-` block becomes a `Raw`.
+    const METADATA_FULL_FIXTURE: &str = "---\ntype: Plan\nkeywords: [gamma, alpha]\ndescription: >-\n  wraps across\n  lines\n---\n\n# Heading\n\nBody text.\n";
+
+    /// Fixture with a single frontmatter key.
+    const METADATA_SINGLE_KEY_FIXTURE: &str = "---\ntype: Note\n---\n\n# Heading\n";
+
+    /// Fixture with no frontmatter at all.
+    const METADATA_NONE_FIXTURE: &str = "# Heading\n\nJust a paragraph, no frontmatter fence.";
+
+    fn body_rows(
+        buf: &ratatui::buffer::Buffer,
+        x_start: u16,
+        width: u16,
+        height: u16,
+    ) -> Vec<String> {
+        (0..height)
+            .map(|y| {
+                (x_start..x_start + width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn metadata_pane_renders_full_fixture_keys_in_source_order_all_three_arms() {
+        let width: u16 = 120;
+        let height: u16 = 40;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app(METADATA_FULL_FIXTURE, width, height);
+        app.rail_open = true;
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        assert!(app.frontmatter.is_some(), "fixture has a frontmatter fence");
+        let entries = &app.frontmatter.as_ref().unwrap().entries;
+        assert_eq!(
+            entries.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["type", "keywords", "description"],
+            "source order must be preserved, not re-sorted alphabetically"
+        );
+
+        let buf = terminal.backend().buffer().clone();
+        // Rail spans x = 0..RAIL_WIDTH.
+        let rows = body_rows(&buf, 0, RAIL_WIDTH, height);
+        let full = rows.join("\n");
+
+        let type_row = rows
+            .iter()
+            .position(|r| r.contains("Plan"))
+            .expect("Scalar arm (type) must render");
+        let keywords_row = rows
+            .iter()
+            .position(|r| r.contains("gamma") && r.contains("alpha"))
+            .expect("List arm (keywords) must render, joined");
+        let description_row = rows
+            .iter()
+            // The rail is narrow enough (RAIL_WIDTH=24) that the full
+            // folded text truncates before "across" — just check the
+            // Raw value's visible prefix rendered at all.
+            .position(|r| r.contains("wraps"))
+            .expect("Raw arm (description) must render");
+
+        assert!(
+            type_row < keywords_row && keywords_row < description_row,
+            "keys must render in SOURCE order (type, keywords, description); rows:\n{full}"
+        );
+    }
+
+    #[test]
+    fn metadata_pane_renders_single_key_fixture() {
+        let width: u16 = 120;
+        let height: u16 = 40;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app(METADATA_SINGLE_KEY_FIXTURE, width, height);
+        app.rail_open = true;
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rows = body_rows(&buf, 0, RAIL_WIDTH, height);
+        assert!(
+            rows.iter().any(|r| r.contains("Note")),
+            "single-key fixture's value must render; rows:\n{}",
+            rows.join("\n")
+        );
+    }
+
+    #[test]
+    fn metadata_pane_renders_empty_state_for_document_with_no_frontmatter() {
+        // The gate this exists to prove capable of failing: an
+        // implementation that `unwraps()` `app.frontmatter` instead of
+        // handling `None` panics on this exact fixture. Observed against
+        // such an implementation during development (a bare
+        // `app.frontmatter.as_ref().unwrap().entries` in place of the
+        // `.map(...).unwrap_or(&[])` above) — it panicked with "called
+        // `Option::unwrap()` on a `None` value" instead of drawing the
+        // empty state; reverted before committing.
+        let width: u16 = 120;
+        let height: u16 = 40;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app(METADATA_NONE_FIXTURE, width, height);
+        app.rail_open = true;
+
+        assert!(
+            app.frontmatter.is_none(),
+            "fixture has no frontmatter fence"
+        );
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rows = body_rows(&buf, 0, RAIL_WIDTH, height);
+        assert!(
+            rows.iter().any(|r| r.contains("no frontmatter")),
+            "a document with no frontmatter must render an explicit empty state, \
+             never a panic and never a blank rail; rows:\n{}",
+            rows.join("\n")
+        );
+    }
+
+    #[test]
+    fn metadata_pane_truncates_long_value_with_multibyte_char_no_overflow() {
+        let width: u16 = 120;
+        let height: u16 = 40;
+        let src =
+            "---\ntitle: Café Café Café Café Café Café Café Café Café Café\n---\n\n# Heading\n";
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app(src, width, height);
+        app.rail_open = true;
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rows = body_rows(&buf, 0, RAIL_WIDTH, height);
+        let title_row = rows
+            .iter()
+            .find(|r| r.contains("title:"))
+            .expect("truncated title row must still render");
+        assert!(
+            title_row.contains('…'),
+            "an overlong value must be truncated with an ellipsis; row: {title_row:?}"
+        );
+        // The rail's region width (RAIL_WIDTH columns) must be unchanged
+        // and no content may have overflowed into the body: the body's
+        // first column (x = RAIL_WIDTH) must not carry the truncated tail.
+        let body_start_rows = body_rows(&buf, RAIL_WIDTH, 20, height);
+        assert!(
+            !body_start_rows.iter().any(|r| r.contains("Café")),
+            "truncated rail content must never overflow into the body region"
+        );
+    }
+
+    #[test]
+    fn metadata_pane_clears_and_rail_section_resets_on_load_file() {
+        let width: u16 = 120;
+        let height: u16 = 40;
+        let mut app = make_app(METADATA_FULL_FIXTURE, width, height);
+        assert!(app.frontmatter.is_some());
+
+        app.rail_section = RailSection::Metadata;
+        assert_eq!(app.rail_section, RailSection::Metadata);
+
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_metadata_load_file_reset");
+        let path = dir.join("no_fm.md");
+        std::fs::write(&path, METADATA_NONE_FIXTURE).unwrap();
+
+        app.load_file(path).unwrap();
+        app.block_until_ready();
+
+        assert!(
+            app.frontmatter.is_none(),
+            "switching to a document with no frontmatter must clear the old metadata"
+        );
+        assert_eq!(
+            app.rail_section,
+            RailSection::Contents,
+            "rail section focus must reset to Contents on load_file"
+        );
+        assert_eq!(app.rail_selected, 0);
     }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use bella_engine::{
-    CheckboxMap, LinkMap, Theme, body_pos,
+    CheckboxMap, Frontmatter, LinkMap, Theme, body_pos,
     links::{LinkTarget, TableExpansions, TableMap},
     markdown::{
         BlockInfo, HeadingInfo, Rendered, display_row_to_source_line, render_with_edit,
@@ -121,6 +121,14 @@ pub struct App {
     pub checkbox_map: CheckboxMap,
     /// Heading metadata extracted from the last render.
     pub headings: Vec<HeadingInfo>,
+    /// Parsed frontmatter from the currently loaded document, if it has
+    /// any (BE.7.F task 2). Populated by [`Self::apply_rendered`] straight
+    /// off `Rendered.frontmatter` (BE.7.A) and cleared on
+    /// [`Self::load_file`]. Entries are in source order — see
+    /// `bella_engine::frontmatter`'s module doc for why that type is a
+    /// `Vec`, not a map — so [`crate::ui::draw_rail_metadata`] renders
+    /// this directly without re-sorting.
+    pub frontmatter: Option<Frontmatter>,
     /// Per-block source-range / display-range mapping from the last render.
     /// Kept so a resize can resolve the current top display row to a
     /// source-line anchor (via [`bella_engine::markdown::display_row_to_source_line`])
@@ -285,6 +293,7 @@ impl App {
             link_map: LinkMap::default(),
             checkbox_map: CheckboxMap::default(),
             headings: Vec::new(),
+            frontmatter: None,
             blocks: Vec::new(),
             scroll: 0,
             viewport_height,
@@ -341,6 +350,7 @@ impl App {
             link_map,
             checkbox_map,
             headings,
+            frontmatter: None,
             blocks: Vec::new(),
             scroll: 0,
             viewport_height,
@@ -519,14 +529,23 @@ impl App {
 
     /// Number of rows in `section` — what `rail_selected` is clamped
     /// against and what [`crate::ui::draw_rail`] sizes the section's
-    /// on-screen height from. `Metadata`'s real count (parsed frontmatter
-    /// entries) lands in BE.7.F task 2; until then it is always empty, so
-    /// the section exists structurally but never receives keyboard focus
-    /// on a row that could underflow.
+    /// on-screen height from. `Metadata`'s count is the parsed
+    /// frontmatter's entry count (BE.7.F task 2), floored at `1`: even a
+    /// document with no frontmatter at all (or a fence with zero entries)
+    /// must give the section one row so its empty state has somewhere to
+    /// draw — see [`crate::ui::draw_rail_metadata`]. That floor is what
+    /// keeps [`crate::ui::rail_section_heights`] from allocating the
+    /// section a zero-content frame purely because there is nothing to
+    /// render yet.
     pub fn rail_section_len(&self, section: RailSection) -> usize {
         match section {
             RailSection::Contents => self.headings.len(),
-            RailSection::Metadata => 0,
+            RailSection::Metadata => self
+                .frontmatter
+                .as_ref()
+                .map(|f| f.entries.len())
+                .unwrap_or(0)
+                .max(1),
         }
     }
 
@@ -719,6 +738,7 @@ impl App {
         self.link_map = rendered.link_map;
         self.checkbox_map = rendered.checkbox_map;
         self.headings = rendered.headings;
+        self.frontmatter = rendered.frontmatter;
         self.blocks = rendered.blocks;
         self.render_state = RenderState::Ready;
         // If `render()` resolved a source-line anchor for this generation
@@ -901,6 +921,7 @@ impl App {
         self.link_map = LinkMap::default();
         self.checkbox_map = CheckboxMap::default();
         self.headings = Vec::new();
+        self.frontmatter = None;
         self.scroll = 0;
         self.focused_link = None;
         self.hovered_link = None;
@@ -910,6 +931,13 @@ impl App {
         self.drag_origin = None;
         self.selection = None;
         self.last_click = None;
+        // Rail section focus resets on document switch (BE.7.F task 2) —
+        // a section focused on one document's metadata (or a `rail_selected`
+        // row from it) has no meaning against the next document's, so both
+        // reset here alongside `headings`/`frontmatter` rather than only on
+        // the next explicit toggle.
+        self.rail_section = RailSection::Contents;
+        self.rail_selected = 0;
         Ok(())
     }
 
@@ -3122,8 +3150,9 @@ mod tests {
         assert_eq!(app.rail_section, RailSection::Metadata);
         assert_eq!(
             app.rail_selected, 0,
-            "Metadata is empty in this task, so the stale index from \
-             Contents must re-clamp to 0 rather than carry over"
+            "Metadata has no frontmatter here (length floored at 1, BE.7.F \
+             task 2), so the stale index (2) from Contents must re-clamp to \
+             0 rather than carry over"
         );
         app.cycle_rail_section();
         assert_eq!(app.rail_section, RailSection::Contents);
@@ -3179,16 +3208,18 @@ mod tests {
         app.rail_section = RailSection::Metadata;
         assert_eq!(
             app.rail_section_len(RailSection::Metadata),
-            0,
-            "precondition: Metadata is empty in this task"
+            1,
+            "precondition (BE.7.F task 2): Metadata has no frontmatter here, \
+             so its length is floored at 1 (the empty-state row), never 0 \
+             and never headings.len()"
         );
         app.rail_selected = 0;
         app.rail_move(1);
         assert_eq!(
             app.rail_selected, 0,
-            "Metadata has 0 rows, so rail_move must stay a no-op — clamping \
-             against headings.len() (3) instead would incorrectly move \
-             selection to 1"
+            "Metadata's 1-row (empty-state) length clamps rail_move's max to \
+             0, so this must stay a no-op — clamping against headings.len() \
+             (3) instead would incorrectly move selection to 1"
         );
     }
 
