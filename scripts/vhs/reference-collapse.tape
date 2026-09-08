@@ -20,8 +20,8 @@
 # keypress — the doc's own H1 is the readiness signal, matched BEFORE the
 # keypress, followed by a settle Sleep to cover the toggle itself.
 #
-# PINNED TO scripts/vhs/scenes.toml — this tape's `Screenshot` target and
-# scenes.toml's `[[scene]]` name must agree, or `scripts/check_scenes.sh`'s
+# PINNED TO celia.toml — this tape's `Screenshot` target and
+# celia.toml's `[[scene]]` name must agree, or the `scenes` harness check (celia)'s
 # parity assertion fails naming the missing side. Scene this tape owns:
 #   narrow_reader_rail_collapse
 #

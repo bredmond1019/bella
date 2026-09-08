@@ -90,8 +90,8 @@ cargo test                                   # full suite (authoritative)
 cargo clippy --all-targets -- -D warnings    # lint gate
 cargo fmt --check                            # format gate
 cargo run -p bella -- <file|dir>             # run the viewer
-bash scripts/capture_scenes.sh               # regenerate tier-2 text scene baselines (tests/scenes/)
-bash scripts/check_scenes.sh                 # diff tier-2 text scenes against baselines; gates as `scenes`
+cargo run --quiet --release --manifest-path ../celia/Cargo.toml -p celia-cli -- bless --manifest celia.toml   # regenerate tier-2 text scene baselines (tests/scenes/)
+cargo run --quiet --release --manifest-path ../celia/Cargo.toml -p celia-cli -- check --manifest celia.toml --tier text   # diff tier-2 text scenes; gates as `scenes`
 ```
 
 > **Stack note:** the SDLC harness/skills default to npm/Next assumptions. This is a Rust

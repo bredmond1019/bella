@@ -103,7 +103,7 @@ they answer different questions and fail in different ways.
 | Tier | What it captures | Gated? | Regenerate with |
 |---|---|---|---|
 | **1. Buffer assertions** | Geometry and content, in-process via ratatui's `TestBackend`. Never runs `main.rs` | yes, as part of `test` | ordinary `cargo` test runs |
-| **2. Text scenes** | What the **real release binary** prints, driven through tmux and diffed against committed baselines in `tests/scenes/` | yes, as `scenes` | `bash scripts/capture_scenes.sh` |
+| **2. Text scenes** | What the **real release binary** prints, driven through tmux and diffed against committed baselines in `tests/scenes/` | yes, as `scenes` | `cargo run --quiet --release --manifest-path ../celia/Cargo.toml -p celia-cli -- bless --manifest celia.toml` |
 | **3. VHS reference PNGs** | Colour, glyphs and font rendering, as images under a sanity + freshness gate — **not** pixel-diffed | yes, as `vhs-fresh` | `vhs scripts/vhs/reference-wide.tape` (and `-narrow`, `-collapse`) |
 
 Tier 1 can pass while the real binary shows nothing, because it never starts one. Tier 2 catches
@@ -111,11 +111,11 @@ that. Tier 3 is the only tier that sees colour, but images are non-deterministic
 antialiasing changes, so it is checked for *plausibility and freshness* rather than diffed.
 
 ```bash
-bash scripts/check_scenes.sh      # tier 2 — re-capture and diff against tests/scenes/
-bash scripts/check_vhs_fresh.sh   # tier 3 — sanity + freshness of the reference PNGs
+cargo run --quiet --release --manifest-path ../celia/Cargo.toml -p celia-cli -- check --manifest celia.toml --tier text    # tier 2 — re-capture and diff against tests/scenes/
+cargo run --quiet --release --manifest-path ../celia/Cargo.toml -p celia-cli -- check --manifest celia.toml --tier image   # tier 3 — sanity + freshness of the reference PNGs
 ```
 
-All three tiers read one manifest, `scripts/vhs/scenes.toml`, so a scene declared once is
+All three tiers read one manifest, `celia.toml`, so a scene declared once is
 consumed by both the text captures and the tapes.
 
 **Both gated checks are `perTask: false`** in `planning/harness.json` — they run once per block at
@@ -126,7 +126,7 @@ block-level one is.
 
 #### Four rules, each learned by breaking it
 
-1. **A green gate is not evidence a capture is good.** `check_vhs_fresh.sh` passed two corrupt
+1. **A green gate is not evidence a capture is good.** The pre-celia `check_vhs_fresh.sh` passed two corrupt
    references — a 20032-byte and a 25135-byte PNG, both showing a bare shell prompt. A blank
    frame's size depends on how much shell text is on screen, so **no byte threshold separates a
    blank from a sparse real frame.** After re-capturing, open the images and look at them.
@@ -137,7 +137,7 @@ block-level one is.
 3. **A scene's `target` must be a committed fixture or a stable in-repo path**, never a shared or
    generated directory. Use `scripts/vhs/fixtures/`. A baseline that captures a directory outside
    this repo's control drifts whenever anything else writes there.
-4. **Any block that changes what appears on screen owes a scene.** Add it to `scenes.toml` with a
+4. **Any block that changes what appears on screen owes a scene.** Add it to `celia.toml` with a
    per-scene `min_bytes`, commit the baseline, and review the diff against the previous set rather
    than accepting it blind.
 
@@ -202,7 +202,7 @@ the fastest way to confirm the key is even reaching you.
 
 Structured block work follows: `/generate-tasks → /implement → /test → /review-task → /document → /log-work`.
 
-The pipeline reads its validation commands from `planning/harness.json`. The current profile runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release`, `scripts/check_test_layout.sh` (plus its own fixture suite, `scripts/tests/test_check_test_layout.sh`), `scripts/check_scenes.sh`, and `scripts/check_vhs_fresh.sh` (see "Visual QA" above) as gating checks. Do not edit the workflow engine scripts (`.claude/workflows/*.js`) for stack reasons — only `harness.json`.
+The pipeline reads its validation commands from `planning/harness.json`. The current profile runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release`, `scripts/check_test_layout.sh` (plus its own fixture suite, `scripts/tests/test_check_test_layout.sh`), and the two celia-backed checks `scenes` (`--tier text`) and `vhs-fresh` (`--tier image`) (see "Visual QA" above) as gating checks. Do not edit the workflow engine scripts (`.claude/workflows/*.js`) for stack reasons — only `harness.json`.
 
 To start a new block:
 

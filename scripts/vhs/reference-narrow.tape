@@ -36,8 +36,8 @@
 # status lines (never the `·` field separator) and from plain document
 # text/filenames.
 #
-# PINNED TO scripts/vhs/scenes.toml — this tape's `Screenshot` targets and
-# scenes.toml's `[[scene]]` names must agree, or `scripts/check_scenes.sh`'s
+# PINNED TO celia.toml — this tape's `Screenshot` targets and
+# celia.toml's `[[scene]]` names must agree, or the `scenes` harness check (celia)'s
 # parity assertion (BE.7.L task 5) fails naming the missing side. Scenes
 # this tape owns (the `narrow_*` half of the manifest):
 #   narrow_reader_demo_top, narrow_reader_demo_table, narrow_browser_root,
@@ -103,9 +103,9 @@ Sleep 500ms
 # narrow reference size, scrolled to the same anchor heading as
 # wide_scroll_anchor_top in reference-wide.tape, to visually compare the
 # two. Named "after_resize" for parity with its text-capture counterpart in
-# scripts/vhs/scenes.toml, which resizes LIVE via tmux from wide to this
+# celia.toml, which resizes LIVE via tmux from wide to this
 # narrow size before capturing (VHS cannot do a mid-tape resize — see
-# scenes.toml's `keys` field doc) — this PNG is a fresh launch already at
+# celia.toml's `keys` field doc) — this PNG is a fresh launch already at
 # the narrow size, not an actual resize, but shows the same content.
 #
 # Down 10, not the wide tape's Down 4 (BE.ticket.vhs-wait-for-readiness

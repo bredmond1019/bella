@@ -49,8 +49,8 @@
 # status lines (never the `·` field separator) and from plain document
 # text/filenames.
 #
-# PINNED TO scripts/vhs/scenes.toml — this tape's `Screenshot` targets and
-# scenes.toml's `[[scene]]` names must agree, or `scripts/check_scenes.sh`'s
+# PINNED TO celia.toml — this tape's `Screenshot` targets and
+# celia.toml's `[[scene]]` names must agree, or the `scenes` harness check (celia)'s
 # parity assertion (BE.7.L task 5) fails naming the missing side. Scenes
 # this tape owns (the `wide_*` half of the manifest):
 #   wide_reader_demo_top, wide_reader_demo_tasks_code, wide_reader_demo_table,
@@ -183,10 +183,10 @@ Sleep 500ms
 
 # Scroll anchoring (BE.7.D task 3): the scroll_anchor.md fixture, scrolled
 # to a mid-document position, at bella's normal wide reference size. Its
-# text-capture counterpart in scripts/vhs/scenes.toml (same scene name,
+# text-capture counterpart in celia.toml (same scene name,
 # same fixture, same scroll count, at width 80x10) is the one that ALSO
 # resizes live via tmux before capturing — VHS cannot do that mid-tape (see
-# scenes.toml's `keys` field doc), so this PNG only supplies the "before"
+# celia.toml's `keys` field doc), so this PNG only supplies the "before"
 # half of the pair; the "after resize" half is narrow_scroll_anchor_after_resize
 # in reference-narrow.tape, captured at a fresh narrow launch instead of a
 # live resize, for the same reason.
