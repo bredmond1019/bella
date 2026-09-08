@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use bella_engine::{
-    CheckboxMap, Frontmatter, LinkMap, Theme, body_pos,
+    CheckboxMap, DocIndex, Frontmatter, LinkMap, Theme, body_pos,
     links::{LinkTarget, TableExpansions, TableMap},
     markdown::{
         BlockInfo, HeadingInfo, Rendered, display_row_to_source_line, render_with_edit,
@@ -18,9 +18,32 @@ use ratatui::text::Line;
 
 use crate::history::{History, HistoryEntry};
 use crate::messages::{MessageLog, Severity};
-use crate::render_worker::{RenderWorker, is_latest};
+use crate::render_worker::{DocIndexOutcome, DocIndexWorker, RenderWorker, is_latest};
 use crate::selection::{self, Selection};
 use bella_engine::browser::Browser;
+
+/// Lifecycle of BE.7.G's scoped doc_id index.
+///
+/// FOUR states, not two: `Building` and `Failed` are each their own state.
+/// Built lazily off the render thread on first `related:` use (never
+/// inside [`App::load_file`], which runs on every navigation) and at most
+/// once per session — see [`App::ensure_doc_index`].
+#[derive(Debug, Clone, Default)]
+pub enum DocIndexState {
+    /// No `related:` row has been used yet this session; the build has
+    /// not started.
+    #[default]
+    NotBuilt,
+    /// A build is in flight on the background worker.
+    Building,
+    /// The build completed; the index is ready to resolve doc_ids.
+    Ready(DocIndex),
+    /// The build failed — e.g. an unreadable corpus root. Distinct from
+    /// `Building` (so the rail never spins forever) and from
+    /// `bella_engine::docindex::Resolution::Unresolved` (a failed build
+    /// means "couldn't find out", not "no file claims this id").
+    Failed(String),
+}
 
 /// Rendering lifecycle for the current document/width: whether the
 /// background worker's result for the current generation has landed yet.
@@ -287,6 +310,16 @@ pub struct App {
     /// last frame — `Rect::default()` when the rail is not visible or the
     /// section is too short to draw (see [`crate::ui::draw_rail`]).
     pub rail_metadata_area: Rect,
+    /// Lifecycle of BE.7.G's scoped doc_id index. See [`DocIndexState`].
+    pub doc_index_state: DocIndexState,
+    /// Background worker for the in-flight doc-index build, if any.
+    /// `None` before the first build starts and once a landed result
+    /// (`Ready`/`Failed`) has been drained by [`Self::poll_doc_index`].
+    doc_index_worker: Option<DocIndexWorker>,
+    /// Number of doc-index builds actually started this session. Stays at
+    /// most 1 across repeated `related:` triggers and document loads —
+    /// see [`Self::ensure_doc_index`].
+    pub doc_index_build_count: usize,
 }
 
 impl App {
@@ -351,6 +384,9 @@ impl App {
             rail_section: RailSection::Contents,
             rail_contents_area: Rect::default(),
             rail_metadata_area: Rect::default(),
+            doc_index_state: DocIndexState::NotBuilt,
+            doc_index_worker: None,
+            doc_index_build_count: 0,
         }
     }
 
@@ -410,6 +446,9 @@ impl App {
             rail_section: RailSection::Contents,
             rail_contents_area: Rect::default(),
             rail_metadata_area: Rect::default(),
+            doc_index_state: DocIndexState::NotBuilt,
+            doc_index_worker: None,
+            doc_index_build_count: 0,
         };
         // BE.7.K task 3: a walk error in the very first listing (bella
         // launched directly at a directory with an unresolvable entry) must
@@ -826,6 +865,90 @@ impl App {
                     self.apply_rendered(result.rendered);
                 }
                 Ok(_stale) => continue,
+                Err(_) => break, // worker gone; avoid spinning forever
+            }
+        }
+    }
+
+    // --- scoped doc_id index (BE.7.G task 2) ---
+
+    /// Trigger the doc_id index build if it hasn't started yet this
+    /// session.
+    ///
+    /// Lazy and idempotent: the caller (task 3's `related:` row
+    /// activation) calls this on every use, but only the first call while
+    /// [`DocIndexState::NotBuilt`] actually spawns a build — any later
+    /// call while `Building`/`Ready`/`Failed` is a no-op. That is what
+    /// keeps the build to at most once per session
+    /// ([`Self::doc_index_build_count`]) and is why this is never called
+    /// from [`Self::load_file`], which runs on every navigation: a corpus
+    /// walk there would stall every document open.
+    ///
+    /// Returns immediately — the walk happens entirely on the background
+    /// [`DocIndexWorker`] thread, never on the caller's (render/draw)
+    /// thread.
+    pub fn ensure_doc_index(&mut self) {
+        if !matches!(self.doc_index_state, DocIndexState::NotBuilt) {
+            return;
+        }
+        self.doc_index_state = DocIndexState::Building;
+        self.doc_index_build_count += 1;
+        self.doc_index_worker = Some(DocIndexWorker::spawn(self.corpus_root.clone()));
+    }
+
+    /// Non-blocking drain of the doc-index worker: applies a landed
+    /// result (`Ready`/`Failed`) and returns `true`, or returns `false`
+    /// with no state change while the build is still in flight or hasn't
+    /// been triggered.
+    ///
+    /// Called every tick of `run_loop` alongside [`Self::poll_render`], so
+    /// a build in flight never blocks the draw loop or key handling — the
+    /// first frame after [`Self::ensure_doc_index`] renders immediately,
+    /// with the rail (task 3) reading [`Self::doc_index_state`] as
+    /// `Building` until this drains a result.
+    pub fn poll_doc_index(&mut self) -> bool {
+        let Some(worker) = self.doc_index_worker.as_mut() else {
+            return false;
+        };
+        let Some(outcome) = worker.try_recv() else {
+            return false;
+        };
+        self.apply_doc_index_outcome(outcome);
+        true
+    }
+
+    /// Apply a landed [`DocIndexOutcome`], routing a `Failed` build into
+    /// the diagnostic channel ([`Self::set_status`]) so the operator can
+    /// see why after the fact, per BE.7.K's message log.
+    fn apply_doc_index_outcome(&mut self, outcome: DocIndexOutcome) {
+        match outcome {
+            DocIndexOutcome::Ready(index) => {
+                self.doc_index_state = DocIndexState::Ready(index);
+            }
+            DocIndexOutcome::Failed(reason) => {
+                self.set_status(
+                    format!("doc_id index build failed: {reason}"),
+                    Severity::Error,
+                );
+                self.doc_index_state = DocIndexState::Failed(reason);
+            }
+        }
+        self.doc_index_worker = None;
+    }
+
+    /// Block until an in-flight doc-index build lands and apply it.
+    ///
+    /// Test-only synchronous counterpart to [`Self::block_until_ready`],
+    /// used so assertions don't need to spin-poll [`Self::poll_doc_index`].
+    /// A no-op when no build is in flight (`NotBuilt`/`Ready`/`Failed`).
+    #[cfg(test)]
+    pub(crate) fn block_until_doc_index_ready(&mut self) {
+        while matches!(self.doc_index_state, DocIndexState::Building) {
+            let Some(worker) = self.doc_index_worker.as_ref() else {
+                break;
+            };
+            match worker.recv_blocking() {
+                Ok(outcome) => self.apply_doc_index_outcome(outcome),
                 Err(_) => break, // worker gone; avoid spinning forever
             }
         }
@@ -1388,7 +1511,7 @@ mod tests {
 
     use bella_engine::Theme;
 
-    use super::{App, RailSection, RenderState};
+    use super::{App, DocIndexState, RailSection, RenderState};
     use crate::history::HistoryEntry;
 
     fn make_app(line_count: usize, viewport: u16) -> App {
@@ -3569,5 +3692,267 @@ mod tests {
             .map(|m| m.text.as_str())
             .collect();
         assert_eq!(texts, vec!["second", "first"]);
+    }
+
+    // --- scoped doc_id index (BE.7.G task 2) ---
+
+    fn doc_index_tempdir(label: &str) -> PathBuf {
+        crate::testsupport::unique_temp_dir(&format!("bella_docindex_{label}"))
+    }
+
+    #[test]
+    fn ensure_doc_index_moves_to_building_immediately_without_blocking() {
+        let dir = doc_index_tempdir("building_immediately");
+        write_temp_file(&dir, "a.md", "---\ndoc_id: a\n---\n");
+        let file = write_temp_file(&dir, "reader.md", "# Reader doc");
+
+        let mut app = App::new(std::fs::read_to_string(&file).unwrap(), file, 80, 25);
+        app.block_until_ready();
+        app.corpus_root = dir.clone();
+
+        assert!(
+            matches!(app.doc_index_state, DocIndexState::NotBuilt),
+            "no build has been triggered yet"
+        );
+
+        app.ensure_doc_index();
+
+        // `ensure_doc_index` returns having only spawned the background
+        // worker — the transition to `Building` happens synchronously on
+        // the calling thread, before the worker has had any chance to
+        // finish (or even start). This is what proves the trigger never
+        // blocks the caller (the draw loop, once task 3 wires this in):
+        // the first frame after the trigger sees `Building`, not a
+        // completed index, regardless of how fast the real build is.
+        assert!(
+            matches!(app.doc_index_state, DocIndexState::Building),
+            "state must be Building immediately after the trigger, before any poll"
+        );
+
+        app.block_until_doc_index_ready();
+        assert!(
+            matches!(app.doc_index_state, DocIndexState::Ready(_)),
+            "expected the build to land Ready"
+        );
+    }
+
+    #[test]
+    fn ensure_doc_index_is_built_at_most_once_per_session() {
+        let dir = doc_index_tempdir("once_per_session");
+        write_temp_file(&dir, "a.md", "---\ndoc_id: a\n---\n");
+        let file_a = write_temp_file(&dir, "reader-a.md", "# A");
+        let file_b = write_temp_file(&dir, "reader-b.md", "# B");
+        let file_c = write_temp_file(&dir, "reader-c.md", "# C");
+
+        let mut app = App::new(std::fs::read_to_string(&file_a).unwrap(), file_a, 80, 25);
+        app.block_until_ready();
+        app.corpus_root = dir;
+
+        // Several `related:`-use triggers, interleaved with document
+        // loads (which must themselves never trigger a build — see the
+        // next test).
+        app.ensure_doc_index();
+        app.block_until_doc_index_ready();
+        assert_eq!(app.doc_index_build_count, 1);
+
+        app.load_file(file_b).expect("load b");
+        app.block_until_ready();
+        app.ensure_doc_index();
+        app.load_file(file_c).expect("load c");
+        app.block_until_ready();
+        app.ensure_doc_index();
+        app.block_until_doc_index_ready();
+
+        assert_eq!(
+            app.doc_index_build_count, 1,
+            "repeated triggers across several document loads must not rebuild the index"
+        );
+        assert!(matches!(app.doc_index_state, DocIndexState::Ready(_)));
+    }
+
+    #[test]
+    fn load_file_never_triggers_a_doc_index_build() {
+        let dir = doc_index_tempdir("load_file_never_triggers");
+        write_temp_file(&dir, "a.md", "---\ndoc_id: a\n---\n");
+        let file_a = write_temp_file(&dir, "reader-a.md", "# A");
+        let file_b = write_temp_file(&dir, "reader-b.md", "# B");
+
+        let mut app = App::new(std::fs::read_to_string(&file_a).unwrap(), file_a, 80, 25);
+        app.block_until_ready();
+        app.corpus_root = dir;
+
+        app.load_file(file_b).expect("load_file must succeed");
+        app.block_until_ready();
+
+        assert!(
+            matches!(app.doc_index_state, DocIndexState::NotBuilt),
+            "load_file must never trigger a doc_id index build — corpus walks belong to \
+             the lazy, off-thread trigger only"
+        );
+        assert_eq!(app.doc_index_build_count, 0);
+    }
+
+    #[test]
+    fn a_failed_build_has_its_own_state_and_the_app_stays_usable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = doc_index_tempdir("failed_build_root");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000))
+            .expect("strip read permission from fixture root");
+
+        let reader_dir = doc_index_tempdir("failed_build_reader");
+        let file = write_temp_file(&reader_dir, "reader.md", "# Reader");
+
+        let mut app = App::new(std::fs::read_to_string(&file).unwrap(), file, 80, 25);
+        app.block_until_ready();
+        app.corpus_root = dir.clone();
+
+        app.ensure_doc_index();
+        app.block_until_doc_index_ready();
+
+        match &app.doc_index_state {
+            DocIndexState::Failed(reason) => {
+                assert!(
+                    !reason.is_empty(),
+                    "a Failed state must carry a non-empty reason"
+                );
+            }
+            other => panic!("expected DocIndexState::Failed for an unreadable root, got {other:?}"),
+        }
+        assert!(
+            !matches!(app.doc_index_state, DocIndexState::Building),
+            "a Failed build must not be reported as Building — no permanent spinner"
+        );
+        assert!(
+            app.status_message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("doc_id index build failed"),
+            "a Failed build must reach the diagnostic channel (BE.7.K message log)"
+        );
+        assert_eq!(
+            app.message_log.len(),
+            1,
+            "the failure must be routed into the durable message log too"
+        );
+
+        // The app must stay fully usable after a failed build — proven by
+        // continuing to drive it: load another file with no panic.
+        let reader_dir2 = doc_index_tempdir("failed_build_next_load");
+        let next = write_temp_file(&reader_dir2, "next.md", "# Next");
+        app.load_file(next)
+            .expect("app must remain usable after a Failed doc-index build");
+        app.block_until_ready();
+        assert_eq!(app.render_state, RenderState::Ready);
+
+        // Restore permissions so temp-dir cleanup can remove the fixture.
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755));
+    }
+
+    /// Task 2 AC: "The corpus root used is the one BE.7.C resolves ...
+    /// asserted on a fixture tree rather than assumed." Builds a fixture
+    /// where the file `App::new` is invoked with sits several directories
+    /// below a `brain.toml` marker, with the only doc_id-bearing document
+    /// living in a *sibling* subtree — reachable only if the index walks
+    /// from the resolved `brain.toml` root, not from the invoked file's
+    /// own directory.
+    #[test]
+    fn doc_index_walks_from_the_resolve_corpus_root_result_not_the_invoked_file_dir() {
+        let root = doc_index_tempdir("resolved_root");
+        std::fs::write(root.join("brain.toml"), "").expect("write brain.toml marker");
+
+        let sibling_dir = root.join("sibling");
+        std::fs::create_dir_all(&sibling_dir).expect("create sibling dir");
+        std::fs::write(
+            sibling_dir.join("target.md"),
+            "---\ndoc_id: sibling-doc\n---\n",
+        )
+        .expect("write sibling doc");
+
+        let leaf_dir = root.join("leaf").join("nested");
+        std::fs::create_dir_all(&leaf_dir).expect("create leaf dir");
+        let file = write_temp_file(&leaf_dir, "reader.md", "# Reader");
+
+        let mut app = App::new(std::fs::read_to_string(&file).unwrap(), file, 80, 25);
+        app.block_until_ready();
+
+        // Sanity: `App::new` really did resolve up to `root`, not
+        // `leaf/nested`.
+        assert_eq!(
+            app.corpus_root, root,
+            "precondition: corpus_root must resolve to brain.toml's dir"
+        );
+
+        app.ensure_doc_index();
+        app.block_until_doc_index_ready();
+
+        match &app.doc_index_state {
+            DocIndexState::Ready(index) => {
+                assert_eq!(
+                    index.resolve("sibling-doc"),
+                    bella_engine::DocResolution::Resolved(sibling_dir.join("target.md")),
+                    "the index must find a doc_id under the RESOLVED corpus root, \
+                     not merely under the invoked file's own directory"
+                );
+            }
+            other => panic!("expected Ready, got {other:?}"),
+        }
+    }
+
+    /// Task 2 AC: "MEASURE THE BUDGET AGAINST A REAL CORPUS ROOT, not a
+    /// fixture. Record files visited and wall time for this repo's own
+    /// root and state both in the block's evidence."
+    ///
+    /// MEASURED (not assumed) by hand, running `cargo nextest run -p bella
+    /// -E 'test(real_corpus_root_build_budget)' --run-ignored all
+    /// --no-capture` from this checkout, cwd = `crates/bella` (cargo's
+    /// default test-binary cwd for this crate):
+    ///
+    ///   root=/Users/brandon/Dev/agentic-portfolio files_visited=42683 elapsed=42.73s
+    ///
+    /// The root resolves to the whole HQ fleet root, NOT `core/bella`
+    /// itself: `resolve_corpus_root`'s order is invoked path, then
+    /// nearest ancestor `brain.toml`, then git root — and `brain.toml`
+    /// wins over `core/bella`'s own `.git` because it is found first
+    /// walking up (there is no closer `brain.toml`; see
+    /// `/Users/brandon/Dev/agentic-portfolio/brain.toml`). So a bella
+    /// session opened anywhere under this fleet checkout pays this real
+    /// cost on first `related:` use, not a scoped-down one — this is the
+    /// actual, measured budget for this repo's own root, not a fixture
+    /// number standing in for it.
+    ///
+    /// This is real evidence to fold into the block's review, not
+    /// something task 2 is scoped to fix — `docindex::build_index`
+    /// (task 1, already committed) deliberately walks past `.gitignore`
+    /// (`git_ignore(false)`) so a doc_id target resolves even when the
+    /// browser pane is hiding its directory, which is also why this walks
+    /// every repo's `target/`. `#[ignore]`d so routine `cargo nextest run
+    /// -p bella` stays fast; run explicitly (as above) to reproduce.
+    #[test]
+    #[ignore = "walks the whole real HQ corpus root (~43s) — evidence for \
+                review, not a routine-suite check; run with --run-ignored all"]
+    fn real_corpus_root_build_budget() {
+        let invoked = std::env::current_dir().expect("cwd");
+        let root = bella_engine::browser::resolve_corpus_root(&invoked);
+
+        let started = std::time::Instant::now();
+        let index = bella_engine::build_doc_index(&root);
+        let elapsed = started.elapsed();
+
+        eprintln!(
+            "BE.7.G task 2 build budget: root={} files_visited={} elapsed={:?}",
+            root.display(),
+            index.files_visited(),
+            elapsed
+        );
+
+        // A generous sanity ceiling — this only needs to catch a genuine
+        // hang/regression (e.g. an accidental repeated or non-lazy walk),
+        // not pin the measured ~43s number itself.
+        assert!(
+            elapsed < std::time::Duration::from_secs(300),
+            "build budget regression: {elapsed:?} against the real corpus root at {}",
+            root.display()
+        );
     }
 }
