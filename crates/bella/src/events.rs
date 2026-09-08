@@ -118,70 +118,463 @@ pub enum Action {
     ToggleDiagnostics,
 }
 
-/// Pure browser key→action mapper (unit-testable without a live terminal).
-///
-/// Handles directional movement, descend/open, ascend, and quit.  All other
-/// keys return [`Action::None`].
-pub fn map_browser_key(key: KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Char('j') | KeyCode::Down => Action::BrowserDown,
-        KeyCode::Char('k') | KeyCode::Up => Action::BrowserUp,
-        KeyCode::Enter => Action::BrowserDescend,
-        KeyCode::Backspace => Action::BrowserAscend,
-        KeyCode::Char('r') => Action::BrowserToggleReveal,
-        // Diagnostics overlay (BE.7.K task 2): 'm' for "messages", the same
-        // key as reader focus (see `map_key`) so browser focus is no longer
-        // a mode with no way to ask what happened.
-        KeyCode::Char('m') => Action::ToggleDiagnostics,
-        KeyCode::Char('q') => Action::Quit,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
-        _ => Action::None,
+// ---------------------------------------------------------------------------
+// Declarative keymap table (BE.7.I task 1)
+// ---------------------------------------------------------------------------
+//
+// Every key binding reachable from the key-dispatch path — `map_key`,
+// `map_browser_key`, `map_rail_key` and the structural (non-typing) part of
+// `map_search_key` — is declared exactly once below, with its key, the mode
+// it fires in, the `Action` it produces, and a one-line description for the
+// `?` overlay (BE.7.I task 2 renders this table; it must never grow a
+// second, hand-written copy). The four mappers derive their dispatch from
+// [`keymap_entries`] rather than matching `KeyCode` directly.
+//
+// Two things are deliberately NOT rows here:
+//   - `PageUp`/`PageDown`/Ctrl-d/Ctrl-u in Reader mode. Their `Action` value
+//     depends on `viewport_height`, which is not known at table-definition
+//     time, so `map_key` still special-cases them. This does not weaken
+//     completeness: they produce `Action::ScrollDown`/`Action::ScrollUp`,
+//     the same variants the `j`/`k` rows already cover, and the
+//     completeness test below compares by *variant*, not by exact value.
+//   - `map_search_key`'s arbitrary character typing (any `KeyCode::Char`
+//     becomes `Action::SearchChar`). One representative row (`'*'`) stands
+//     in for the whole alphabet so `Action::SearchChar` still has a row to
+//     satisfy completeness; `map_search_key` keeps its own catch-all arm for
+//     the actual typed character.
+
+/// Which key-dispatch path a [`KeymapEntry`] fires on — one variant per
+/// pure mapper function in this file (`map_key`, `map_browser_key`,
+/// `map_rail_key`, `map_search_key`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeymapMode {
+    /// `map_key` — the reader, when neither the rail nor search input has
+    /// keyboard focus.
+    Reader,
+    /// `map_browser_key` — the file browser.
+    Browser,
+    /// `map_rail_key` — active only while `App::rail_focused`, covering all
+    /// three rail sections (Contents/Metadata/Tree — BE.7.H task 2).
+    Rail,
+    /// `map_search_key` — active only while typing an in-document search
+    /// query (`App::search.input_mode`).
+    Search,
+}
+
+impl KeymapMode {
+    /// Heading used to group rows in the `?` overlay (BE.7.I task 2).
+    pub fn label(self) -> &'static str {
+        match self {
+            KeymapMode::Reader => "Reader",
+            KeymapMode::Browser => "Browser",
+            KeymapMode::Rail => "Tree / Rail",
+            KeymapMode::Search => "Search",
+        }
     }
 }
 
+/// One row of the single declarative keymap table.
+///
+/// `required_modifiers: None` means "fires on this `code` regardless of
+/// whatever modifier bits are set" — the historical behaviour of the
+/// hand-written matches this table replaces, where e.g. `KeyCode::Char('j')
+/// => Action::ScrollDown(1)` never inspected `key.modifiers` at all.
+/// `Some(m)` means the key only fires when `key.modifiers.contains(m)` —
+/// used for the Ctrl-chord bindings (`Ctrl-c` to quit) where the same code
+/// (`Char('c')`) is otherwise unbound.
+pub struct KeymapEntry {
+    pub code: KeyCode,
+    pub required_modifiers: Option<KeyModifiers>,
+    pub mode: KeymapMode,
+    /// Non-capturing constructor for the `Action` this key produces. A
+    /// plain fn pointer (not a closure over any runtime state), so the
+    /// table can be built fresh and cheaply wherever it's needed —
+    /// dispatch, the completeness/duplicate tests, and the `?` overlay.
+    pub action_ctor: fn() -> Action,
+    /// One-line description shown in the `?` overlay.
+    pub description: &'static str,
+}
+
+impl KeymapEntry {
+    fn new(
+        code: KeyCode,
+        required_modifiers: Option<KeyModifiers>,
+        mode: KeymapMode,
+        action_ctor: fn() -> Action,
+        description: &'static str,
+    ) -> Self {
+        KeymapEntry {
+            code,
+            required_modifiers,
+            mode,
+            action_ctor,
+            description,
+        }
+    }
+
+    /// Whether this entry fires for the given `code`/`modifiers` pair.
+    fn matches(&self, code: KeyCode, modifiers: KeyModifiers) -> bool {
+        self.code == code
+            && match self.required_modifiers {
+                Some(required) => modifiers.contains(required),
+                None => true,
+            }
+    }
+}
+
+/// Build the full keymap table. Built fresh on each call (a `Vec`, not a
+/// `static`) rather than fighting `const fn` pointer restrictions — this
+/// runs on every keystroke plus whenever the `?` overlay opens, all cheap,
+/// non-hot-loop call sites.
+pub fn keymap_entries() -> Vec<KeymapEntry> {
+    use KeymapMode::{Browser, Rail, Reader, Search};
+    vec![
+        // --- Reader ---
+        KeymapEntry::new(
+            KeyCode::Char('j'),
+            None,
+            Reader,
+            || Action::ScrollDown(1),
+            "Scroll down",
+        ),
+        KeymapEntry::new(
+            KeyCode::Down,
+            None,
+            Reader,
+            || Action::ScrollDown(1),
+            "Scroll down",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('k'),
+            None,
+            Reader,
+            || Action::ScrollUp(1),
+            "Scroll up",
+        ),
+        KeymapEntry::new(
+            KeyCode::Up,
+            None,
+            Reader,
+            || Action::ScrollUp(1),
+            "Scroll up",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('g'),
+            None,
+            Reader,
+            || Action::ToTop,
+            "Jump to top",
+        ),
+        KeymapEntry::new(KeyCode::Home, None, Reader, || Action::ToTop, "Jump to top"),
+        KeymapEntry::new(
+            KeyCode::Char('G'),
+            None,
+            Reader,
+            || Action::ToBottom,
+            "Jump to bottom",
+        ),
+        KeymapEntry::new(
+            KeyCode::End,
+            None,
+            Reader,
+            || Action::ToBottom,
+            "Jump to bottom",
+        ),
+        KeymapEntry::new(
+            KeyCode::Tab,
+            None,
+            Reader,
+            || Action::FocusNext,
+            "Focus next link",
+        ),
+        KeymapEntry::new(
+            KeyCode::BackTab,
+            None,
+            Reader,
+            || Action::FocusPrev,
+            "Focus previous link",
+        ),
+        KeymapEntry::new(
+            KeyCode::Esc,
+            None,
+            Reader,
+            || Action::ClearFocus,
+            "Clear link focus / cancel search",
+        ),
+        KeymapEntry::new(
+            KeyCode::Enter,
+            None,
+            Reader,
+            || Action::Follow,
+            "Follow focused link",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('/'),
+            None,
+            Reader,
+            || Action::SearchStart,
+            "Start in-document search",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('n'),
+            None,
+            Reader,
+            || Action::SearchNext,
+            "Next search match",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('N'),
+            None,
+            Reader,
+            || Action::SearchPrev,
+            "Previous search match",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('['),
+            None,
+            Reader,
+            || Action::HistoryBack,
+            "History back",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char(']'),
+            None,
+            Reader,
+            || Action::HistoryForward,
+            "History forward",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('t'),
+            None,
+            Reader,
+            || Action::RailToggle,
+            "Toggle the rail open/closed",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('T'),
+            None,
+            Reader,
+            || Action::RailFocus,
+            "Give the rail keyboard focus",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('m'),
+            None,
+            Reader,
+            || Action::ToggleDiagnostics,
+            "Toggle the diagnostics overlay",
+        ),
+        KeymapEntry::new(
+            KeyCode::Backspace,
+            None,
+            Reader,
+            || Action::BrowserBack,
+            "Return to the browser",
+        ),
+        KeymapEntry::new(KeyCode::Char('q'), None, Reader, || Action::Quit, "Quit"),
+        KeymapEntry::new(
+            KeyCode::Char('c'),
+            Some(KeyModifiers::CONTROL),
+            Reader,
+            || Action::Quit,
+            "Quit",
+        ),
+        // --- Browser ---
+        KeymapEntry::new(
+            KeyCode::Char('j'),
+            None,
+            Browser,
+            || Action::BrowserDown,
+            "Move down",
+        ),
+        KeymapEntry::new(
+            KeyCode::Down,
+            None,
+            Browser,
+            || Action::BrowserDown,
+            "Move down",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('k'),
+            None,
+            Browser,
+            || Action::BrowserUp,
+            "Move up",
+        ),
+        KeymapEntry::new(KeyCode::Up, None, Browser, || Action::BrowserUp, "Move up"),
+        KeymapEntry::new(
+            KeyCode::Enter,
+            None,
+            Browser,
+            || Action::BrowserDescend,
+            "Open / descend into selection",
+        ),
+        KeymapEntry::new(
+            KeyCode::Backspace,
+            None,
+            Browser,
+            || Action::BrowserAscend,
+            "Go to parent directory",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('r'),
+            None,
+            Browser,
+            || Action::BrowserToggleReveal,
+            "Toggle hidden / ignored entries",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('m'),
+            None,
+            Browser,
+            || Action::ToggleDiagnostics,
+            "Toggle the diagnostics overlay",
+        ),
+        KeymapEntry::new(KeyCode::Char('q'), None, Browser, || Action::Quit, "Quit"),
+        KeymapEntry::new(
+            KeyCode::Char('c'),
+            Some(KeyModifiers::CONTROL),
+            Browser,
+            || Action::Quit,
+            "Quit",
+        ),
+        // --- Rail (keyboard focus on the TOC/Metadata/Tree stack) ---
+        KeymapEntry::new(
+            KeyCode::Char('j'),
+            None,
+            Rail,
+            || Action::RailMove(1),
+            "Move selection down",
+        ),
+        KeymapEntry::new(
+            KeyCode::Down,
+            None,
+            Rail,
+            || Action::RailMove(1),
+            "Move selection down",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('k'),
+            None,
+            Rail,
+            || Action::RailMove(-1),
+            "Move selection up",
+        ),
+        KeymapEntry::new(
+            KeyCode::Up,
+            None,
+            Rail,
+            || Action::RailMove(-1),
+            "Move selection up",
+        ),
+        KeymapEntry::new(
+            KeyCode::Enter,
+            None,
+            Rail,
+            || Action::RailActivate,
+            "Activate selection",
+        ),
+        KeymapEntry::new(
+            KeyCode::Esc,
+            None,
+            Rail,
+            || Action::RailUnfocus,
+            "Return focus to the body",
+        ),
+        KeymapEntry::new(
+            KeyCode::Tab,
+            None,
+            Rail,
+            || Action::RailCycleSection,
+            "Cycle rail section focus",
+        ),
+        KeymapEntry::new(
+            KeyCode::Char('t'),
+            None,
+            Rail,
+            || Action::RailToggle,
+            "Toggle the rail open/closed",
+        ),
+        KeymapEntry::new(KeyCode::Char('q'), None, Rail, || Action::Quit, "Quit"),
+        KeymapEntry::new(
+            KeyCode::Char('c'),
+            Some(KeyModifiers::CONTROL),
+            Rail,
+            || Action::Quit,
+            "Quit",
+        ),
+        // --- Search input ---
+        KeymapEntry::new(
+            KeyCode::Backspace,
+            None,
+            Search,
+            || Action::SearchBackspace,
+            "Delete last character",
+        ),
+        KeymapEntry::new(
+            KeyCode::Enter,
+            None,
+            Search,
+            || Action::SearchCommit,
+            "Commit search",
+        ),
+        KeymapEntry::new(
+            KeyCode::Esc,
+            None,
+            Search,
+            || Action::SearchCancel,
+            "Cancel search",
+        ),
+        // Representative row for the whole alphabet: any other `Char` types
+        // into the query. See the module doc comment above.
+        KeymapEntry::new(
+            KeyCode::Char('*'),
+            None,
+            Search,
+            || Action::SearchChar('*'),
+            "Type to search",
+        ),
+    ]
+}
+
+/// Look up the first entry for `mode` matching `code`/`modifiers`, and
+/// return the `Action` it produces, or [`Action::None`] if nothing matches.
+/// The shared lookup every table-derived mapper below calls into.
+fn dispatch(mode: KeymapMode, code: KeyCode, modifiers: KeyModifiers) -> Action {
+    keymap_entries()
+        .into_iter()
+        .find(|e| e.mode == mode && e.matches(code, modifiers))
+        .map(|e| (e.action_ctor)())
+        .unwrap_or(Action::None)
+}
+
+/// Pure browser key→action mapper (unit-testable without a live terminal).
+///
+/// Handles directional movement, descend/open, ascend, and quit.  All other
+/// keys return [`Action::None`]. Derived from [`keymap_entries`] — see the
+/// module doc comment above.
+pub fn map_browser_key(key: KeyEvent) -> Action {
+    dispatch(KeymapMode::Browser, key.code, key.modifiers)
+}
+
 /// Pure reader key→action mapper (unit-testable without a live terminal).
+/// Derived from [`keymap_entries`] — see the module doc comment above.
 pub fn map_key(key: KeyEvent, viewport_height: u16) -> Action {
+    // PageUp/PageDown and Ctrl-d/Ctrl-u are the only dynamic-value keys in
+    // this mapper — their Action's payload depends on `viewport_height`,
+    // which the table has no way to carry. See the module doc comment.
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => Action::ScrollDown(1),
-        KeyCode::Char('k') | KeyCode::Up => Action::ScrollUp(1),
-        KeyCode::Char('g') | KeyCode::Home => Action::ToTop,
-        KeyCode::Char('G') | KeyCode::End => Action::ToBottom,
-        KeyCode::PageDown => Action::ScrollDown(viewport_height.saturating_sub(1).max(1)),
-        KeyCode::PageUp => Action::ScrollUp(viewport_height.saturating_sub(1).max(1)),
-        // Ctrl-d / Ctrl-u (half-page)
+        KeyCode::PageDown => return Action::ScrollDown(viewport_height.saturating_sub(1).max(1)),
+        KeyCode::PageUp => return Action::ScrollUp(viewport_height.saturating_sub(1).max(1)),
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Action::ScrollDown(viewport_height / 2)
+            return Action::ScrollDown(viewport_height / 2);
         }
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Action::ScrollUp(viewport_height / 2)
+            return Action::ScrollUp(viewport_height / 2);
         }
-        // Link focus ring
-        KeyCode::Tab => Action::FocusNext,
-        KeyCode::BackTab => Action::FocusPrev,
-        KeyCode::Esc => Action::ClearFocus,
-        // Follow focused link
-        KeyCode::Enter => Action::Follow,
-        // In-document search
-        KeyCode::Char('/') => Action::SearchStart,
-        KeyCode::Char('n') => Action::SearchNext,
-        KeyCode::Char('N') => Action::SearchPrev,
-        // History navigation
-        KeyCode::Char('[') => Action::HistoryBack,
-        KeyCode::Char(']') => Action::HistoryForward,
-        // TOC rail (BE.7.E task 2): 't' toggles it open/closed, 'T' gives
-        // it keyboard focus (arrows move within it — see `map_rail_key`,
-        // used instead of this mapper once focused).
-        KeyCode::Char('t') => Action::RailToggle,
-        KeyCode::Char('T') => Action::RailFocus,
-        // Diagnostics overlay (BE.7.K task 2): opens from Reader focus too —
-        // see `map_browser_key` for the browser-focus binding.
-        KeyCode::Char('m') => Action::ToggleDiagnostics,
-        // Return to browser (when the reader was entered via the browser).
-        KeyCode::Backspace => Action::BrowserBack,
-        KeyCode::Char('q') => Action::Quit,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
-        _ => Action::None,
+        _ => {}
     }
+    dispatch(KeymapMode::Reader, key.code, key.modifiers)
 }
 
 /// Pure key→action mapper active only while the TOC rail has keyboard
@@ -193,22 +586,10 @@ pub fn map_key(key: KeyEvent, viewport_height: u16) -> Action {
 /// `j`/`k`/arrows move the rail selection instead of scrolling the body,
 /// `Enter` activates the focused row, `Esc` returns focus to the body
 /// without closing the rail, and `t` still toggles the rail closed (which
-/// also drops focus — see [`crate::app::App::toggle_rail`]).
+/// also drops focus — see [`crate::app::App::toggle_rail`]). Derived from
+/// [`keymap_entries`] — see the module doc comment above.
 pub fn map_rail_key(key: KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Char('j') | KeyCode::Down => Action::RailMove(1),
-        KeyCode::Char('k') | KeyCode::Up => Action::RailMove(-1),
-        KeyCode::Enter => Action::RailActivate,
-        KeyCode::Esc => Action::RailUnfocus,
-        // Cycle keyboard focus between rail sections (BE.7.F) — Tab is
-        // unbound elsewhere in this mapper, unlike in `map_key` where it
-        // already drives the link focus ring.
-        KeyCode::Tab => Action::RailCycleSection,
-        KeyCode::Char('t') => Action::RailToggle,
-        KeyCode::Char('q') => Action::Quit,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
-        _ => Action::None,
-    }
+    dispatch(KeymapMode::Rail, key.code, key.modifiers)
 }
 
 /// Key mapper for search-input mode.
@@ -216,6 +597,12 @@ pub fn map_rail_key(key: KeyEvent) -> Action {
 /// While the user is typing a search query, character keys append to the query,
 /// `Backspace` removes the last char, `Enter` commits, and `Esc` cancels.
 /// All other keys are ignored (return `Action::None`).
+///
+/// NOT derived from [`keymap_entries`] like the other three mappers: typing
+/// an arbitrary character is fundamentally a catch-all, not a per-key
+/// binding, so the table carries only one representative `SearchChar` row
+/// (for the completeness test and the `?` overlay) while this match keeps
+/// the real per-character dispatch.
 pub fn map_search_key(key: KeyEvent) -> Action {
     match key.code {
         KeyCode::Char(ch) => Action::SearchChar(ch),
@@ -859,7 +1246,10 @@ mod tests {
 
     use crate::app::{App, Mode, RailSection};
 
-    use super::{Action, map_browser_key, map_key, map_rail_key, rail_row_at};
+    use super::{
+        Action, KeymapEntry, KeymapMode, keymap_entries, map_browser_key, map_key, map_rail_key,
+        rail_row_at,
+    };
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::empty())
@@ -2848,6 +3238,146 @@ mod tests {
         assert!(
             !app.diagnostics_open,
             "second toggle must close the overlay"
+        );
+    }
+
+    // --- BE.7.I task 1: declarative keymap table ---
+
+    /// Every `Action` discriminant some key can actually produce through the
+    /// four key-dispatch mappers, tagged with the mode it fires in. Swept
+    /// over the domain of keys these mappers switch on — not just the keys
+    /// currently in the table — so a binding added directly to a mapper
+    /// (bypassing [`keymap_entries`], the way `map_key`'s PageUp/PageDown/
+    /// Ctrl-d/Ctrl-u special-cases legitimately do) is caught by
+    /// `keymap_table_is_complete` below too, not only a table row with no
+    /// matching mapper arm.
+    fn reachable_key_dispatch_actions() -> Vec<(KeymapMode, std::mem::Discriminant<Action>)> {
+        let codes: Vec<KeyCode> = ('a'..='z')
+            .chain('A'..='Z')
+            .map(KeyCode::Char)
+            .chain([
+                KeyCode::Char('/'),
+                KeyCode::Char('['),
+                KeyCode::Char(']'),
+                KeyCode::Down,
+                KeyCode::Up,
+                KeyCode::Home,
+                KeyCode::End,
+                KeyCode::PageDown,
+                KeyCode::PageUp,
+                KeyCode::Tab,
+                KeyCode::BackTab,
+                KeyCode::Esc,
+                KeyCode::Enter,
+                KeyCode::Backspace,
+            ])
+            .collect();
+        let mod_combos = [KeyModifiers::empty(), KeyModifiers::CONTROL];
+
+        let mut seen: Vec<(KeymapMode, std::mem::Discriminant<Action>)> = Vec::new();
+        let mut record = |mode: KeymapMode, action: Action| {
+            if action != Action::None {
+                let d = std::mem::discriminant(&action);
+                if !seen.iter().any(|(m, dd)| *m == mode && *dd == d) {
+                    seen.push((mode, d));
+                }
+            }
+        };
+
+        for &code in &codes {
+            for &modifiers in &mod_combos {
+                let ev = KeyEvent::new(code, modifiers);
+                record(KeymapMode::Reader, map_key(ev, 20));
+                record(KeymapMode::Browser, map_browser_key(ev));
+                record(KeymapMode::Rail, map_rail_key(ev));
+                record(KeymapMode::Search, super::map_search_key(ev));
+            }
+        }
+        seen
+    }
+
+    /// COMPLETENESS: every `Action` reachable from the key-dispatch path
+    /// must appear, in its own mode, as a row in [`keymap_entries`].
+    ///
+    /// CAPABILITY CHECK (acceptance criterion 2): temporarily added, in
+    /// `map_key`'s dynamic-key special-case block (before the fallback
+    /// `dispatch(KeymapMode::Reader, ...)` call):
+    ///
+    ///   KeyCode::Char('y') => return Action::RailCycleSection,
+    ///
+    /// — a Reader-mode binding for an `Action` that only has a table row
+    /// under `KeymapMode::Rail`, not `Reader`. Ran
+    /// `cargo nextest run -p bella keymap_table_is_complete` and observed:
+    ///
+    ///   FAIL [   0.009s] (1/1) bella events::tests::keymap_table_is_complete
+    ///   thread 'events::tests::keymap_table_is_complete' (496324444) panicked at crates/bella/src/events.rs:3075:13:
+    ///   an Action reachable via Reader key dispatch has no matching row in the keymap table (mode Reader)
+    ///
+    /// Reverted immediately after observing the failure; the committed
+    /// `map_key` has no `'y'` arm.
+    #[test]
+    fn keymap_table_is_complete() {
+        let table = keymap_entries();
+        for (mode, discriminant) in reachable_key_dispatch_actions() {
+            let covered = table.iter().any(|e| {
+                e.mode == mode && std::mem::discriminant(&(e.action_ctor)()) == discriminant
+            });
+            assert!(
+                covered,
+                "an Action reachable via {mode:?} key dispatch has no matching row \
+                 in the keymap table (mode {mode:?})"
+            );
+        }
+    }
+
+    /// Find the first `(mode, code, required_modifiers)` collision in
+    /// `entries` — two rows in the SAME mode that fire on the same key.
+    /// `required_modifiers` is part of the collision key deliberately: a
+    /// plain-key row (`None`) and a Ctrl-chord row (`Some(CONTROL)`) on the
+    /// same `code` are two DIFFERENT bindings (e.g. `c` is unbound in Reader
+    /// while Ctrl-c quits), not a duplicate.
+    fn find_duplicate_key(entries: &[KeymapEntry]) -> Option<(KeymapMode, KeyCode)> {
+        for (i, a) in entries.iter().enumerate() {
+            for b in &entries[i + 1..] {
+                if a.mode == b.mode
+                    && a.code == b.code
+                    && a.required_modifiers == b.required_modifiers
+                {
+                    return Some((a.mode, a.code));
+                }
+            }
+        }
+        None
+    }
+
+    /// DUPLICATE DETECTION: no two rows in the same mode may fire on the
+    /// same key.
+    #[test]
+    fn keymap_table_has_no_duplicate_keys_in_same_mode() {
+        assert_eq!(
+            find_duplicate_key(&keymap_entries()),
+            None,
+            "two rows in the same mode fire on the same key — one binding must win \
+             silently at runtime, which is exactly what this table exists to prevent"
+        );
+    }
+
+    /// CAPABILITY CHECK for the detector above: a synthetic table with a
+    /// deliberately duplicated entry (`'q'` bound twice in `Reader`) must be
+    /// caught.
+    #[test]
+    fn keymap_duplicate_detector_catches_a_deliberate_duplicate() {
+        let mut entries = keymap_entries();
+        entries.push(KeymapEntry {
+            code: KeyCode::Char('q'),
+            required_modifiers: None,
+            mode: KeymapMode::Reader,
+            action_ctor: || Action::Quit,
+            description: "duplicate probe",
+        });
+        assert_eq!(
+            find_duplicate_key(&entries),
+            Some((KeymapMode::Reader, KeyCode::Char('q')))
         );
     }
 }
