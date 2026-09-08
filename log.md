@@ -2,12 +2,33 @@
 type: Log
 title: Bella Development Log
 description: Chronological log of work completed for Bella.
-timestamp: "2026-09-02T14:45:00Z"
+timestamp: "2026-09-08T20:30:00Z"
 ---
 
 # Log — Bella
 
 *Append-only working log. One dated entry per session. Newest entries at the top.*
+
+---
+
+## [2026-09-08] BE.7.I close-out + stale operator-gate cleanup
+
+- **What:** Reconciled `OP.revive-theming-from-wontfix-be-2-f` as closed — `D5-revive-theming-
+  from-be-2-f.md` (2026-09-07) had already resolved it and `main.rs` already wires
+  `md_config::load`/`theme::resolve`, but the orchestration block record and four roadmap/epic
+  docs still cited it as open; fixed those and cleared the now-CLEARED
+  `theming-and-config-are-written-...` carryover entry. Resumed `BE.7.I` via `/sdlc-flow --resume`
+  (bailed on task 3, see the entry below); ran `/close-out` by hand on the resulting branch since
+  the automated flow bailed before its own Review/Docs stages — `fmt`/`clippy`/`cargo test`
+  (118 tests)/`cargo build --release`/`test-layout`/emoji gate all green against `main...HEAD`,
+  coverage adequate, and `README.md`'s keybinding tables patched with the missing `?` (help
+  overlay) row. Added a `drift` carryover entry for the recurring `tasks.json` `files[]`-declares-
+  a-directory tooling gap (affects the shared `sdlc-flow` engine, not bella code).
+- **Why:** Operator asked to finish the remaining `BE.7.*` blocks and hold `BE.6.*` for later,
+  conserving token budget rather than re-running the full automated review after an independent
+  green verification.
+- **Refs:** `planning/handoff.md`, `planning/decisions/D5-revive-theming-from-be-2-f.md`, draft PR
+  #13.
 
 ---
 
