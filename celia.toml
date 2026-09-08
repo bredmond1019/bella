@@ -381,6 +381,82 @@ height = 43
 min_bytes = 30000
 tape = "scripts/vhs/reference-wide.tape"
 
+# --- Tree pane (BE.7.H task 4) --------------------------------------------
+#
+# New scenes, not a translation from scenes.toml — BE.7.H task 4 owes
+# coverage of the corpus tree pane (BE.7.H task 2: the rail's third
+# stacked section, next to Contents/Metadata) expanded one level, and of
+# the root-jail refusal that pane's `..` row hits unconditionally (its
+# `dir` is always constructed equal to `root_boundary`, wired from the
+# invoked path by `main.rs` per BE.7.H task 2). Both launch on demo.md
+# (already this manifest's default reader fixture) so the tree is the
+# only new thing on screen, then: "t" opens the rail (its three sections,
+# including "Tree", paint together), "T" gives the rail keyboard focus
+# (lands on whichever section was last focused, which for a fresh launch
+# is always Contents), and two "Tab"s cycle Contents -> Metadata -> Tree
+# per `RailSection::next` — landing on Tree with `rail_selected` reset to
+# its first row, the tree's own `..` (`BrowserEntryKind::ParentDir`).
+#
+# The tree is always rooted at `App::corpus_root`
+# (`bella_engine::browser::resolve_corpus_root`), which for any path
+# under this fleet checkout resolves to the nearest ancestor `brain.toml`
+# — the HQ root, not `core/bella` alone (the same resolution
+# `wide_reader_related_states` above documents) — so the tree's listing
+# is the fleet root's own tracked, non-hidden directories, dirs before
+# markdown files, alphabetized case-insensitively. `_planning` is first:
+# a leading `_` (0x5F) sorts before every lowercase letter once
+# lowercased, so it precedes `business`, `client`, `core`, `docs`, and
+# every other top-level dir. One further `Down` selects it; `Enter`
+# expands it in place.
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+#
+# ABSOLUTE path via shell `$(pwd)` expansion, deliberately, not the
+# relative form every other scene above uses. `bella_engine::browser::
+# resolve_corpus_root` walks `Path::parent()` up from the invoked path to
+# find the fleet's `brain.toml` — and `Path::parent()` on a RELATIVE path
+# stops at `""` (no more components) without ever reaching the real
+# filesystem root, so it can climb only as far as the relative string
+# itself already spells out. `scripts/vhs/fixtures/demo.md` never spells
+# out `agentic-portfolio/`, so the walk gives up short of it and the Tree
+# pane's corpus root resolves wrong (empty listing) — reproduced live via
+# `tmux send-keys`, both with a relative arg (empty Tree) and with this
+# `$(pwd)/...` arg (correctly populated). TmuxDriver types this scene's
+# `args` into a REAL shell in the tmux pane (`send-keys -l`, not an execve
+# argv) — see `driver::launch_command_argv` — so `$(pwd)` expands there
+# exactly as it would at an interactive prompt, to whatever machine- and
+# checkout-specific absolute path this repo lives at. This is a scene-level
+# workaround, not a fix: `resolve_corpus_root` itself still cannot climb
+# above a relative invocation, which is a `bella-engine`/`browser.rs`
+# defect outside this task's files — not addressed here.
+name = "wide_tree_expanded_one_level"
+args = ["$(pwd)/scripts/vhs/fixtures/demo.md"]
+keys = ["t", "T", "Tab", "Tab", "Down", "Enter"]
+width = 110
+height = 43
+min_bytes = 90000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/demo.md
+# No Down before Enter: `rail_selected` lands on row 0, the tree's own
+# `..` row, once Tree gains focus — `Enter` there goes through
+# `Browser::ascend_target`, which is `None` unconditionally for the tree
+# (its `dir` is always its own `root_boundary`), so this is the
+# root-jail refusal, not a real ascend.
+#
+# Same `$(pwd)` absolute-path workaround as the scene above, and for the
+# identical reason (relative-path corpus-root resolution) — see that
+# scene's comment.
+name = "wide_tree_root_jail_refusal"
+args = ["$(pwd)/scripts/vhs/fixtures/demo.md"]
+keys = ["t", "T", "Tab", "Tab", "Enter"]
+width = 110
+height = 43
+min_bytes = 90000
+tape = "scripts/vhs/reference-wide.tape"
+
 # --- The image tier: bella's existing VHS tapes -------------------------
 #
 # output_dir is carried verbatim from the tapes' own `Screenshot` lines
