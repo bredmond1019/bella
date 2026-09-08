@@ -209,6 +209,41 @@ fn rail_section_heights(total_height: u16, metadata_rows: usize) -> (u16, u16) {
     (contents_height, metadata_height)
 }
 
+/// Split a rail area of `total_height` rows between Contents, Metadata,
+/// and Tree (BE.7.H task 2) — the three-section extension of
+/// [`rail_section_heights`], reusing its exact policy per section
+/// (content-driven height, floored at [`MIN_SECTION_HEIGHT`]) rather than
+/// inventing a second one. Tree is carved out first (Metadata's existing
+/// degrade-to-Contents-only branch, reused via [`rail_section_heights`],
+/// covers the two-section case unchanged), then Metadata, then Contents
+/// gets whatever remains — the same "the pane every prior version of the
+/// rail already had gets the leftover space" policy `rail_section_heights`
+/// already documents. Below three sections' worth of floor
+/// (`MIN_SECTION_HEIGHT * 3`), Tree drops out entirely and this defers to
+/// the existing two-way split, so the pre-BE.7.H degrade behaviour is
+/// unchanged rather than re-derived. Returns `(contents_height,
+/// metadata_height, tree_height)`; their sum never exceeds `total_height`.
+fn rail_section_heights3(
+    total_height: u16,
+    metadata_rows: usize,
+    tree_rows: usize,
+) -> (u16, u16, u16) {
+    if total_height == 0 {
+        return (0, 0, 0);
+    }
+    if total_height <= MIN_SECTION_HEIGHT * 3 {
+        let (contents_height, metadata_height) = rail_section_heights(total_height, metadata_rows);
+        return (contents_height, metadata_height, 0);
+    }
+    let wanted_tree = (tree_rows as u16).saturating_add(2);
+    let max_tree = total_height - MIN_SECTION_HEIGHT * 2;
+    let tree_height = wanted_tree.clamp(MIN_SECTION_HEIGHT, max_tree);
+
+    let remaining = total_height - tree_height;
+    let (contents_height, metadata_height) = rail_section_heights(remaining, metadata_rows);
+    (contents_height, metadata_height, tree_height)
+}
+
 /// Draw the rail: a stack of titled sections (BE.7.F) sharing the rail's
 /// vertical space per [`rail_section_heights`]. Writes
 /// [`App::rail_contents_area`] / [`App::rail_metadata_area`] so mouse
@@ -225,18 +260,26 @@ fn draw_rail(frame: &mut Frame, area: Rect, app: &mut App) {
         app.ensure_doc_index();
     }
     let metadata_rows = app.rail_section_len(crate::app::RailSection::Metadata);
-    let (contents_height, metadata_height) = rail_section_heights(area.height, metadata_rows);
+    let tree_rows = app.rail_section_len(crate::app::RailSection::Tree);
+    let (contents_height, metadata_height, tree_height) =
+        rail_section_heights3(area.height, metadata_rows, tree_rows);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(contents_height),
             Constraint::Length(metadata_height),
+            Constraint::Length(tree_height),
         ])
         .split(area);
     let contents_area = chunks[0];
     let metadata_area = if metadata_height > 0 {
         chunks[1]
+    } else {
+        Rect::default()
+    };
+    let tree_area = if tree_height > 0 {
+        chunks[2]
     } else {
         Rect::default()
     };
@@ -252,6 +295,12 @@ fn draw_rail(frame: &mut Frame, area: Rect, app: &mut App) {
         app.rail_metadata_area = metadata_area;
     } else {
         app.rail_metadata_area = Rect::default();
+    }
+    if tree_height > 0 {
+        draw_rail_tree(frame, tree_area, app);
+        app.rail_tree_area = tree_area;
+    } else {
+        app.rail_tree_area = Rect::default();
     }
 }
 
@@ -401,6 +450,70 @@ fn draw_rail_metadata(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, inner);
 }
 
+/// Draw the Tree section (BE.7.H task 2): the corpus tree
+/// ([`App::tree`]), expandable in place beside the document being read.
+/// Each row is indented by `entry.depth * 2` spaces and carries a marker
+/// distinguishing its [`BrowserEntryKind`] — `▸ ` for a collapsed `Dir`,
+/// `▾ ` for an `ExpandedDir`, no marker for `Markdown`/`ParentDir` — the
+/// same visual language [`draw_browser`] already uses for the full-screen
+/// listing, reused here rather than invented fresh. The row under
+/// keyboard focus mirrors [`draw_rail_contents`]'s highlight.
+/// [`App::tree`] is always `Some` (both constructors build one), but this
+/// still handles `None` defensively rather than panic, the same caution
+/// [`draw_browser`] takes over [`App::browser`].
+fn draw_rail_tree(frame: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Tree")
+        .style(Style::default().fg(app.theme.status_bg));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let section_focused = app.rail_focused && app.rail_section == crate::app::RailSection::Tree;
+    let inner_width = inner.width as usize;
+    let dir_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+
+    let lines: Vec<Line> = app
+        .tree
+        .as_ref()
+        .map(|tree| tree.entries.as_slice())
+        .unwrap_or(&[])
+        .iter()
+        .enumerate()
+        .map(|(idx, entry)| {
+            let indent = "  ".repeat(entry.depth);
+            let marker = match entry.kind {
+                BrowserEntryKind::Dir => "▸ ",
+                BrowserEntryKind::ExpandedDir => "▾ ",
+                BrowserEntryKind::ParentDir | BrowserEntryKind::Markdown => "  ",
+            };
+            let text = format!("{indent}{marker}{}", entry.display);
+            let truncated = truncate_to_width(&text, inner_width);
+            let base_style = match entry.kind {
+                BrowserEntryKind::ParentDir
+                | BrowserEntryKind::Dir
+                | BrowserEntryKind::ExpandedDir => dir_style,
+                BrowserEntryKind::Markdown => Style::default(),
+            };
+            let selected = section_focused && idx == app.rail_selected;
+            let style = if selected {
+                Style::default()
+                    .fg(app.theme.status_bg)
+                    .bg(app.theme.status_fg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                base_style
+            };
+            Line::from(Span::styled(truncated, style))
+        })
+        .collect();
+
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, inner);
+}
+
 /// Draw the directory browser: a bordered full-screen pane titled with the
 /// current directory path.
 ///
@@ -472,7 +585,14 @@ pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
         let prefix = if is_selected { "▶ " } else { "  " };
 
         let style = match entry.kind {
-            BrowserEntryKind::ParentDir | BrowserEntryKind::Dir => dir_style,
+            // `ExpandedDir` (BE.7.H task 1's widening) is still a
+            // directory-styled row here — the expand/collapse marker and
+            // indentation the tree pane needs are BE.7.H task 2's own
+            // deliverable, not this block's; this arm only keeps the match
+            // exhaustive so the enum widening compiles.
+            BrowserEntryKind::ParentDir | BrowserEntryKind::Dir | BrowserEntryKind::ExpandedDir => {
+                dir_style
+            }
             BrowserEntryKind::Markdown => file_style,
         };
 
@@ -1418,6 +1538,7 @@ mod tests {
                 path: std::path::PathBuf::from(display),
                 display: display.to_string(),
                 kind,
+                ..Default::default()
             });
         }
     }
@@ -2182,5 +2303,142 @@ mod tests {
             "rail section focus must reset to Contents on load_file"
         );
         assert_eq!(app.rail_selected, 0);
+    }
+
+    // --- BE.7.H task 2 tests: rail_section_heights3 + the Tree section ---
+
+    #[test]
+    fn rail_section_heights3_gives_each_content_driven_section_its_wanted_height() {
+        // 3 Contents rows implied by leftover space, 2 metadata rows,
+        // 1 tree row — plenty of room (30 total) for every section to get
+        // its wanted height rather than degrade.
+        let (contents, metadata, tree) = super::rail_section_heights3(30, 2, 1);
+        assert_eq!(metadata, 4, "2 rows + 2 border rows");
+        assert_eq!(tree, 3, "1 row + 2 border rows");
+        assert_eq!(contents, 30 - metadata - tree, "Contents takes the rest");
+    }
+
+    #[test]
+    fn rail_section_heights3_below_three_floors_degrades_to_the_two_way_split() {
+        // Below `MIN_SECTION_HEIGHT * 3` (6), Tree drops out entirely and
+        // this must match `rail_section_heights`'s own two-way answer —
+        // the pre-BE.7.H degrade behaviour is unchanged, not re-derived.
+        let (contents2, metadata2) = super::rail_section_heights(5, 2);
+        let (contents3, metadata3, tree3) = super::rail_section_heights3(5, 2, 9);
+        assert_eq!(contents3, contents2);
+        assert_eq!(metadata3, metadata2);
+        assert_eq!(tree3, 0);
+    }
+
+    #[test]
+    fn rail_section_heights3_zero_total_is_all_zero_not_a_panic() {
+        assert_eq!(super::rail_section_heights3(0, 5, 5), (0, 0, 0));
+    }
+
+    #[test]
+    fn rail_section_heights3_sum_never_exceeds_total() {
+        for total in 0u16..40 {
+            for metadata_rows in [0usize, 1, 3, 50] {
+                for tree_rows in [0usize, 1, 3, 50] {
+                    let (c, m, t) = super::rail_section_heights3(total, metadata_rows, tree_rows);
+                    assert!(
+                        c + m + t <= total,
+                        "sum ({c}+{m}+{t}) must never exceed total ({total}) at \
+                         metadata_rows={metadata_rows}, tree_rows={tree_rows}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn draw_rail_tree_renders_indentation_and_expansion_markers() {
+        let width: u16 = 100;
+        let height: u16 = 30;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app("# Hi", width, height);
+        app.rail_open = true;
+
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_tree_render");
+        std::fs::create_dir_all(dir.join("child")).unwrap();
+        std::fs::write(dir.join("top.md"), "# top").unwrap();
+        let mut tree = bella_engine::browser::Browser::new(dir.clone());
+        let child_idx = tree
+            .entries
+            .iter()
+            .position(|e| e.display == "child")
+            .expect("child dir must be listed");
+        assert!(tree.expand(child_idx), "precondition: child must expand");
+        app.tree = Some(tree);
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rows = body_rows(&buf, 0, RAIL_WIDTH, height);
+        let full = rows.join("\n");
+
+        assert!(
+            rows.iter().any(|r| r.contains('▾') && r.contains("child")),
+            "the expanded child dir must render the expanded-dir marker; rows:\n{full}"
+        );
+        assert!(
+            rows.iter().any(|r| r.contains("top.md")),
+            "an unexpanded sibling markdown file must still render; rows:\n{full}"
+        );
+    }
+
+    #[test]
+    fn draw_rail_tree_highlights_the_focused_selected_row() {
+        let width: u16 = 100;
+        let height: u16 = 30;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app("# Hi", width, height);
+        app.rail_open = true;
+        app.rail_focused = true;
+        app.rail_section = RailSection::Tree;
+
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_tree_highlight");
+        std::fs::write(dir.join("only.md"), "# only").unwrap();
+        let tree = bella_engine::browser::Browser::new(dir);
+        // Index of "only.md" specifically — NOT assumed to be 0: a fresh
+        // temp dir's parent normally exists, so entry 0 is the synthetic
+        // `..` row, not the file this test cares about.
+        app.rail_selected = tree
+            .entries
+            .iter()
+            .position(|e| e.display == "only.md")
+            .expect("only.md must be listed");
+        app.tree = Some(tree);
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rows = body_rows(&buf, 0, RAIL_WIDTH, height);
+        let row = rows
+            .iter()
+            .find(|r| r.contains("only.md"))
+            .unwrap_or_else(|| panic!("only.md row must render; rows:\n{}", rows.join("\n")));
+        let col = row.find("only.md").unwrap() as u16;
+        // Find the actual cell in the buffer (row text alone doesn't carry
+        // style) to assert the reverse-video highlight `draw_rail_tree`
+        // applies to the focused selection, mirroring
+        // `draw_rail_contents`/`draw_rail_metadata`'s own highlight tests.
+        let y = rows.iter().position(|r| r.contains("only.md")).unwrap() as u16;
+        let cell = buf.cell((col, y)).expect("cell must exist");
+        assert_eq!(
+            cell.bg, app.theme.status_fg,
+            "the focused selected tree row must use the same reverse-video \
+             highlight as Contents/Metadata"
+        );
     }
 }

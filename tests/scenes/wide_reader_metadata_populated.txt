@@ -28,9 +28,6 @@
 │                      │
 │                      │
 │                      │
-│                      │
-│                      │
-│                      │
 └──────────────────────┘
 ┌Metadata──────────────┐
 │type: Reference       │
@@ -39,5 +36,8 @@
 │status: active        │
 │keywords: metadata, r…│
 │summary: >- A folded …│
+└──────────────────────┘
+┌Tree──────────────────┐
+│                      │
 └──────────────────────┘
  bella · metadata_demo.md · 15/15  j/k scroll · / search · [ ] history · q quit

@@ -1,0 +1,43 @@
+┌Contents──────────────┐Bella Reference Demo
+│Bella Reference Demo  │
+│  Headings            │A single document exercising every render feature bella supports, used to generate the
+│    H3 heading        │reference screenshot set in  planning/artifacts/screenshots/ .
+│      H4 heading      │
+│        H5 heading    │Headings
+│          H6 heading  │
+│  Text styles         │H3 heading
+│  Links               │
+│  Lists               │H4 heading
+│  Task list           │
+│  Code block          │H5 heading
+│  Table               │
+│  Horizontal rule     │H6 heading
+│                      │
+│                      │Text styles
+│                      │
+│                      │Plain text, bold text, italic text, bold italic, strikethrough, and  inline code .
+│                      │
+└──────────────────────┘│ A blockquote, to show the quote bar and quote color.
+┌Metadata──────────────┐
+│(no frontmatter)      ││ │ A nested blockquote one level deeper.
+└──────────────────────┘
+┌Tree──────────────────┐Links
+│  ..                  │
+│▸ _planning           │Visit the bella repo or read the README locally.
+│▸ business            │
+│▸ client              │Lists
+│▸ core                │
+│▸ docs                │    • Top-level bulletNested bulletDoubly-nested bullet
+│▸ hooks               │• Another top-level bullet
+│▸ planning            │
+│▸ portfolio           │1. First ordered item
+│▸ scripts             │  1. Second ordered itemNested ordered item
+│▸ side                │
+│  AGENTS.md           │Task list
+│  CLAUDE.md           │
+│  GEMINI.md           │• [ ] An unchecked task
+│  log.md              │• [x] A checked task
+│  prompts-saved.md    │• [ ] Another unchecked task
+│  README.md           │
+└──────────────────────┘Code block
+ bella · Already at the root — nothing to ascend to

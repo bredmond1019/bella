@@ -20,7 +20,7 @@ use crate::history::{History, HistoryEntry};
 use crate::messages::{MessageLog, Severity};
 use crate::render_worker::{DocIndexOutcome, DocIndexWorker, RenderWorker, is_latest};
 use crate::selection::{self, Selection};
-use bella_engine::browser::Browser;
+use bella_engine::browser::{Browser, BrowserEntryKind};
 
 /// Lifecycle of BE.7.G's scoped doc_id index.
 ///
@@ -122,8 +122,8 @@ pub enum Mode {
 /// titled sections sharing one keyboard-focus and one `rail_selected`
 /// index — `rail_selected` means "selected row within the section named
 /// here", never a flat index across every section combined, so adding a
-/// third section (BE.7.G) is additive rather than a renumbering of the
-/// first two.
+/// third section (BE.7.H's `Tree`) is additive rather than a renumbering
+/// of the first two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RailSection {
     /// The table-of-contents pane (BE.7.E) — one row per heading.
@@ -132,17 +132,24 @@ pub enum RailSection {
     /// entry, in source order. Populated by task 2; this task only
     /// establishes the section and its (always-empty-for-now) length.
     Metadata,
+    /// The corpus tree pane (BE.7.H task 2) — one row per [`App::tree`]
+    /// entry, expandable in place. Reuses this same rail-section model
+    /// (keyboard focus, `rail_selected`, click routing) rather than a
+    /// second layout system: the tree is the rail's third stacked
+    /// section, not a fourth screen column.
+    Tree,
 }
 
 impl RailSection {
-    /// The section a cycle key moves focus to. Only two sections exist
-    /// today, so this is a toggle; a third section makes this an ordered
-    /// wraparound instead — the whole reason this lives on the enum
-    /// rather than as an inline `if` at the one call site.
+    /// The section a cycle key moves focus to — an ordered wraparound
+    /// over all three sections (`Contents` -> `Metadata` -> `Tree` ->
+    /// `Contents`), the reason this lives on the enum rather than as an
+    /// inline `if` at the one call site.
     fn next(self) -> Self {
         match self {
             RailSection::Contents => RailSection::Metadata,
-            RailSection::Metadata => RailSection::Contents,
+            RailSection::Metadata => RailSection::Tree,
+            RailSection::Tree => RailSection::Contents,
         }
     }
 }
@@ -355,6 +362,21 @@ pub struct App {
     /// last frame — `Rect::default()` when the rail is not visible or the
     /// section is too short to draw (see [`crate::ui::draw_rail`]).
     pub rail_metadata_area: Rect,
+    /// Inner (post-border) rect of the rail's Tree section on the last
+    /// frame — `Rect::default()` when the rail is not visible or the
+    /// section is too short to draw (BE.7.H task 2, mirrors
+    /// [`Self::rail_metadata_area`]).
+    pub rail_tree_area: Rect,
+    /// The corpus tree (BE.7.H task 2): a [`Browser`] rooted once at
+    /// [`Self::corpus_root`] and never re-rooted by navigation the way
+    /// [`Self::browser`] is — only [`Browser::expand`]/[`Browser::collapse`]
+    /// mutate it, so its expansion state survives every [`Self::load_file`]
+    /// (that method never touches this field). `Some` for every `App`;
+    /// both constructors build one immediately alongside `corpus_root`,
+    /// the same "a property of how bella was invoked" the doc comment on
+    /// `corpus_root` already establishes — there is no reader state
+    /// without a tree to go with it.
+    pub tree: Option<Browser>,
     /// Lifecycle of BE.7.G's scoped doc_id index. See [`DocIndexState`].
     pub doc_index_state: DocIndexState,
     /// Background worker for the in-flight doc-index build, if any.
@@ -378,6 +400,13 @@ impl App {
         let mut render_worker = RenderWorker::spawn();
         let base_dir = file.parent().map(Path::to_path_buf);
         let theme = Theme::dark();
+        // The tree pane (BE.7.H task 2) is rooted at the whole corpus,
+        // not the opened file's own directory — "browse a whole repo as a
+        // tree beside the document you are reading". `root_boundary` is
+        // wired separately, by `App::set_root_boundary` (called from
+        // `main.rs`), so it starts `None` here exactly like `browser`'s
+        // always has.
+        let tree = Some(Browser::new(corpus_root.clone()));
         let render_generation = render_worker.request_render(
             src.clone(),
             base_dir,
@@ -429,6 +458,8 @@ impl App {
             rail_section: RailSection::Contents,
             rail_contents_area: Rect::default(),
             rail_metadata_area: Rect::default(),
+            rail_tree_area: Rect::default(),
+            tree,
             doc_index_state: DocIndexState::NotBuilt,
             doc_index_worker: None,
             doc_index_build_count: 0,
@@ -448,6 +479,9 @@ impl App {
         // synchronously and start the worker already `Ready`.
         let (lines, link_map, checkbox_map, headings) = render_metadata("", width, None, &theme);
         let browser = Browser::new(dir.clone());
+        // See the matching comment in `App::new` — same tree, rooted at
+        // the corpus, `root_boundary` wired later by `main.rs`.
+        let tree = Some(Browser::new(corpus_root.clone()));
         let mut app = Self {
             src: String::new(),
             lines,
@@ -491,6 +525,8 @@ impl App {
             rail_section: RailSection::Contents,
             rail_contents_area: Rect::default(),
             rail_metadata_area: Rect::default(),
+            rail_tree_area: Rect::default(),
+            tree,
             doc_index_state: DocIndexState::NotBuilt,
             doc_index_worker: None,
             doc_index_build_count: 0,
@@ -583,6 +619,24 @@ impl App {
             b.set_reveal_ignored(new_reveal);
         }
         self.note_dropped_entries();
+    }
+
+    /// Jail navigation above `boundary` (BE.7.H task 2): sets
+    /// [`Browser::root_boundary`] on both [`Self::browser`] and
+    /// [`Self::tree`], whichever are `Some`. Called once from `main.rs`
+    /// right after construction, with the invoked path's resolved
+    /// [`Self::corpus_root`] — bella's binary has never called this
+    /// before this block; `root_boundary` was previously set only by
+    /// `bastion`. A no-op field write on whichever of the two is `None`
+    /// (e.g. `tree` is always `Some`, but a future caller might not have
+    /// a `browser`).
+    pub fn set_root_boundary(&mut self, boundary: PathBuf) {
+        if let Some(b) = self.browser.as_mut() {
+            b.root_boundary = Some(boundary.clone());
+        }
+        if let Some(t) = self.tree.as_mut() {
+            t.root_boundary = Some(boundary);
+        }
     }
 
     /// Ascend to the parent directory (Backspace key).
@@ -678,6 +732,16 @@ impl App {
         match section {
             RailSection::Contents => self.headings.len(),
             RailSection::Metadata => self.metadata_rows().len().max(1),
+            // Same floor as Metadata, for the same reason: even a tree
+            // with a zero-row listing (the fs-root edge case, no `..`
+            // and no children) must give the section one row so an
+            // empty state has somewhere to draw.
+            RailSection::Tree => self
+                .tree
+                .as_ref()
+                .map(|t| t.entries.len())
+                .unwrap_or(0)
+                .max(1),
         }
     }
 
@@ -815,6 +879,7 @@ impl App {
                 None
             }
             RailSection::Metadata => self.activate_metadata_row(self.rail_selected),
+            RailSection::Tree => self.activate_tree_entry(self.rail_selected),
         }
     }
 
@@ -835,6 +900,78 @@ impl App {
                 None
             }
             RailSection::Metadata => self.activate_metadata_row(row),
+            RailSection::Tree => self.activate_tree_entry(row),
+        }
+    }
+
+    /// Activate tree entry `idx` (BE.7.H task 2) — the single dispatch
+    /// both a click and keyboard `Enter` on a tree row go through, the
+    /// same one-action-two-triggers contract [`Self::rail_click`]/
+    /// [`Self::activate_rail_selection`] already hold for Contents and
+    /// Metadata.
+    ///
+    /// - [`BrowserEntryKind::Markdown`] loads the file through
+    ///   [`Self::load_file`], with the previous location recorded for
+    ///   history exactly like a body link or a `related:` row
+    ///   ([`Self::follow_target`]) — `load_file` never touches
+    ///   [`Self::tree`], so the tree's expansion state survives the load.
+    /// - [`BrowserEntryKind::Dir`] expands one level in place
+    ///   ([`Browser::expand`]).
+    /// - [`BrowserEntryKind::ExpandedDir`] collapses back
+    ///   ([`Browser::collapse`]) — the SAME key/click toggles both
+    ///   directions, since the entry's own kind says which one applies.
+    /// - [`BrowserEntryKind::ParentDir`] (the tree's own root-level `..`
+    ///   row) goes through [`Browser::ascend_target`], which
+    ///   [`Self::set_root_boundary`] makes ALWAYS refuse for the tree —
+    ///   its `dir` is set equal to its `root_boundary` at construction
+    ///   and nothing in this method ever changes `dir`, so
+    ///   `ascend_target` returns `None` unconditionally once the
+    ///   boundary is wired. A refusal is not silent (BE.7.K): it reaches
+    ///   the message log the same way [`Self::ascend`]'s does.
+    ///
+    /// A no-op (never a panic) when `idx` is out of range — e.g. a stale
+    /// click delivered after the tree listing shrank on collapse.
+    fn activate_tree_entry(&mut self, idx: usize) -> Option<(PathBuf, usize)> {
+        let entry = self.tree.as_ref()?.entries.get(idx)?.clone();
+        match entry.kind {
+            BrowserEntryKind::Markdown => {
+                let prev = (self.file.clone(), self.resolve_scroll_anchor().unwrap_or(0));
+                if let Err(msg) = self.load_file(entry.path) {
+                    self.set_status(msg, Severity::Error);
+                    return None;
+                }
+                Some(prev)
+            }
+            BrowserEntryKind::Dir => {
+                if let Some(t) = self.tree.as_mut() {
+                    t.expand(idx);
+                }
+                None
+            }
+            BrowserEntryKind::ExpandedDir => {
+                if let Some(t) = self.tree.as_mut() {
+                    t.collapse(idx);
+                }
+                None
+            }
+            BrowserEntryKind::ParentDir => {
+                let target = self.tree.as_ref().and_then(|t| t.ascend_target());
+                match target {
+                    Some(dir) => {
+                        let boundary = self.tree.as_ref().and_then(|t| t.root_boundary.clone());
+                        let mut t = Browser::new(dir);
+                        t.root_boundary = boundary;
+                        self.tree = Some(t);
+                    }
+                    None => {
+                        self.set_status(
+                            "Already at the root — nothing to ascend to",
+                            Severity::Info,
+                        );
+                    }
+                }
+                None
+            }
         }
     }
 
@@ -1718,6 +1855,8 @@ mod tests {
     use std::path::PathBuf;
 
     use bella_engine::Theme;
+
+    use bella_engine::browser::{Browser, BrowserEntryKind};
 
     use super::{App, DocIndexState, MetadataRow, RailSection, RelatedRowState, RenderState};
     use crate::history::HistoryEntry;
@@ -3324,6 +3463,225 @@ mod tests {
         assert_eq!(latest.severity, Severity::Info);
     }
 
+    // --- BE.7.H task 2 tests: the tree pane and root_boundary wiring ---
+
+    fn tree_fixture(label: &str) -> PathBuf {
+        let dir = temp_browser_dir(label);
+        std::fs::create_dir_all(dir.join("child")).expect("create child dir");
+        std::fs::write(dir.join("child").join("nested.md"), "# nested").expect("write nested.md");
+        std::fs::write(dir.join("top.md"), "# top").expect("write top.md");
+        dir
+    }
+
+    #[test]
+    fn set_root_boundary_jails_both_browser_and_tree() {
+        let dir = temp_browser_dir("set_root_boundary_both");
+        let mut app = App::new_browser(dir.clone(), 80, 25);
+        assert!(
+            app.browser.as_ref().unwrap().root_boundary.is_none(),
+            "precondition: nothing wires root_boundary before this call"
+        );
+        assert!(
+            app.tree.as_ref().unwrap().root_boundary.is_none(),
+            "precondition: the tree starts unjailed too"
+        );
+
+        app.set_root_boundary(dir.clone());
+
+        assert_eq!(
+            app.browser.as_ref().unwrap().root_boundary,
+            Some(dir.clone())
+        );
+        assert_eq!(app.tree.as_ref().unwrap().root_boundary, Some(dir));
+    }
+
+    #[test]
+    fn tree_is_built_at_construction_for_both_reader_and_browser_apps() {
+        let reader = make_app(3, 5);
+        assert!(
+            reader.tree.is_some(),
+            "App::new must build a tree even though mode starts Reader"
+        );
+
+        let dir = temp_browser_dir("tree_built_browser");
+        let browser_app = App::new_browser(dir, 80, 25);
+        assert!(browser_app.tree.is_some());
+    }
+
+    #[test]
+    fn activate_tree_entry_on_dir_expands_one_level_in_place() {
+        let dir = tree_fixture("activate_expand");
+        let mut app = make_app(3, 5);
+        app.tree = Some(Browser::new(dir));
+
+        let idx = app
+            .tree
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .position(|e| e.display == "child")
+            .expect("child dir must be listed");
+
+        let result = app.activate_tree_entry(idx);
+        assert!(result.is_none(), "expanding must not navigate");
+        let t = app.tree.as_ref().unwrap();
+        assert_eq!(t.entries[idx].kind, BrowserEntryKind::ExpandedDir);
+        assert!(
+            t.entries
+                .iter()
+                .any(|e| e.display == "nested.md" && e.depth == t.entries[idx].depth + 1),
+            "the child's own child must now be spliced in one level deeper"
+        );
+    }
+
+    #[test]
+    fn activate_tree_entry_on_expanded_dir_collapses_it_back() {
+        let dir = tree_fixture("activate_collapse");
+        let mut app = make_app(3, 5);
+        app.tree = Some(Browser::new(dir));
+
+        let idx = app
+            .tree
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .position(|e| e.display == "child")
+            .expect("child dir must be listed");
+        app.activate_tree_entry(idx);
+        assert_eq!(
+            app.tree.as_ref().unwrap().entries[idx].kind,
+            BrowserEntryKind::ExpandedDir,
+            "precondition: expanded by the first activation"
+        );
+
+        app.activate_tree_entry(idx);
+        let t = app.tree.as_ref().unwrap();
+        assert_eq!(
+            t.entries[idx].kind,
+            BrowserEntryKind::Dir,
+            "the second activation on the same row must collapse it"
+        );
+        assert!(
+            !t.entries.iter().any(|e| e.display == "nested.md"),
+            "collapse must remove the spliced-in subtree"
+        );
+    }
+
+    #[test]
+    fn activate_tree_entry_on_markdown_opens_it_and_preserves_tree_expansion_state() {
+        let dir = tree_fixture("activate_open_preserves_state");
+        let mut app = make_app(3, 5);
+        let prev_file = app.file().to_path_buf();
+        app.tree = Some(Browser::new(dir.clone()));
+
+        let child_idx = app
+            .tree
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .position(|e| e.display == "child")
+            .expect("child dir must be listed");
+        app.activate_tree_entry(child_idx);
+        assert_eq!(
+            app.tree.as_ref().unwrap().entries[child_idx].kind,
+            BrowserEntryKind::ExpandedDir,
+            "precondition: child expanded before opening a file"
+        );
+
+        let nested_idx = app
+            .tree
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .position(|e| e.display == "nested.md")
+            .expect("nested.md must be listed once child is expanded");
+
+        let result = app.activate_tree_entry(nested_idx);
+        let (returned_prev, _anchor) =
+            result.expect("opening a Markdown tree entry must report the previous location");
+        assert_eq!(returned_prev, prev_file);
+        assert_eq!(app.file(), dir.join("child").join("nested.md"));
+        assert_eq!(
+            app.tree.as_ref().unwrap().entries[child_idx].kind,
+            BrowserEntryKind::ExpandedDir,
+            "load_file must never touch the tree — expansion state must survive the load"
+        );
+    }
+
+    #[test]
+    fn tree_root_boundary_wired_via_set_root_boundary_refuses_ascend_for_a_real_run() {
+        use crate::messages::{MessageLog, Severity};
+
+        // Deliberately goes through `App::set_root_boundary` — the exact
+        // call `main.rs` makes — rather than hand-assigning
+        // `app.tree.as_mut().unwrap().root_boundary` directly the way
+        // `ascend_at_root_boundary_logs_a_refusal_instead_of_vanishing_silently`
+        // (the browser-mode equivalent, above) does. This is the "REAL
+        // run" acceptance criterion: the refusal must reach the message
+        // log with `root_boundary` set through the real call site, not
+        // only in a test that assigns the field by hand.
+        //
+        // Capability check, performed manually and reverted immediately
+        // after (CLAUDE.md's "shown capable of failing" / no-fabricated-
+        // observation rule): temporarily removed the
+        // `app.set_root_boundary(dir.clone());` line below — the same
+        // single call `main.rs`'s `run()` makes right after constructing
+        // `app` — and reran this test. It FAILED, exactly as expected:
+        //
+        //   assertion `left == right` failed: refused ascend must not re-root the tree
+        //     left: "/var/folders/.../T"
+        //     right: "/var/folders/.../T/bella_task2_tree_root_refusal_real_run-<pid>-<nanos>-0"
+        //
+        // `activate_tree_entry(0)` no longer refused: with `root_boundary`
+        // left `None`, `ascend_target()` had nothing to refuse against, so
+        // the tree re-rooted itself at the fixture's real parent directory
+        // (the system temp dir) instead of staying jailed — the exact
+        // silent-no-op `main.rs` had before this task, for every call site
+        // that touches `root_boundary`, the tree's own `..` row included.
+        // (The re-rooted listing of the whole temp dir also made the run
+        // itself far slower — a second, incidental demonstration of why
+        // an unjailed ascend is a real problem, not just a correctness
+        // nicety.) Restored the line immediately after and reran green.
+        let dir = temp_browser_dir("tree_root_refusal_real_run");
+        let mut app = App::new_browser(dir.clone(), 80, 25);
+        app.set_root_boundary(dir.clone());
+        app.message_log = MessageLog::default();
+        app.clear_status();
+
+        assert_eq!(
+            app.tree
+                .as_ref()
+                .unwrap()
+                .entries
+                .first()
+                .map(|e| e.kind.clone()),
+            Some(BrowserEntryKind::ParentDir),
+            "precondition: the tree's own root lists a `..` entry"
+        );
+
+        let result = app.activate_tree_entry(0);
+
+        assert!(result.is_none(), "a refused ascend must not navigate");
+        assert_eq!(
+            app.tree.as_ref().unwrap().dir,
+            dir,
+            "refused ascend must not re-root the tree"
+        );
+        assert!(
+            app.status_message.is_some(),
+            "the refusal must not be silent"
+        );
+        let latest = app
+            .message_log
+            .latest()
+            .expect("refusal must reach the durable log, not just the transient line");
+        assert_eq!(latest.severity, Severity::Info);
+    }
+
     #[test]
     fn dropped_entries_from_a_walk_error_reach_the_message_log_with_the_count() {
         use crate::messages::{MessageLog, Severity};
@@ -3644,8 +4002,16 @@ mod tests {
              task 2), so the stale index (2) from Contents must re-clamp to \
              0 rather than carry over"
         );
+        // BE.7.H task 2 widens the cycle to three sections: Metadata ->
+        // Tree is next, not back around to Contents.
         app.cycle_rail_section();
-        assert_eq!(app.rail_section, RailSection::Contents);
+        assert_eq!(app.rail_section, RailSection::Tree);
+        app.cycle_rail_section();
+        assert_eq!(
+            app.rail_section,
+            RailSection::Contents,
+            "third cycle must wrap back around to Contents"
+        );
     }
 
     #[test]

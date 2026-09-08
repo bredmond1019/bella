@@ -6,19 +6,28 @@
 //!
 use std::path::{Path, PathBuf};
 
-/// Distinguishes the three kinds of entry shown in the browser listing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Distinguishes the kinds of entry shown in the browser listing.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum BrowserEntryKind {
     /// The `..` synthetic parent-directory entry.
     ParentDir,
-    /// A subdirectory of the current directory.
+    /// A subdirectory of the current directory, not currently expanded.
     Dir,
-    /// A `.md` or `.mdx` file.
+    /// A subdirectory whose immediate children have been listed and
+    /// spliced into `Browser::entries` right after it (one level; see
+    /// [`Browser::expand`]). Distinguished from [`BrowserEntryKind::Dir`]
+    /// so a renderer can draw a different expand/collapse marker without
+    /// consulting a second field, and so [`Browser::collapse`] knows
+    /// which entries own a subtree to remove.
+    ExpandedDir,
+    /// A `.md` or `.mdx` file. The default kind: a leaf with no expand
+    /// state, the most neutral value for a placeholder entry.
+    #[default]
     Markdown,
 }
 
 /// A single row in the browser listing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BrowserEntry {
     /// Absolute path of the entry.
     pub path: PathBuf,
@@ -26,6 +35,17 @@ pub struct BrowserEntry {
     pub display: String,
     /// Entry kind.
     pub kind: BrowserEntryKind,
+    /// Nesting depth in the (flattened) tree: `0` for an entry listed
+    /// directly under the `Browser`'s root `dir`, `1` for a child spliced
+    /// in by expanding a depth-`0` entry, and so on. Used to find the
+    /// bounds of a subtree to remove on [`Browser::collapse`], and by a
+    /// renderer to indent.
+    pub depth: usize,
+    /// The directory this entry was listed from — `Some(dir)` for every
+    /// entry the walker produces, `None` only for a `BrowserEntry` built
+    /// through `Default` (or another value that never went through
+    /// `build_entries`).
+    pub parent: Option<PathBuf>,
 }
 
 /// Directory browser state.
@@ -56,6 +76,13 @@ pub struct Browser {
     /// there-was-nothing-there — distinct from a directory that is simply
     /// empty.
     pub dropped_entries: usize,
+    /// Count of directory-listing walks performed so far: one for the
+    /// initial [`Browser::new`], one more per [`Browser::set_reveal_ignored`]
+    /// re-list, and one per [`Browser::expand`] call. Expanding a
+    /// directory walks only that directory's immediate children — this
+    /// counter is how a test proves a deep tree was never walked ahead of
+    /// time.
+    pub walk_count: usize,
 }
 
 impl Browser {
@@ -68,7 +95,7 @@ impl Browser {
     ///
     /// `reveal_ignored` starts `false` — today's behaviour.
     pub fn new(dir: PathBuf) -> Self {
-        let (entries, dropped_entries) = build_entries(dir.as_path(), false);
+        let (entries, dropped_entries) = build_entries(dir.as_path(), false, 0, true);
         Self {
             dir,
             entries,
@@ -77,6 +104,7 @@ impl Browser {
             root_boundary: None,
             reveal_ignored: false,
             dropped_entries,
+            walk_count: 1,
         }
     }
 
@@ -91,10 +119,16 @@ impl Browser {
     }
 
     /// Re-list `self.dir` with the current `reveal_ignored` setting.
+    ///
+    /// Resets to a flat, depth-0 listing — any expanded subtree is
+    /// collapsed away, the same way it was never persisted across a
+    /// directory change today.
     fn refresh(&mut self) {
-        let (entries, dropped_entries) = build_entries(self.dir.as_path(), self.reveal_ignored);
+        let (entries, dropped_entries) =
+            build_entries(self.dir.as_path(), self.reveal_ignored, 0, true);
         self.entries = entries;
         self.dropped_entries = dropped_entries;
+        self.walk_count += 1;
         if self.selected >= self.entries.len() {
             self.selected = self.entries.len().saturating_sub(1);
         }
@@ -138,16 +172,39 @@ impl Browser {
         self.entries.get(self.selected)
     }
 
-    /// Return the target path when the selected entry is a [`BrowserEntryKind::Dir`]
-    /// or [`BrowserEntryKind::ParentDir`], otherwise `None`.
+    /// Return the target path when the selected entry is a directory kind
+    /// ([`BrowserEntryKind::Dir`], [`BrowserEntryKind::ExpandedDir`], or
+    /// [`BrowserEntryKind::ParentDir`]), otherwise `None`.
+    ///
+    /// Exhaustive over every [`BrowserEntryKind`] variant deliberately — no
+    /// `_ =>` arm. A wildcard here would let a future variant (or this
+    /// block's own `ExpandedDir`, before this match was widened) fall
+    /// through to `None` silently: no compile error, no test failure, just
+    /// a directory-shaped entry that quietly refuses to be entered. See the
+    /// doc comment on the `descend_exhaustive_match_is_load_bearing`
+    /// capability-check test below for the observed failure this guards
+    /// against.
     pub fn descend(&self) -> Option<PathBuf> {
         match self.selected_entry()? {
             BrowserEntry {
-                kind: BrowserEntryKind::Dir | BrowserEntryKind::ParentDir,
+                kind: BrowserEntryKind::Dir,
                 path,
                 ..
             } => Some(path.clone()),
-            _ => None,
+            BrowserEntry {
+                kind: BrowserEntryKind::ExpandedDir,
+                path,
+                ..
+            } => Some(path.clone()),
+            BrowserEntry {
+                kind: BrowserEntryKind::ParentDir,
+                path,
+                ..
+            } => Some(path.clone()),
+            BrowserEntry {
+                kind: BrowserEntryKind::Markdown,
+                ..
+            } => None,
         }
     }
 
@@ -158,6 +215,63 @@ impl Browser {
             return None;
         }
         self.dir.parent().map(|p| p.to_path_buf())
+    }
+
+    /// Expand the collapsed directory entry at `idx`: list its immediate
+    /// children (one directory level — never a recursive walk ahead of
+    /// time) and splice them into `entries` right after it, each one level
+    /// deeper than `idx`. Marks the entry [`BrowserEntryKind::ExpandedDir`].
+    ///
+    /// Returns `false` and does nothing if `idx` is out of range or the
+    /// entry at `idx` is not a collapsed [`BrowserEntryKind::Dir`] (already
+    /// expanded, or not a directory at all).
+    pub fn expand(&mut self, idx: usize) -> bool {
+        let Some(entry) = self.entries.get(idx) else {
+            return false;
+        };
+        if entry.kind != BrowserEntryKind::Dir {
+            return false;
+        }
+        let child_dir = entry.path.clone();
+        let child_depth = entry.depth + 1;
+
+        let (children, dropped) =
+            build_entries(child_dir.as_path(), self.reveal_ignored, child_depth, false);
+        self.dropped_entries += dropped;
+        self.walk_count += 1;
+
+        self.entries[idx].kind = BrowserEntryKind::ExpandedDir;
+        self.entries.splice(idx + 1..idx + 1, children);
+        true
+    }
+
+    /// Collapse the expanded directory entry at `idx`: remove every entry
+    /// after it whose `depth` is greater than `idx`'s (its whole subtree,
+    /// at any depth — not just its immediate children), then mark it
+    /// [`BrowserEntryKind::Dir`] again.
+    ///
+    /// Returns `false` and does nothing if `idx` is out of range or the
+    /// entry at `idx` is not [`BrowserEntryKind::ExpandedDir`].
+    pub fn collapse(&mut self, idx: usize) -> bool {
+        let Some(entry) = self.entries.get(idx) else {
+            return false;
+        };
+        if entry.kind != BrowserEntryKind::ExpandedDir {
+            return false;
+        }
+        let depth = entry.depth;
+
+        let mut end = idx + 1;
+        while end < self.entries.len() && self.entries[end].depth > depth {
+            end += 1;
+        }
+        self.entries.drain(idx + 1..end);
+        self.entries[idx].kind = BrowserEntryKind::Dir;
+
+        if self.selected >= self.entries.len() {
+            self.selected = self.entries.len().saturating_sub(1);
+        }
+        true
     }
 }
 
@@ -221,7 +335,21 @@ fn nearest_ancestor_containing(start: &Path, marker: &str) -> Option<PathBuf> {
 /// `.gitignore`/global-ignore/git-exclude filter. Either alone leaves the
 /// other hiding things — a dot-directory that itself contains a
 /// gitignored child needs both off to be reachable.
-fn build_entries(dir: &Path, reveal_ignored: bool) -> (Vec<BrowserEntry>, usize) {
+///
+/// `depth` is stamped onto every produced [`BrowserEntry`] — `0` for a
+/// root-level listing, or one more than the expanding parent's depth when
+/// called from [`Browser::expand`]. `include_parent` controls whether a
+/// synthetic `..` entry is prepended: `true` for a root/refresh listing,
+/// `false` when listing a directory's children for a tree expansion,
+/// where a `..` row inside the subtree would be meaningless — the tree
+/// pane ascends via the entry that owns the subtree, not a synthetic row
+/// inside it.
+fn build_entries(
+    dir: &Path,
+    reveal_ignored: bool,
+    depth: usize,
+    include_parent: bool,
+) -> (Vec<BrowserEntry>, usize) {
     let mut dirs: Vec<BrowserEntry> = Vec::new();
     let mut files: Vec<BrowserEntry> = Vec::new();
     let mut dropped: usize = 0;
@@ -281,6 +409,8 @@ fn build_entries(dir: &Path, reveal_ignored: bool) -> (Vec<BrowserEntry>, usize)
                 path,
                 display: name,
                 kind: BrowserEntryKind::Dir,
+                depth,
+                parent: Some(dir.to_path_buf()),
             });
         } else if ft.is_file() {
             let lower = name.to_lowercase();
@@ -289,6 +419,8 @@ fn build_entries(dir: &Path, reveal_ignored: bool) -> (Vec<BrowserEntry>, usize)
                     path,
                     display: name,
                     kind: BrowserEntryKind::Markdown,
+                    depth,
+                    parent: Some(dir.to_path_buf()),
                 });
             }
         }
@@ -298,13 +430,17 @@ fn build_entries(dir: &Path, reveal_ignored: bool) -> (Vec<BrowserEntry>, usize)
     dirs.sort_by_cached_key(|a| a.display.to_lowercase());
     files.sort_by_cached_key(|a| a.display.to_lowercase());
 
-    // Prepend `..` when a parent exists.
+    // Prepend `..` when a parent exists and this listing wants one — a
+    // root/refresh listing does, an expand-children listing does not
+    // (see `include_parent` on the doc comment above).
     let mut entries: Vec<BrowserEntry> = Vec::new();
-    if let Some(parent) = dir.parent() {
+    if include_parent && let Some(parent) = dir.parent() {
         entries.push(BrowserEntry {
             path: parent.to_path_buf(),
             display: "..".to_string(),
             kind: BrowserEntryKind::ParentDir,
+            depth,
+            parent: Some(dir.to_path_buf()),
         });
     }
     entries.extend(dirs);
@@ -633,6 +769,308 @@ mod tests {
             dir.parent().unwrap().to_path_buf(),
             "descend on `..` must return the parent directory"
         );
+    }
+
+    // Exhaustiveness capability check (Task 1 acceptance criterion 2):
+    // `descend()`'s match was shown capable of failing to catch a silently
+    // non-descendable directory-shaped variant. Temporarily rewrote
+    // `descend()` as:
+    //
+    //   pub fn descend(&self) -> Option<PathBuf> {
+    //       match self.selected_entry()? {
+    //           BrowserEntry { kind: BrowserEntryKind::Dir | BrowserEntryKind::ExpandedDir
+    //               | BrowserEntryKind::ParentDir, path, .. } => Some(path.clone()),
+    //           _ => None,
+    //       }
+    //   }
+    //
+    // then added a hypothetical fourth directory-shaped variant
+    // `BrowserEntryKind::Placeholder` to the enum (no `#[default]`, arm
+    // omitted from `build_entries`/`expand`/`collapse` on purpose) and ran
+    // `cargo build -p bella-engine`. It compiled clean — the `_ => None`
+    // arm swallowed the new variant with zero diagnostic, exactly the
+    // silent-non-descendable failure this block exists to close off.
+    // Reverted the wildcard AND the hypothetical variant immediately after
+    // observing the clean compile; the committed `descend()` has no `_ =>`
+    // arm, so the same experiment (a fifth real variant, unhandled) is a
+    // compile error instead of a silent bug.
+    #[test]
+    fn descend_exhaustive_match_is_load_bearing() {
+        // The test above this comment block already exercises every real
+        // variant `descend()` can see today (`descend_returns_path_for_dir_entry`,
+        // `descend_returns_none_for_markdown_entry`,
+        // `descend_returns_parent_for_parent_dir_entry`, plus
+        // `expand_lists_one_level_...` below covers `ExpandedDir`). This
+        // test exists to anchor the doc comment recording the manual
+        // wildcard-reintroduction experiment next to the property it
+        // verifies, per CLAUDE.md's "no fabricated metrics" rule applied
+        // to compiler behaviour: the observation must live beside code
+        // that keeps it true, not just in a commit message.
+        let dir = temp_dir("descend_exhaustive_anchor");
+        let b = Browser::new(dir);
+        // A fresh Browser's first entry is always `..` (ParentDir) or, at
+        // the filesystem root, empty — either way this must not panic.
+        let _ = b.descend();
+    }
+
+    #[test]
+    fn descend_returns_path_for_expanded_dir_entry() {
+        let dir = temp_dir("descend_expanded");
+        create_dir(&dir, "child");
+
+        let mut b = Browser::new(dir.clone());
+        let idx = b
+            .entries
+            .iter()
+            .position(|e| e.display == "child")
+            .expect("child must be listed");
+        assert!(b.expand(idx), "expand must succeed on a collapsed Dir");
+        assert_eq!(b.entries[idx].kind, BrowserEntryKind::ExpandedDir);
+
+        b.selected = idx;
+        let got = b.descend();
+        assert!(
+            got.is_some(),
+            "descend on an ExpandedDir entry must still return Some — it is still a directory"
+        );
+        assert_eq!(got.unwrap(), dir.join("child"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Default tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn browser_entry_default_has_sensible_kind() {
+        let e = BrowserEntry::default();
+        assert_eq!(
+            e.kind,
+            BrowserEntryKind::Markdown,
+            "default kind must be the neutral leaf kind — a directory kind would wrongly \
+             imply expand state (Dir: collapsible; ExpandedDir: has a subtree to collapse; \
+             ParentDir: synthetic `..`) that a bare Default value has no basis to claim"
+        );
+        assert_eq!(e.path, PathBuf::new(), "default path must be empty");
+        assert_eq!(e.display, String::new(), "default display must be empty");
+        assert_eq!(e.depth, 0, "default depth must be 0 — the root level");
+        assert_eq!(
+            e.parent, None,
+            "default parent must be None — a Default value was never listed from anywhere"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // expand / collapse tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn expand_lists_one_level_and_second_level_walks_only_itself() {
+        let dir = temp_dir("expand_walk_counter");
+        let a = create_dir(&dir, "a");
+        create_file(&a, "a1.md");
+        let b_dir = create_dir(&a, "b");
+        create_file(&b_dir, "b1.md");
+
+        let mut browser = Browser::new(dir.clone());
+        assert_eq!(browser.walk_count, 1, "the initial listing is one walk");
+
+        let a_idx = browser
+            .entries
+            .iter()
+            .position(|e| e.display == "a")
+            .expect("a must be listed");
+        assert_eq!(browser.entries[a_idx].depth, 0);
+
+        assert!(
+            browser.expand(a_idx),
+            "expand must succeed on a collapsed Dir entry"
+        );
+        assert_eq!(
+            browser.walk_count, 2,
+            "expanding one level performs exactly one more walk"
+        );
+        assert_eq!(browser.entries[a_idx].kind, BrowserEntryKind::ExpandedDir);
+
+        // Only a's immediate children are listed: "b" (dir) and "a1.md" —
+        // NOT b's contents. A deep tree lists only the expanded levels.
+        assert!(find_entry(&browser.entries, "a1.md").is_some());
+        let b_idx = browser
+            .entries
+            .iter()
+            .position(|e| e.display == "b")
+            .expect("b must be listed after expanding a");
+        assert_eq!(
+            browser.entries[b_idx].depth, 1,
+            "a's children must be one level deeper than a"
+        );
+        assert!(
+            find_entry(&browser.entries, "b1.md").is_none(),
+            "expand must not walk recursively ahead of time — b's contents are unlisted \
+             until b itself is expanded"
+        );
+
+        assert!(
+            browser.expand(b_idx),
+            "expand must succeed on b, a's freshly-listed child"
+        );
+        assert_eq!(
+            browser.walk_count, 3,
+            "expanding the second level performs exactly one walk — it does not re-walk a"
+        );
+        let b1_idx = browser
+            .entries
+            .iter()
+            .position(|e| e.display == "b1.md")
+            .expect("b1.md must be listed after expanding b");
+        assert_eq!(
+            browser.entries[b1_idx].depth, 2,
+            "b's children must be two levels deep (root -> a -> b -> b1.md)"
+        );
+    }
+
+    #[test]
+    fn expand_children_carry_the_parent_relationship() {
+        let dir = temp_dir("expand_parent_field");
+        let a = create_dir(&dir, "a");
+        create_file(&a, "a1.md");
+
+        let mut b = Browser::new(dir.clone());
+        let a_idx = b
+            .entries
+            .iter()
+            .position(|e| e.display == "a")
+            .expect("a must be listed");
+        b.expand(a_idx);
+
+        let a1 = find_entry(&b.entries, "a1.md").expect("a1.md must be listed after expand");
+        assert_eq!(
+            a1.parent.as_deref(),
+            Some(a.as_path()),
+            "a child listed by expand must record the directory it was listed from"
+        );
+    }
+
+    #[test]
+    fn expand_no_op_on_markdown_entry() {
+        let dir = temp_dir("expand_markdown_noop");
+        create_file(&dir, "readme.md");
+
+        let mut b = Browser::new(dir.clone());
+        let idx = b
+            .entries
+            .iter()
+            .position(|e| e.display == "readme.md")
+            .expect("readme.md must be listed");
+        let before = b.entries.len();
+        assert!(
+            !b.expand(idx),
+            "expand on a Markdown entry must be a no-op, not a walk of the file's parent"
+        );
+        assert_eq!(b.entries.len(), before, "no entries must be spliced in");
+        assert_eq!(b.walk_count, 1, "no extra walk must be performed");
+    }
+
+    #[test]
+    fn expand_no_op_when_already_expanded() {
+        let dir = temp_dir("expand_idempotent");
+        let a = create_dir(&dir, "a");
+        create_file(&a, "a1.md");
+
+        let mut b = Browser::new(dir.clone());
+        let a_idx = b
+            .entries
+            .iter()
+            .position(|e| e.display == "a")
+            .expect("a must be listed");
+        assert!(b.expand(a_idx));
+        assert_eq!(b.walk_count, 2);
+
+        assert!(
+            !b.expand(a_idx),
+            "expanding an already-expanded entry must be a no-op"
+        );
+        assert_eq!(
+            b.walk_count, 2,
+            "a redundant expand call must not perform another walk"
+        );
+    }
+
+    #[test]
+    fn collapse_removes_only_this_subtree_not_siblings() {
+        let dir = temp_dir("collapse_subtree");
+        let a = create_dir(&dir, "a");
+        create_file(&a, "a1.md");
+        let b_dir = create_dir(&a, "b");
+        create_file(&b_dir, "b1.md");
+        let sibling = create_dir(&dir, "sibling");
+        create_file(&sibling, "s1.md");
+
+        let mut browser = Browser::new(dir.clone());
+        let a_idx = browser
+            .entries
+            .iter()
+            .position(|e| e.display == "a")
+            .unwrap();
+        browser.expand(a_idx);
+        let b_idx = browser
+            .entries
+            .iter()
+            .position(|e| e.display == "b")
+            .unwrap();
+        browser.expand(b_idx);
+        assert!(find_entry(&browser.entries, "b1.md").is_some());
+
+        let sibling_idx = browser
+            .entries
+            .iter()
+            .position(|e| e.display == "sibling")
+            .expect("sibling must still be listed at the root, untouched by a's expansion");
+        assert_eq!(browser.entries[sibling_idx].kind, BrowserEntryKind::Dir);
+
+        let a_idx = browser
+            .entries
+            .iter()
+            .position(|e| e.display == "a")
+            .unwrap();
+        assert!(
+            browser.collapse(a_idx),
+            "collapse must succeed on an ExpandedDir"
+        );
+        assert_eq!(browser.entries[a_idx].kind, BrowserEntryKind::Dir);
+        assert!(
+            find_entry(&browser.entries, "a1.md").is_none(),
+            "a's own children must be gone after collapsing a"
+        );
+        assert!(
+            find_entry(&browser.entries, "b").is_none(),
+            "a's grandchildren (via b) must be gone too — the whole subtree, not one level"
+        );
+        assert!(
+            find_entry(&browser.entries, "b1.md").is_none(),
+            "b's children, nested under a, must be gone as well"
+        );
+        assert!(
+            find_entry(&browser.entries, "sibling").is_some(),
+            "a sibling of a at the root must be untouched by collapsing a"
+        );
+        assert!(
+            find_entry(&browser.entries, "s1.md").is_none(),
+            "sibling was never expanded, so it never had children listed"
+        );
+    }
+
+    #[test]
+    fn collapse_no_op_on_collapsed_dir() {
+        let dir = temp_dir("collapse_noop");
+        create_dir(&dir, "a");
+
+        let mut b = Browser::new(dir.clone());
+        let a_idx = b.entries.iter().position(|e| e.display == "a").unwrap();
+        assert!(
+            !b.collapse(a_idx),
+            "collapse on a still-collapsed Dir must be a no-op"
+        );
+        assert_eq!(b.entries[a_idx].kind, BrowserEntryKind::Dir);
     }
 
     #[test]

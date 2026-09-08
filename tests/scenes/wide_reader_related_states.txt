@@ -22,13 +22,6 @@
 │                      │
 │                      │
 │                      │
-│                      │
-│                      │
-│                      │
-│                      │
-│                      │
-│                      │
-│                      │
 └──────────────────────┘
 ┌Metadata──────────────┐
 │type: Reference       │
@@ -39,5 +32,12 @@
 │→ fx-res              │
 │✗ fx-mis (unresolved) │
 │≠ fx-amb (ambiguous)  │
+└──────────────────────┘
+┌Tree──────────────────┐
+│  ..                  │
+│  related_ambiguous_a…│
+│  related_ambiguous_b…│
+│  related_demo.md     │
+│  related_resolved_ta…│
 └──────────────────────┘
  bella · related_demo.md · 17/17  j/k scroll · / search · [ ] history · q quit

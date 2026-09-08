@@ -59,7 +59,8 @@
 #   wide_browser_reveal_on, wide_browser_planning_symlink, wide_scroll_anchor_top,
 #   wide_reader_rail_on, wide_reader_rail_off, wide_reader_metadata_populated,
 #   wide_reader_metadata_empty, wide_browser_status_line_carries_a_message,
-#   wide_diagnostics_overlay_open, wide_reader_related_states
+#   wide_diagnostics_overlay_open, wide_reader_related_states,
+#   wide_tree_expanded_one_level, wide_tree_root_jail_refusal
 #
 # Run from the repo root: vhs scripts/vhs/reference-wide.tape
 
@@ -325,5 +326,77 @@ Type "t"
 Wait+Screen@120s /\(unresolved\)/
 Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_reader_related_states.png
+Type "q"
+Sleep 500ms
+
+# --- Tree pane (BE.7.H task 4): expanded one level, and the root-jail
+# refusal its own `..` row hits unconditionally --------------------------
+#
+# Both scenes launch on demo.md (this tape's default reader fixture) and
+# open the rail with "t", then give it keyboard focus with "T" (lands on
+# whichever section was last focused — a fresh launch is always
+# Contents), then two Tabs cycle Contents -> Metadata -> Tree, landing on
+# Tree with its selection reset to row 0: the tree's own `..`
+# (`BrowserEntryKind::ParentDir`). See celia.toml's matching comment for
+# why the tree's listing (rooted at the fleet's `brain.toml` ancestor,
+# not core/bella alone) puts `_planning` first among its dirs.
+#
+# ABSOLUTE path via shell `$(pwd)` expansion, deliberately, unlike every
+# other `Type "target/release/bella ..."` line above in this tape.
+# `bella_engine::browser::resolve_corpus_root` walks `Path::parent()` up
+# from the invoked path looking for `brain.toml`, and `Path::parent()` on
+# a RELATIVE path stops at `""` without ever reaching the real filesystem
+# root — so a relative `scripts/vhs/fixtures/demo.md` argument can never
+# let the walk climb as far as `agentic-portfolio/`, and the Tree pane's
+# corpus root resolves wrong (empty listing). `$(pwd)` is typed into a
+# REAL shell here (VHS's `Type` sends literal keystrokes to the pty), so
+# it expands exactly as it would at an interactive prompt. Same
+# workaround as celia.toml's matching scenes, and the same caveat: this
+# fixes the CAPTURE, not `resolve_corpus_root` itself, which is outside
+# this task's files.
+Type "target/release/bella $(pwd)/scripts/vhs/fixtures/demo.md"
+Enter
+Wait+Screen@30s /Bella Reference Demo/
+Type "t"
+# "Tree" is the rail's third section's own bordered title (see
+# ui::draw_rail_tree) — on screen only once the rail is toggled open, so
+# this can't match before the keypress above.
+Wait+Screen@30s /Tree/
+Type "T"
+Tab
+Tab
+Down
+Enter
+# "base-template" is a child of `_planning` (the fleet root's
+# alphabetically-first non-hidden dir, per celia.toml's comment) — it is
+# not on screen anywhere in this frame until `_planning` is expanded, so
+# this can only match once the Down+Enter above has expanded it in place.
+Wait+Screen@30s /base-template/
+Sleep 1500ms
+Screenshot planning/artifacts/screenshots/wide_tree_expanded_one_level.png
+Type "q"
+Sleep 500ms
+
+# Same `$(pwd)` absolute-path workaround as the scene above, and for the
+# identical reason (relative-path corpus-root resolution) — see that
+# scene's comment.
+Type "target/release/bella $(pwd)/scripts/vhs/fixtures/demo.md"
+Enter
+Wait+Screen@30s /Bella Reference Demo/
+Type "t"
+Wait+Screen@30s /Tree/
+Type "T"
+Tab
+Tab
+Enter
+# "nothing to ascend to" is `App::activate_tree_entry`'s own refusal
+# text for the tree's ParentDir row (set_status, Severity::Info) — it
+# cannot be on screen before this Enter, and it only fires here because
+# the tree's `dir` is always constructed equal to its own
+# `root_boundary` (wired from the invoked path by main.rs), so its `..`
+# row refuses unconditionally rather than actually ascending.
+Wait+Screen@30s /nothing to ascend to/
+Sleep 1500ms
+Screenshot planning/artifacts/screenshots/wide_tree_root_jail_refusal.png
 Type "q"
 Sleep 500ms

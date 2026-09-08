@@ -101,6 +101,18 @@ fn run(
         }
     };
 
+    // Jail navigation at the corpus root resolved from the invoked path
+    // (BE.7.H task 2). `App::new`/`App::new_browser` already resolve and
+    // store `corpus_root`; this is the first call site in bella's own
+    // binary that ever sets `root_boundary` from it — previously the
+    // field existed and was enforced (`Browser::ascend_target`) but only
+    // `bastion` ever wrote it, so an ascend or a tree-expand past the
+    // invoked root silently succeeded here. Without this call, both the
+    // full-screen browser's Backspace-ascend and the tree pane's own `..`
+    // row can walk above the corpus root with no refusal at all.
+    let boundary = app.corpus_root.clone();
+    app.set_root_boundary(boundary);
+
     // Both constructors default to Theme::dark(); resolve the real theme once
     // here — "auto" checks ~/.config/md/config.toml's `theme` field first,
     // then falls back to $COLORFGBG terminal detection (bella-engine's

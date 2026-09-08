@@ -33,11 +33,11 @@
 │                      │1. First ordered item
 │                      │  1. Second ordered itemNested ordered item
 │                      │
-│                      │Task list
-│                      │
-│                      │• [ ] An unchecked task
+└──────────────────────┘Task list
+┌Metadata──────────────┐
+│(no frontmatter)      │• [ ] An unchecked task
 └──────────────────────┘• [x] A checked task
-┌Metadata──────────────┐• [ ] Another unchecked task
-│(no frontmatter)      │
+┌Tree──────────────────┐• [ ] Another unchecked task
+│                      │
 └──────────────────────┘Code block
  bella · demo.md · 43/64  j/k scroll · / search · [ ] history · q quit
