@@ -17,6 +17,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use crate::history::{History, HistoryEntry};
+use crate::messages::{MessageLog, Severity};
 use crate::render_worker::{RenderWorker, is_latest};
 use crate::selection::{self, Selection};
 use bella_engine::browser::Browser;
@@ -159,8 +160,28 @@ pub struct App {
     /// Active search state, if any.
     pub search: Option<SearchState>,
     /// Non-fatal status message to display in the status line (e.g. file-not-found).
-    /// Cleared on the next successful action that overwrites it.
+    /// Cleared on the next successful action that overwrites it, and on
+    /// `load_file`.
+    ///
+    /// This is the transient half of bella's diagnostic channel; the
+    /// durable half is [`Self::message_log`]. As of BE.7.K task 3, this
+    /// field is written ONLY from [`Self::set_status`] (the single write
+    /// path every diagnostic call site now goes through — it both pushes
+    /// to `message_log` and sets this field) or cleared via
+    /// [`Self::clear_status`] (called from `load_file`); no other function
+    /// in this crate assigns to it directly. The field's read shape is
+    /// unchanged so callers keep reading `app.status_message` as before.
     pub status_message: Option<String>,
+    /// Durable diagnostic log (BE.7.K). Bounded, timestamped, severity
+    /// tagged. Unlike `status_message`, `load_file` never clears this — a
+    /// message raised before a file load is still readable in the
+    /// diagnostics overlay (task 2) after it happens.
+    pub message_log: MessageLog,
+    /// Whether the diagnostics overlay (BE.7.K task 2) is currently open.
+    /// Opens from both Reader and Browser focus via the same key; drawing
+    /// is a pure function of this flag plus `message_log`, so toggling it
+    /// off and redrawing reproduces the exact pre-overlay frame.
+    pub diagnostics_open: bool,
     /// Back/forward navigation history stack (Task 6).
     ///
     /// Private (BE.7.E task 2): every external read/write goes through
@@ -305,6 +326,8 @@ impl App {
             toggled_checkboxes: HashSet::new(),
             search: None,
             status_message: None,
+            message_log: MessageLog::default(),
+            diagnostics_open: false,
             history: History::new(),
             body_area: Rect::default(),
             rail_open: false,
@@ -344,7 +367,7 @@ impl App {
         // synchronously and start the worker already `Ready`.
         let (lines, link_map, checkbox_map, headings) = render_metadata("", width, None, &theme);
         let browser = Browser::new(dir.clone());
-        Self {
+        let mut app = Self {
             src: String::new(),
             lines,
             link_map,
@@ -362,6 +385,8 @@ impl App {
             toggled_checkboxes: HashSet::new(),
             search: None,
             status_message: None,
+            message_log: MessageLog::default(),
+            diagnostics_open: false,
             history: History::new(),
             body_area: Rect::default(),
             rail_open: false,
@@ -385,7 +410,13 @@ impl App {
             rail_section: RailSection::Contents,
             rail_contents_area: Rect::default(),
             rail_metadata_area: Rect::default(),
-        }
+        };
+        // BE.7.K task 3: a walk error in the very first listing (bella
+        // launched directly at a directory with an unresolvable entry) must
+        // reach the log too, not only a later re-list via `enter_dir`/
+        // `ascend`/`toggle_reveal`/`back_to_browser`.
+        app.note_dropped_entries();
+        app
     }
 
     /// Override the active theme post-construction and re-render the current
@@ -443,6 +474,7 @@ impl App {
         b.selected = selected.min(b.entries.len().saturating_sub(1));
         self.browser = Some(b);
         self.mode = Mode::Browser;
+        self.note_dropped_entries();
     }
 
     /// Descend into `dir`: replace the active browser with one rooted at `dir`.
@@ -450,31 +482,52 @@ impl App {
     /// `mode` remains [`Mode::Browser`].
     pub fn enter_dir(&mut self, dir: PathBuf) {
         self.browser = Some(Browser::new(dir));
+        self.note_dropped_entries();
     }
 
     /// Toggle the active browser's `reveal_ignored` flag and re-list the
     /// current directory.
     ///
     /// No-op when there is no active browser (e.g. `Mode::Reader`). The
-    /// browser's `dropped_entries` count (surfaced directly in the status
-    /// line — see `ui::draw_browser_statusline`) makes an incomplete
-    /// listing visible to the operator without needing a separate
-    /// `status_message`.
+    /// browser's `dropped_entries` count is still surfaced directly on the
+    /// status line (see `ui::draw_browser_statusline`) for immediate
+    /// visibility; [`Self::note_dropped_entries`] additionally logs it
+    /// (BE.7.K task 3) so it survives past the next redraw.
     pub fn toggle_reveal(&mut self) {
         if let Some(b) = self.browser.as_mut() {
             let new_reveal = !b.reveal_ignored;
             b.set_reveal_ignored(new_reveal);
         }
+        self.note_dropped_entries();
     }
 
     /// Ascend to the parent directory (Backspace key).
     ///
     /// Uses the active browser's [`Browser::ascend_target`].  No-op when there
     /// is no active browser or the current directory has no accessible parent.
+    /// A refusal at the root (BE.7.K task 3) is not silent: the operator gets
+    /// no keypress feedback otherwise, so it goes to the message log.
     pub fn ascend(&mut self) {
         let target = self.browser.as_ref().and_then(|b| b.ascend_target());
         if let Some(dir) = target {
             self.browser = Some(Browser::new(dir));
+            self.note_dropped_entries();
+        } else if self.browser.is_some() {
+            self.set_status("Already at the root — nothing to ascend to", Severity::Info);
+        }
+    }
+
+    /// If the active browser's listing dropped any entries (a walk error —
+    /// BE.7.C), log the count so it is visible in the diagnostics overlay
+    /// after the redraw that showed it directly on the status line has long
+    /// since scrolled by. No-op when there is no active browser or nothing
+    /// was dropped.
+    fn note_dropped_entries(&mut self) {
+        let Some(dropped) = self.browser.as_ref().map(|b| b.dropped_entries) else {
+            return;
+        };
+        if dropped > 0 {
+            self.set_status(format!("{dropped} entries dropped"), Severity::Warning);
         }
     }
 
@@ -895,6 +948,32 @@ impl App {
         self.scroll = self.scroll.min(self.max_scroll());
     }
 
+    // --- diagnostic channel (BE.7.K task 3) ---
+    //
+    // `status_message` (transient) and `message_log` (durable) are written
+    // through exactly these two functions and nowhere else in this crate —
+    // this is the "single channel" acceptance criterion:
+    // `grep -rn 'status_message[[:space:]]*=' crates/bella/src/` must show
+    // writes only here (and in `messages.rs`, which owns the ring itself).
+
+    /// Set the transient status line AND append the same text to the
+    /// durable log, tagged with `severity`. Every diagnostic call site in
+    /// this crate that used to write `status_message` directly now goes
+    /// through this instead, so `status_message` is effectively a view of
+    /// "the log's latest entry, until the next `clear_status`/`load_file`".
+    pub(crate) fn set_status(&mut self, text: impl Into<String>, severity: Severity) {
+        let text = text.into();
+        self.message_log.push(text.clone(), severity);
+        self.status_message = Some(text);
+    }
+
+    /// Clear the transient status line without touching the durable log —
+    /// used by `load_file`, whose whole point is that the log survives a
+    /// clear that would otherwise erase the answer before it can be read.
+    fn clear_status(&mut self) {
+        self.status_message = None;
+    }
+
     // --- link follow (Task 4) ---
 
     /// Load a new file into the reader.
@@ -927,7 +1006,7 @@ impl App {
         self.hovered_link = None;
         self.toggled_checkboxes.clear();
         self.search = None;
-        self.status_message = None;
+        self.clear_status();
         self.drag_origin = None;
         self.selection = None;
         self.last_click = None;
@@ -961,7 +1040,7 @@ impl App {
             LinkTarget::LocalFile(path) => {
                 let prev = (self.file.clone(), self.resolve_scroll_anchor().unwrap_or(0));
                 if let Err(msg) = self.load_file(path) {
-                    self.status_message = Some(msg);
+                    self.set_status(msg, Severity::Error);
                     return None;
                 }
                 Some(prev)
@@ -984,7 +1063,7 @@ impl App {
             LinkTarget::FileAnchor(path, slug) => {
                 let prev = (self.file.clone(), self.resolve_scroll_anchor().unwrap_or(0));
                 if let Err(msg) = self.load_file(path) {
-                    self.status_message = Some(msg);
+                    self.set_status(msg, Severity::Error);
                     return None;
                 }
                 // Scroll to the anchor in the newly-loaded document.
@@ -1016,7 +1095,7 @@ impl App {
             return;
         };
         if let Err(msg) = self.load_file(path) {
-            self.status_message = Some(msg);
+            self.set_status(msg, Severity::Error);
         } else {
             self.history.back();
             // `load_file` just kicked off an async render, so `self.blocks`
@@ -1040,7 +1119,7 @@ impl App {
             return;
         };
         if let Err(msg) = self.load_file(path) {
-            self.status_message = Some(msg);
+            self.set_status(msg, Severity::Error);
         } else {
             self.history.forward();
             // See the comment in `go_back`: resolve on arrival, not here.
@@ -1117,10 +1196,10 @@ impl App {
         match selection::copy_to_clipboard(&text) {
             Ok(()) => {
                 let count = text.chars().count();
-                self.status_message = Some(format!("Copied {count} chars"));
+                self.set_status(format!("Copied {count} chars"), Severity::Info);
             }
             Err(e) => {
-                self.status_message = Some(e);
+                self.set_status(e, Severity::Error);
             }
         }
         // Keep self.selection alive for the visual highlight.
@@ -1175,10 +1254,10 @@ impl App {
         match selection::copy_to_clipboard(&word) {
             Ok(()) => {
                 let count = word.chars().count();
-                self.status_message = Some(format!("Copied {count} chars"));
+                self.set_status(format!("Copied {count} chars"), Severity::Info);
             }
             Err(e) => {
-                self.status_message = Some(e);
+                self.set_status(e, Severity::Error);
             }
         }
     }
@@ -2874,6 +2953,76 @@ mod tests {
         assert_eq!(b.dir, parent, "ascend must re-root browser at parent");
     }
 
+    #[test]
+    fn ascend_at_root_boundary_logs_a_refusal_instead_of_vanishing_silently() {
+        use crate::messages::{MessageLog, Severity};
+
+        let dir = temp_browser_dir("ascend_root_refusal");
+        let mut app = App::new_browser(dir.clone(), 80, 25);
+        // Jail the browser at its own dir so `ascend_target` returns `None`
+        // (BE.7.K task 3's "root-jail refusal" case).
+        app.browser.as_mut().unwrap().root_boundary = Some(dir.clone());
+        app.message_log = MessageLog::default();
+        app.clear_status();
+
+        app.ascend();
+
+        assert_eq!(
+            app.browser.as_ref().unwrap().dir,
+            dir,
+            "refused ascend must not move the browser"
+        );
+        assert!(
+            app.status_message.is_some(),
+            "App::ascend returning early with no message fails this test"
+        );
+        let latest = app
+            .message_log
+            .latest()
+            .expect("refusal must reach the durable log, not just the transient line");
+        assert_eq!(latest.severity, Severity::Info);
+    }
+
+    #[test]
+    fn dropped_entries_from_a_walk_error_reach_the_message_log_with_the_count() {
+        use crate::messages::{MessageLog, Severity};
+
+        let parent = temp_browser_dir("dropped_entries_parent");
+        let child = parent.join("child_with_broken_link");
+        std::fs::create_dir_all(&child).expect("create child dir");
+        std::fs::write(child.join("visible.md"), "# hi").expect("write visible file");
+        #[cfg(unix)]
+        {
+            let broken = child.join("broken_link");
+            std::os::unix::fs::symlink(child.join("does_not_exist"), &broken)
+                .expect("create dangling symlink");
+        }
+
+        let mut app = App::new_browser(parent, 80, 25);
+        app.message_log = MessageLog::default();
+
+        app.enter_dir(child.clone());
+
+        #[cfg(unix)]
+        {
+            let dropped = app.browser.as_ref().unwrap().dropped_entries;
+            assert!(
+                dropped > 0,
+                "precondition: the walk must drop the broken symlink"
+            );
+            let latest = app
+                .message_log
+                .latest()
+                .expect("a walk-error drop must reach the durable log, not vanish");
+            assert_eq!(latest.severity, Severity::Warning);
+            assert!(
+                latest.text.contains(&dropped.to_string()),
+                "dropped-entry message must name the COUNT, got: {}",
+                latest.text
+            );
+        }
+    }
+
     // --- Task 2 (BE.7.D): scroll anchoring across re-render ---
 
     /// Three headed blocks with paragraphs long enough to wrap onto several
@@ -3322,5 +3471,93 @@ mod tests {
         );
         app.block_until_ready();
         assert_eq!(app.render_state, RenderState::Ready);
+    }
+
+    // --- message log (BE.7.K task 1) ---
+
+    #[test]
+    fn messages_retained_across_load_file_while_status_message_clears() {
+        use crate::messages::Severity;
+
+        let dir = tempdir_for_test("message_log_retention");
+        let target_content = "# Loaded\n\nSome content.";
+        let target_path = write_temp_file(&dir, "loaded.md", target_content);
+
+        let mut app = App::new("Original".to_string(), PathBuf::from("orig.md"), 80, 25);
+        app.block_until_ready();
+        app.status_message = Some("something happened".to_string());
+        app.message_log.push("something happened", Severity::Info);
+        assert_eq!(app.message_log.len(), 1, "precondition: one message logged");
+
+        app.load_file(target_path.clone())
+            .expect("load_file must succeed");
+        app.block_until_ready();
+
+        assert!(
+            app.status_message.is_none(),
+            "load_file must still clear the transient status line"
+        );
+        assert_eq!(
+            app.message_log.len(),
+            1,
+            "load_file must NOT clear the durable message log"
+        );
+        assert_eq!(
+            app.message_log
+                .latest()
+                .expect("log must still hold the message")
+                .text,
+            "something happened",
+            "the retained message's text must be unchanged"
+        );
+    }
+
+    // Retention-gate capability check (acceptance criterion 2): the test
+    // above (`messages_retained_across_load_file_while_status_message_clears`)
+    // was shown capable of failing. Temporarily inserted, at the top of
+    // `load_file` right after `self.file = path;`:
+    //
+    //   self.message_log = crate::messages::MessageLog::default();
+    //
+    // then ran `cargo nextest run -p bella messages_retained` and observed:
+    //
+    //   thread 'app::tests::messages_retained_across_load_file_while_status_message_clears'
+    //   panicked at crates/bella/src/app.rs:3369:9:
+    //   assertion `left == right` failed: load_file must NOT clear the durable message log
+    //     left: 0
+    //    right: 1
+    //
+    // Reverted immediately after observing the failure; `load_file` does not
+    // touch `message_log` in the committed code (see above).
+    #[test]
+    fn message_log_survives_multiple_loads() {
+        use crate::messages::Severity;
+
+        let dir = tempdir_for_test("message_log_multi_load");
+        let path_a = write_temp_file(&dir, "a.md", "# A");
+        let path_b = write_temp_file(&dir, "b.md", "# B");
+
+        let mut app = App::new("Original".to_string(), PathBuf::from("orig.md"), 80, 25);
+        app.block_until_ready();
+        app.message_log.push("first", Severity::Warning);
+
+        app.load_file(path_a).expect("load a");
+        app.block_until_ready();
+        app.message_log.push("second", Severity::Error);
+
+        app.load_file(path_b).expect("load b");
+        app.block_until_ready();
+
+        assert_eq!(
+            app.message_log.len(),
+            2,
+            "both messages must survive two successive load_file calls"
+        );
+        let texts: Vec<&str> = app
+            .message_log
+            .iter_newest_first()
+            .map(|m| m.text.as_str())
+            .collect();
+        assert_eq!(texts, vec!["second", "first"]);
     }
 }

@@ -324,3 +324,193 @@ fn browser_last_entry_visible_immediately_after_resize_before_cursor_move() {
         b.scroll
     );
 }
+
+/// BE.7.K task 2: the diagnostics overlay opens over the frame from BOTH
+/// Reader and Browser focus, and listing order is newest-first.
+mod diagnostics_overlay {
+    use bella::messages::Severity;
+
+    use super::*;
+
+    fn buf_to_rows(buf: &ratatui::buffer::Buffer, width: u16, height: u16) -> Vec<String> {
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn opens_over_reader_focus() {
+        let width: u16 = 80;
+        let height: u16 = 24;
+        let mut app = make_reader_app(width, height);
+        app.message_log
+            .push("something went wrong", Severity::Error);
+        app.diagnostics_open = true;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let rows = buf_to_rows(&buf, width, height);
+        assert!(
+            rows.iter().any(|r| r.contains("something went wrong")),
+            "overlay must be drawn over reader focus when diagnostics_open \
+             is set; rows: {rows:#?}"
+        );
+    }
+
+    #[test]
+    fn opens_over_browser_focus() {
+        let width: u16 = 80;
+        let height: u16 = 24;
+        let mut app = make_browser_app(width, height);
+        app.message_log.push("dropped 3 entries", Severity::Warning);
+        app.diagnostics_open = true;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_browser(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let rows = buf_to_rows(&buf, width, height);
+        assert!(
+            rows.iter().any(|r| r.contains("dropped 3 entries")),
+            "overlay must be drawn over browser focus when diagnostics_open \
+             is set; rows: {rows:#?}"
+        );
+    }
+
+    /// Messages must be listed newest first — asserted on a log with at
+    /// least three entries of differing severity, by relative row order in
+    /// the rendered overlay.
+    #[test]
+    fn lists_newest_first_with_differing_severities() {
+        let width: u16 = 80;
+        let height: u16 = 24;
+        let mut app = make_reader_app(width, height);
+        app.message_log.push("first (oldest)", Severity::Info);
+        app.message_log.push("second", Severity::Warning);
+        app.message_log.push("third (newest)", Severity::Error);
+        app.diagnostics_open = true;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let rows = buf_to_rows(&buf, width, height);
+
+        let row_of = |needle: &str| {
+            rows.iter()
+                .position(|r| r.contains(needle))
+                .unwrap_or_else(|| {
+                    panic!("expected to find {needle:?} in rendered rows: {rows:#?}")
+                })
+        };
+        let row_newest = row_of("third (newest)");
+        let row_second = row_of("second");
+        let row_oldest = row_of("first (oldest)");
+        assert!(
+            row_newest < row_second && row_second < row_oldest,
+            "messages must render newest first (top to bottom): newest row \
+             {row_newest}, second row {row_second}, oldest row {row_oldest}"
+        );
+    }
+
+    /// Dismissal must restore the previous frame EXACTLY — asserted against
+    /// a golden buffer, not by eye.
+    #[test]
+    fn dismissal_restores_previous_frame_exactly() {
+        let width: u16 = 80;
+        let height: u16 = 24;
+        let mut app = make_reader_app(width, height);
+        app.message_log.push("a retained message", Severity::Info);
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Draw closed — the baseline frame.
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf_before = terminal.backend().buffer().clone();
+
+        // Open the overlay and draw — must differ from the baseline.
+        app.diagnostics_open = true;
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf_open = terminal.backend().buffer().clone();
+        assert_ne!(
+            buf_before, buf_open,
+            "opening the overlay must change the rendered frame"
+        );
+
+        // Dismiss and draw again — must match the baseline exactly.
+        app.diagnostics_open = false;
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+        let buf_after = terminal.backend().buffer().clone();
+        assert_eq!(
+            buf_before, buf_after,
+            "dismissing the overlay must restore the exact pre-overlay frame"
+        );
+    }
+}
+
+/// BE.7.K task 2: `draw_browser_statusline` must display the latest
+/// retained message — before this task it took only
+/// `frame`/`area`/`browser`/`theme` and had no way to show one at all, so a
+/// message raised while the browser had focus was shown by neither draw
+/// path. Driven through the public `draw_browser` (the function itself is
+/// private to `ui.rs`).
+#[test]
+fn browser_statusline_displays_latest_message() {
+    use bella::messages::Severity;
+
+    // Wide enough that the temp-dir path (long, since it embeds a pid +
+    // nanosecond timestamp for collision-proofing) plus the full status
+    // line text plus the appended message all fit on one row unclipped.
+    let width: u16 = 400;
+    let height: u16 = 24;
+    let mut app = make_browser_app(width, height);
+    app.message_log
+        .push("root-jail refusal: already at root", Severity::Warning);
+
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            draw_browser(f, f.area(), &mut app);
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+    let status_row: String = (0..width)
+        .map(|x| buf.cell((x, height - 1)).map(|c| c.symbol()).unwrap_or(" "))
+        .collect();
+    assert!(
+        status_row.contains("root-jail refusal: already at root"),
+        "browser status line must show the latest retained message; got:\n{status_row:?}"
+    );
+}

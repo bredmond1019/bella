@@ -6,12 +6,13 @@ use ratatui::{
     style::Color,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::App;
+use crate::messages::{Message, MessageLog, Severity};
 use bella_engine::FrontmatterValue;
 use bella_engine::browser::BrowserEntryKind;
 
@@ -164,6 +165,14 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
         draw_rail(frame, rail_area, app);
     }
     draw_statusline(frame, status_area, app);
+
+    // Diagnostics overlay (BE.7.K task 2): drawn last, over whatever the
+    // rest of this function just rendered, so dismissing it (setting
+    // `diagnostics_open = false` and redrawing) reproduces the exact
+    // pre-overlay buffer — nothing above this point reads `diagnostics_open`.
+    if app.diagnostics_open {
+        draw_diagnostics_overlay(frame, area, &app.message_log);
+    }
 
     body_area.height
 }
@@ -434,17 +443,39 @@ pub fn draw_browser(frame: &mut Frame, area: Rect, app: &mut App) {
         frame.render_widget(Paragraph::new(line), row_area);
     }
 
-    draw_browser_statusline(frame, status_area, browser, &app.theme);
+    draw_browser_statusline(
+        frame,
+        status_area,
+        browser,
+        &app.theme,
+        app.message_log.latest(),
+    );
+
+    // Diagnostics overlay (BE.7.K task 2): see the matching comment in
+    // `draw_reader` — drawn last, over the fully-rendered browser frame, so
+    // it opens identically from either focus and dismissal is a no-op on
+    // the underlying buffer.
+    if app.diagnostics_open {
+        draw_diagnostics_overlay(frame, area, &app.message_log);
+    }
 }
 
 /// Render browser mode's status line: current directory, selection position,
-/// and a compact keybinding hint. Styled to match [`draw_statusline`]'s
+/// a compact keybinding hint, and (BE.7.K task 2) the latest retained
+/// diagnostic message, if any.
+///
+/// Before this task, browser focus was a silent mode for the diagnostic
+/// channel: this function took only `frame`/`area`/`browser`/`theme` and had
+/// no way to show a message even when one existed (`draw_statusline`, the
+/// reader-mode equivalent, never runs while the browser is on screen). The
+/// `latest` parameter closes that gap. Styled to match [`draw_statusline`]'s
 /// theme-driven status bar for reader mode.
 fn draw_browser_statusline(
     frame: &mut Frame,
     area: Rect,
     browser: &bella_engine::browser::Browser,
     theme: &bella_engine::Theme,
+    latest: Option<&Message>,
 ) {
     let dir = browser.dir.to_string_lossy();
     let total = browser.entries.len();
@@ -459,14 +490,80 @@ fn draw_browser_statusline(
     } else {
         String::new()
     };
+    let message = latest.map(|m| format!(" · {}", m.text)).unwrap_or_default();
     let text = format!(
-        " bella · {dir} · {position} · j/k nav · Enter open · r reveal ({reveal}) · q quit{dropped}"
+        " bella · {dir} · {position} · j/k nav · Enter open · r reveal ({reveal}) · q quit{dropped}{message}"
     );
     let line = Line::from(vec![Span::styled(
         text,
         Style::default().fg(theme.status_fg).bg(theme.status_bg),
     )]);
     frame.render_widget(Paragraph::new(line), area);
+}
+
+/// Render the diagnostics overlay: every retained message, newest first, in
+/// a bordered box centered over whatever `draw_reader`/`draw_browser` just
+/// rendered (BE.7.K task 2). This is the only place [`MessageLog`] is read
+/// for display — the ring itself is written by task 1 (retention) and task
+/// 3 (routing bella's existing silent diagnostic paths into it).
+fn draw_diagnostics_overlay(frame: &mut Frame, area: Rect, log: &MessageLog) {
+    let overlay_area = centered_rect(80, 60, area);
+    // Clear the popup region first — without this, the underlying frame's
+    // glyphs and colors show through wherever the overlay's own paragraph
+    // has no styled span to overwrite them.
+    frame.render_widget(Clear, overlay_area);
+
+    let block = Block::default().borders(Borders::ALL).title(" Messages ");
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    let lines: Vec<Line> = if log.is_empty() {
+        vec![Line::from("(no messages)")]
+    } else {
+        log.iter_newest_first()
+            .map(|m| {
+                let (tag, style) = match m.severity {
+                    Severity::Info => ("INFO", Style::default()),
+                    Severity::Warning => (
+                        "WARN",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Severity::Error => (
+                        "ERROR",
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ),
+                };
+                Line::from(vec![
+                    Span::styled(format!("[{tag}] "), style),
+                    Span::raw(m.text.clone()),
+                ])
+            })
+            .collect()
+    };
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Compute a centered `Rect` occupying `percent_x`/`percent_y` of `area`.
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
 }
 
 fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
