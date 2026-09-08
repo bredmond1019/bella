@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use bella_engine::{
-    CheckboxMap, DocIndex, Frontmatter, LinkMap, Theme, body_pos,
+    CheckboxMap, DocIndex, DocResolution, Frontmatter, FrontmatterValue, LinkMap, Theme, body_pos,
     links::{LinkTarget, TableExpansions, TableMap},
     markdown::{
         BlockInfo, HeadingInfo, Rendered, display_row_to_source_line, render_with_edit,
@@ -43,6 +43,51 @@ pub enum DocIndexState {
     /// `bella_engine::docindex::Resolution::Unresolved` (a failed build
     /// means "couldn't find out", not "no file claims this id").
     Failed(String),
+}
+
+/// The resolution of one `related:` entry against [`DocIndexState`] at
+/// draw/activation time (BE.7.G task 3) — what
+/// [`App::metadata_rows`]/[`App::resolve_related`] report for a single
+/// `doc_id`. FIVE states, not three: the three real
+/// [`bella_engine::docindex::Resolution`] outcomes, plus `Building` and
+/// `Failed` mirroring [`DocIndexState`] so a related row never shows a
+/// stale or misleading outcome while the index isn't ready yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RelatedRowState {
+    /// The doc_id index hasn't finished building yet (covers both
+    /// [`DocIndexState::NotBuilt`] and [`DocIndexState::Building`] — from
+    /// a related row's perspective these read the same: "not resolvable
+    /// yet", never "unresolved").
+    Building,
+    /// The doc_id index build failed; carries the same reason as
+    /// [`DocIndexState::Failed`].
+    Failed(String),
+    /// Exactly one document claims this `doc_id`.
+    Resolved(PathBuf),
+    /// No document claims this `doc_id`.
+    Unresolved,
+    /// More than one document claims this `doc_id`; carries every
+    /// claimant so the caller can name all of them.
+    Ambiguous(Vec<PathBuf>),
+}
+
+/// One row of the rail's Metadata section (BE.7.G task 3), replacing the
+/// one-row-per-frontmatter-key model BE.7.F established for exactly the
+/// `related:` key: every OTHER key still renders as a single `Plain` row
+/// (mirroring BE.7.F's `key: value` line, list values folded with `, `),
+/// but `related:` expands to one `Related` row PER ITEM so each doc_id
+/// reference is individually clickable/activatable — a single "related:
+/// a, b, c" row has nowhere to put per-item click geometry or per-item
+/// resolution state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MetadataRow {
+    /// A non-`related` frontmatter entry, rendered as `key: value`.
+    Plain(String, FrontmatterValue),
+    /// One item of a `related:` list, with its current resolution state.
+    Related {
+        doc_id: String,
+        state: RelatedRowState,
+    },
 }
 
 /// Rendering lifecycle for the current document/width: whether the
@@ -632,13 +677,83 @@ impl App {
     pub fn rail_section_len(&self, section: RailSection) -> usize {
         match section {
             RailSection::Contents => self.headings.len(),
-            RailSection::Metadata => self
-                .frontmatter
-                .as_ref()
-                .map(|f| f.entries.len())
-                .unwrap_or(0)
-                .max(1),
+            RailSection::Metadata => self.metadata_rows().len().max(1),
         }
+    }
+
+    /// The rail's Metadata rows for the current document (BE.7.G task 3):
+    /// every non-`related` frontmatter entry as one [`MetadataRow::Plain`]
+    /// each, plus one [`MetadataRow::Related`] per `related:` list item,
+    /// each carrying its CURRENT resolution against
+    /// [`Self::doc_index_state`] (recomputed on every call — cheap: it is
+    /// a handful of hashmap lookups, never a re-walk). Preserves source
+    /// order for everything but `related:`, which is expanded in place of
+    /// its single frontmatter row.
+    ///
+    /// Empty when the document has no frontmatter at all — callers that
+    /// need a floor for an empty rail section (so the empty-state line has
+    /// a row to occupy) apply `.max(1)` themselves, e.g.
+    /// [`Self::rail_section_len`].
+    pub fn metadata_rows(&self) -> Vec<MetadataRow> {
+        let entries = self
+            .frontmatter
+            .as_ref()
+            .map(|f| f.entries.as_slice())
+            .unwrap_or(&[]);
+        let mut rows = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            if key == "related"
+                && let FrontmatterValue::List(items) = value
+            {
+                for doc_id in items {
+                    rows.push(MetadataRow::Related {
+                        doc_id: doc_id.clone(),
+                        state: self.resolve_related(doc_id),
+                    });
+                }
+                continue;
+            }
+            // A `related:` key present in some non-list shape (e.g. a bare
+            // scalar) falls through here and renders as a plain row rather
+            // than silently dropping it.
+            rows.push(MetadataRow::Plain(key.clone(), value.clone()));
+        }
+        rows
+    }
+
+    /// Resolve one `doc_id` against [`Self::doc_index_state`], mapping the
+    /// index lifecycle onto [`RelatedRowState`]. The SINGLE place this
+    /// resolution happens — both [`Self::metadata_rows`] (display) and
+    /// [`Self::follow_target`]'s `LinkTarget::DocId` arm (navigation) call
+    /// this rather than duplicating the match, so a related row's
+    /// rendered state and its actual click/activate outcome can never
+    /// disagree.
+    fn resolve_related(&self, doc_id: &str) -> RelatedRowState {
+        match &self.doc_index_state {
+            DocIndexState::NotBuilt | DocIndexState::Building => RelatedRowState::Building,
+            DocIndexState::Failed(reason) => RelatedRowState::Failed(reason.clone()),
+            DocIndexState::Ready(index) => match index.resolve(doc_id) {
+                DocResolution::Resolved(path) => RelatedRowState::Resolved(path),
+                DocResolution::Unresolved => RelatedRowState::Unresolved,
+                DocResolution::Ambiguous(paths) => RelatedRowState::Ambiguous(paths),
+            },
+        }
+    }
+
+    /// True when the current document's frontmatter carries at least one
+    /// non-empty `related:` list entry — the trigger condition
+    /// [`crate::ui::draw_rail`] uses to call [`Self::ensure_doc_index`]
+    /// (BE.7.G task 3's "first `related:` use"): the rail needs a
+    /// resolution to show the moment it is about to draw a `related:` row,
+    /// and drawing (not `load_file`) is the only path that actually needs
+    /// one.
+    pub fn frontmatter_has_related_entries(&self) -> bool {
+        self.frontmatter.as_ref().is_some_and(|f| {
+            f.entries.iter().any(|(key, value)| {
+                key == "related"
+                    && matches!(value, FrontmatterValue::List(items) if !items.is_empty())
+            })
+        })
     }
 
     /// Clamp `rail_selected` to the currently focused section's length,
@@ -677,25 +792,67 @@ impl App {
         self.rail_selected = (cur + delta).clamp(0, max as i32) as usize;
     }
 
-    /// Activate the rail's focused row. Only the Contents section has an
-    /// activation target today (scroll the body to the selected heading,
-    /// same as clicking it — see [`Self::jump_to_heading`]); Metadata rows
-    /// have nothing to activate onto until BE.7.G resolves `related:` as
-    /// navigable, so activating there is a no-op rather than a guess.
-    pub fn activate_rail_selection(&mut self) {
-        if self.rail_focused && self.rail_section == RailSection::Contents {
-            self.jump_to_heading(self.rail_selected);
+    /// Activate the rail's focused row. Contents scrolls the body to the
+    /// selected heading, same as clicking it (see [`Self::jump_to_heading`]).
+    /// Metadata activates the selected row through
+    /// [`Self::activate_metadata_row`] (BE.7.G task 3) — a `related:` row
+    /// resolves and navigates through the SAME history/follow path a body
+    /// link uses ([`Self::follow_target`]); every other Metadata row (a
+    /// plain `key: value` entry) has nothing to activate onto and is a
+    /// no-op.
+    ///
+    /// Returns `Some((prev_file, prev_anchor))` exactly when
+    /// [`Self::follow_target`] does — a file navigation occurred and the
+    /// caller ([`crate::events::apply`]) must record it in history, the
+    /// same contract as [`Self::follow_focused`] and [`Self::click_at`].
+    pub fn activate_rail_selection(&mut self) -> Option<(PathBuf, usize)> {
+        if !self.rail_focused {
+            return None;
+        }
+        match self.rail_section {
+            RailSection::Contents => {
+                self.jump_to_heading(self.rail_selected);
+                None
+            }
+            RailSection::Metadata => self.activate_metadata_row(self.rail_selected),
         }
     }
 
     /// Handle a click on row `row` of rail `section` (already resolved by
     /// [`crate::events::map_mouse`] from screen coordinates against that
     /// section's own rect). Contents click-to-jump mirrors keyboard
-    /// activation; Metadata has no click target yet (BE.7.G).
-    pub fn rail_click(&mut self, section: RailSection, row: usize) {
+    /// activation; Metadata routes through [`Self::activate_metadata_row`]
+    /// (BE.7.G task 3), the same target keyboard activation uses — click
+    /// and `Enter` on a rail row are two triggers for one action, never
+    /// two routes.
+    ///
+    /// Returns `Some((prev_file, prev_anchor))` exactly when
+    /// [`Self::activate_rail_selection`] does, for the same reason.
+    pub fn rail_click(&mut self, section: RailSection, row: usize) -> Option<(PathBuf, usize)> {
         match section {
-            RailSection::Contents => self.jump_to_heading(row),
-            RailSection::Metadata => {}
+            RailSection::Contents => {
+                self.jump_to_heading(row);
+                None
+            }
+            RailSection::Metadata => self.activate_metadata_row(row),
+        }
+    }
+
+    /// Activate Metadata row `idx` (BE.7.G task 3): a [`MetadataRow::Related`]
+    /// row resolves its `doc_id` through [`Self::follow_target`]'s
+    /// `LinkTarget::DocId` arm — the exact same dispatch a body `related:`
+    /// link (were one ever rendered inline) would use, so this is not a
+    /// second navigation route. Every other row ([`MetadataRow::Plain`], or
+    /// `idx` out of range — e.g. a stale click after the row count shrank)
+    /// is a no-op, never a panic.
+    fn activate_metadata_row(&mut self, idx: usize) -> Option<(PathBuf, usize)> {
+        let rows = self.metadata_rows();
+        match rows.get(idx) {
+            Some(MetadataRow::Related { doc_id, .. }) => {
+                let doc_id = doc_id.clone();
+                self.follow_target(LinkTarget::DocId(doc_id))
+            }
+            _ => None,
         }
     }
 
@@ -1159,7 +1316,17 @@ impl App {
     pub fn follow_focused(&mut self) -> Option<(PathBuf, usize)> {
         let idx = self.focused_link?;
         let span = self.link_map.links.get(idx)?.clone();
-        match span.target {
+        self.follow_target(span.target)
+    }
+
+    /// Dispatch on a [`LinkTarget`] and act on it. The single follow
+    /// implementation both [`Self::follow_focused`] (a body link) and
+    /// [`Self::activate_metadata_row`] (BE.7.G task 3's rail `related:`
+    /// rows) drive — a related row's `Enter`/click builds a
+    /// `LinkTarget::DocId` and hands it here rather than taking a second
+    /// navigation path.
+    fn follow_target(&mut self, target: LinkTarget) -> Option<(PathBuf, usize)> {
+        match target {
             LinkTarget::LocalFile(path) => {
                 let prev = (self.file.clone(), self.resolve_scroll_anchor().unwrap_or(0));
                 if let Err(msg) = self.load_file(path) {
@@ -1195,15 +1362,56 @@ impl App {
                 }
                 Some(prev)
             }
-            LinkTarget::DocId(_doc_id) => {
-                // BE.7.G task 1 only adds the `LinkTarget::DocId` variant so
-                // bella-engine's public surface is stable for task 2, which
-                // wires real resolution through the (lazily built, off-thread)
-                // doc_id index and navigates through this same history path.
-                // Not reachable yet: nothing constructs `LinkTarget::DocId`
-                // before task 3 wires the rail's related: rows into the link
-                // map.
-                None
+            LinkTarget::DocId(doc_id) => {
+                // BE.7.G task 3: resolve through the SAME lookup that
+                // computed the row's displayed state
+                // ([`Self::resolve_related`]), so what the rail showed and
+                // what following it does can never disagree.
+                match self.resolve_related(&doc_id) {
+                    RelatedRowState::Resolved(path) => {
+                        let prev = (self.file.clone(), self.resolve_scroll_anchor().unwrap_or(0));
+                        if let Err(msg) = self.load_file(path) {
+                            self.set_status(msg, Severity::Error);
+                            return None;
+                        }
+                        Some(prev)
+                    }
+                    RelatedRowState::Unresolved => {
+                        self.set_status(
+                            format!(
+                                "related: {doc_id} is unresolved — no document claims this doc_id"
+                            ),
+                            Severity::Warning,
+                        );
+                        None
+                    }
+                    RelatedRowState::Ambiguous(paths) => {
+                        let candidates = paths
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        self.set_status(
+                            format!("related: {doc_id} is ambiguous — candidates: {candidates}"),
+                            Severity::Warning,
+                        );
+                        None
+                    }
+                    RelatedRowState::Building => {
+                        self.set_status(
+                            format!("related: {doc_id} — doc_id index is still building"),
+                            Severity::Info,
+                        );
+                        None
+                    }
+                    RelatedRowState::Failed(reason) => {
+                        self.set_status(
+                            format!("related: {doc_id} — doc_id index failed to build: {reason}"),
+                            Severity::Warning,
+                        );
+                        None
+                    }
+                }
             }
         }
     }
@@ -1511,7 +1719,7 @@ mod tests {
 
     use bella_engine::Theme;
 
-    use super::{App, DocIndexState, RailSection, RenderState};
+    use super::{App, DocIndexState, MetadataRow, RailSection, RelatedRowState, RenderState};
     use crate::history::HistoryEntry;
 
     fn make_app(line_count: usize, viewport: u16) -> App {
@@ -3954,5 +4162,343 @@ mod tests {
             "build budget regression: {elapsed:?} against the real corpus root at {}",
             root.display()
         );
+    }
+
+    // --- rail `related:` rows (BE.7.G task 3) ---
+
+    fn related_tempdir(label: &str) -> PathBuf {
+        crate::testsupport::unique_temp_dir(&format!("bella_related_{label}"))
+    }
+
+    #[test]
+    fn metadata_rows_expands_related_list_into_one_row_per_item() {
+        let dir = related_tempdir("expands");
+        let file = write_temp_file(
+            &dir,
+            "reader.md",
+            "---\ntitle: T\nrelated: [alpha, beta]\n---\n# Reader\n",
+        );
+        let mut app = App::new(std::fs::read_to_string(&file).unwrap(), file, 80, 25);
+        app.block_until_ready();
+
+        let rows = app.metadata_rows();
+        assert_eq!(
+            rows.len(),
+            3,
+            "one Plain(title) row plus one Related row per `related:` item, not one \
+             folded 'related: alpha, beta' row"
+        );
+        assert!(
+            matches!(&rows[0], MetadataRow::Plain(k, _) if k == "title"),
+            "non-related keys still render as a single Plain row"
+        );
+        match &rows[1] {
+            MetadataRow::Related { doc_id, state } => {
+                assert_eq!(doc_id, "alpha");
+                assert_eq!(
+                    *state,
+                    RelatedRowState::Building,
+                    "index hasn't been built yet — must read as Building, never Unresolved"
+                );
+            }
+            other => panic!("expected Related, got {other:?}"),
+        }
+        match &rows[2] {
+            MetadataRow::Related { doc_id, .. } => assert_eq!(doc_id, "beta"),
+            other => panic!("expected Related, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rail_section_len_metadata_counts_related_items_not_the_folded_key() {
+        let dir = related_tempdir("section_len");
+        let file = write_temp_file(
+            &dir,
+            "reader.md",
+            "---\nrelated: [a, b, c]\n---\n# Reader\n",
+        );
+        let mut app = App::new(std::fs::read_to_string(&file).unwrap(), file, 80, 25);
+        app.block_until_ready();
+
+        assert_eq!(app.rail_section_len(RailSection::Metadata), 3);
+    }
+
+    /// Task 3 AC: "Clicking a resolved related entry opens that document;
+    /// `[` returns to the previous one with scroll position intact,
+    /// through BE.7.D's anchor." — this test covers the forward half
+    /// (open); `[`/`go_back` itself is BE.7.D machinery already covered
+    /// elsewhere and is driven by the SAME `(prev_file, prev_anchor)`
+    /// return value asserted here, which is exactly what `Self::go_back`
+    /// consumes.
+    #[test]
+    fn activating_a_resolved_related_row_navigates_and_reports_the_previous_location() {
+        let dir = related_tempdir("resolved");
+        let target = write_temp_file(
+            &dir,
+            "target.md",
+            "---\ndoc_id: target-doc\n---\n# Target\n",
+        );
+        let file = write_temp_file(
+            &dir,
+            "reader.md",
+            "---\nrelated: [target-doc]\n---\n# Reader\n",
+        );
+
+        let mut app = App::new(
+            std::fs::read_to_string(&file).unwrap(),
+            file.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+        app.doc_index_state = DocIndexState::Ready(bella_engine::build_doc_index(&dir));
+
+        app.rail_focused = true;
+        app.rail_section = RailSection::Metadata;
+        app.rail_selected = 0;
+
+        let result = app.activate_rail_selection();
+        app.block_until_ready();
+
+        let (prev_path, _prev_anchor) = result
+            .expect("must report the previous (file, source-line anchor) for history recording");
+        assert_eq!(
+            prev_path, file,
+            "the previous location must be the reader doc"
+        );
+        assert_eq!(
+            app.file(),
+            target,
+            "must have navigated to the resolved related document"
+        );
+    }
+
+    /// Same activation, driven through `rail_click` (the mouse path)
+    /// rather than `activate_rail_selection` (the keyboard path) — proves
+    /// click and keyboard share the SAME activation, not two routes.
+    #[test]
+    fn clicking_a_resolved_related_row_navigates_the_same_as_activating_it() {
+        let dir = related_tempdir("resolved_click");
+        let target = write_temp_file(
+            &dir,
+            "target.md",
+            "---\ndoc_id: target-doc\n---\n# Target\n",
+        );
+        let file = write_temp_file(
+            &dir,
+            "reader.md",
+            "---\nrelated: [target-doc]\n---\n# Reader\n",
+        );
+
+        let mut app = App::new(
+            std::fs::read_to_string(&file).unwrap(),
+            file.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+        app.doc_index_state = DocIndexState::Ready(bella_engine::build_doc_index(&dir));
+
+        let result = app.rail_click(RailSection::Metadata, 0);
+        app.block_until_ready();
+
+        let (prev_path, _prev_anchor) = result.expect("a click on a resolved row must navigate");
+        assert_eq!(prev_path, file);
+        assert_eq!(app.file(), target);
+    }
+
+    #[test]
+    fn clicking_an_unresolved_related_row_names_it_leaves_the_document_in_place_and_does_not_panic()
+    {
+        let dir = related_tempdir("unresolved");
+        let file = write_temp_file(
+            &dir,
+            "reader.md",
+            "---\nrelated: [missing-doc]\n---\n# Reader\n",
+        );
+
+        let mut app = App::new(
+            std::fs::read_to_string(&file).unwrap(),
+            file.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+        app.doc_index_state = DocIndexState::Ready(bella_engine::build_doc_index(&dir));
+
+        let result = app.rail_click(RailSection::Metadata, 0);
+
+        assert_eq!(
+            result, None,
+            "an unresolved row must never report a navigation"
+        );
+        assert_eq!(app.file(), &file, "the current document must stay in place");
+        assert!(
+            app.status_message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("missing-doc"),
+            "the unresolved row must name the doc_id on the status line: {:?}",
+            app.status_message
+        );
+        assert_eq!(
+            app.message_log.len(),
+            1,
+            "the outcome must also reach the durable message log"
+        );
+    }
+
+    #[test]
+    fn clicking_an_ambiguous_related_row_names_both_candidates_and_navigates_nowhere() {
+        let dir = related_tempdir("ambiguous");
+        let a = write_temp_file(&dir, "dup-a.md", "---\ndoc_id: dup-doc\n---\n# A\n");
+        let b = write_temp_file(&dir, "dup-b.md", "---\ndoc_id: dup-doc\n---\n# B\n");
+        let file = write_temp_file(
+            &dir,
+            "reader.md",
+            "---\nrelated: [dup-doc]\n---\n# Reader\n",
+        );
+
+        let mut app = App::new(
+            std::fs::read_to_string(&file).unwrap(),
+            file.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+        app.doc_index_state = DocIndexState::Ready(bella_engine::build_doc_index(&dir));
+
+        let result = app.rail_click(RailSection::Metadata, 0);
+
+        assert_eq!(result, None, "an ambiguous row must never navigate");
+        assert_eq!(app.file(), &file);
+        let msg = app.status_message.clone().unwrap_or_default();
+        assert!(
+            msg.contains(&a.display().to_string()) && msg.contains(&b.display().to_string()),
+            "an ambiguous row must name BOTH candidate paths, not pick one: {msg:?}"
+        );
+    }
+
+    #[test]
+    fn clicking_a_related_row_while_the_index_is_still_building_does_not_navigate_or_panic() {
+        let dir = related_tempdir("building");
+        let file = write_temp_file(
+            &dir,
+            "reader.md",
+            "---\nrelated: [some-doc]\n---\n# Reader\n",
+        );
+        let mut app = App::new(
+            std::fs::read_to_string(&file).unwrap(),
+            file.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+        // `doc_index_state` defaults to `NotBuilt`, which `resolve_related`
+        // maps onto the same `RelatedRowState::Building` as an in-flight
+        // build — from a related row's perspective they read the same.
+
+        let result = app.rail_click(RailSection::Metadata, 0);
+
+        assert_eq!(result, None);
+        assert_eq!(app.file(), &file, "must not navigate while unresolvable");
+    }
+
+    #[test]
+    fn clicking_a_related_row_after_a_failed_index_build_does_not_navigate_or_panic() {
+        let dir = related_tempdir("failed");
+        let file = write_temp_file(
+            &dir,
+            "reader.md",
+            "---\nrelated: [some-doc]\n---\n# Reader\n",
+        );
+        let mut app = App::new(
+            std::fs::read_to_string(&file).unwrap(),
+            file.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+        app.doc_index_state = DocIndexState::Failed("unreadable root".to_string());
+
+        let result = app.rail_click(RailSection::Metadata, 0);
+
+        assert_eq!(result, None);
+        assert_eq!(app.file(), &file);
+    }
+
+    #[test]
+    fn clicking_a_plain_metadata_row_is_still_a_no_op() {
+        let dir = related_tempdir("plain_row");
+        let file = write_temp_file(&dir, "reader.md", "---\ntitle: T\n---\n# Reader\n");
+        let mut app = App::new(
+            std::fs::read_to_string(&file).unwrap(),
+            file.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+
+        let result = app.rail_click(RailSection::Metadata, 0);
+
+        assert_eq!(result, None);
+        assert_eq!(app.file(), &file);
+    }
+
+    #[test]
+    fn rail_click_at_row_out_of_range_on_metadata_is_a_noop_not_a_panic() {
+        let dir = related_tempdir("out_of_range");
+        let file = write_temp_file(
+            &dir,
+            "reader.md",
+            "---\nrelated: [only-one]\n---\n# Reader\n",
+        );
+        let mut app = App::new(
+            std::fs::read_to_string(&file).unwrap(),
+            file.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+
+        let result = app.rail_click(RailSection::Metadata, 99);
+
+        assert_eq!(result, None);
+        assert_eq!(app.file(), &file);
+    }
+
+    #[test]
+    fn activate_rail_selection_on_metadata_is_a_noop_when_the_rail_is_not_focused() {
+        let dir = related_tempdir("unfocused");
+        let target = write_temp_file(
+            &dir,
+            "target.md",
+            "---\ndoc_id: target-doc\n---\n# Target\n",
+        );
+        let file = write_temp_file(
+            &dir,
+            "reader.md",
+            "---\nrelated: [target-doc]\n---\n# Reader\n",
+        );
+        let mut app = App::new(
+            std::fs::read_to_string(&file).unwrap(),
+            file.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+        app.doc_index_state = DocIndexState::Ready(bella_engine::build_doc_index(&dir));
+        app.rail_section = RailSection::Metadata;
+        app.rail_selected = 0;
+        app.rail_focused = false;
+        let _ = target;
+
+        let result = app.activate_rail_selection();
+
+        assert_eq!(
+            result, None,
+            "activation must require rail focus, same as the Contents section already does"
+        );
+        assert_eq!(app.file(), &file);
     }
 }

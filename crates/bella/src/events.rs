@@ -517,9 +517,29 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         Action::RailFocus => app.focus_rail(),
         Action::RailUnfocus => app.rail_focused = false,
         Action::RailMove(delta) => app.rail_move(delta),
-        Action::RailActivate => app.activate_rail_selection(),
+        Action::RailActivate => {
+            // Mirrors the `Follow`/`click_at` history-recording pattern
+            // above: `activate_rail_selection` returns `Some((prev_file,
+            // prev_anchor))` exactly when a `related:` row (BE.7.G task 3)
+            // resolved and navigated — Contents activation and a
+            // no-target Metadata row both return `None`.
+            if let Some((prev_path, prev_anchor)) = app.activate_rail_selection() {
+                app.history_mut()
+                    .push(HistoryEntry::new(prev_path, prev_anchor));
+                let cur = app.file().to_path_buf();
+                app.history_mut().push(HistoryEntry::new(cur, 0));
+            }
+        }
         Action::RailCycleSection => app.cycle_rail_section(),
-        Action::RailClickAt { section, row } => app.rail_click(section, row),
+        Action::RailClickAt { section, row } => {
+            // Same history-recording contract as `RailActivate` above.
+            if let Some((prev_path, prev_anchor)) = app.rail_click(section, row) {
+                app.history_mut()
+                    .push(HistoryEntry::new(prev_path, prev_anchor));
+                let cur = app.file().to_path_buf();
+                app.history_mut().push(HistoryEntry::new(cur, 0));
+            }
+        }
         // Browser actions (Block E, Task 4)
         Action::BrowserUp => {
             let vp = app.browser_area.height.max(1);
@@ -2351,6 +2371,52 @@ mod tests {
         );
     }
 
+    /// Task 3 AC: "A related row is activatable from the KEYBOARD, not
+    /// only by click, using the rail focus and activation keys BE.7.E
+    /// established — asserted by a pure map_rail_key test with no
+    /// terminal." Drives the FULL keyboard path with no terminal
+    /// involved: `map_rail_key(Enter)` -> `Action::RailActivate` ->
+    /// `apply`, on a resolved `related:` row, and checks it lands on the
+    /// target document AND records history exactly like the mouse click
+    /// path (`click_at`/`Follow`) does.
+    #[test]
+    fn keyboard_enter_activates_a_resolved_related_row_and_records_history() {
+        use crate::app::DocIndexState;
+
+        let dir = crate::testsupport::unique_temp_dir("bella_events_related_keyboard");
+        let target = dir.join("target.md");
+        std::fs::write(&target, "---\ndoc_id: target-doc\n---\n# Target\n").unwrap();
+        let reader = dir.join("reader.md");
+        std::fs::write(&reader, "---\nrelated: [target-doc]\n---\n# Reader\n").unwrap();
+
+        let mut app = App::new(
+            std::fs::read_to_string(&reader).unwrap(),
+            reader.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+        app.doc_index_state = DocIndexState::Ready(bella_engine::build_doc_index(&dir));
+        app.rail_focused = true;
+        app.rail_section = RailSection::Metadata;
+        app.rail_selected = 0;
+
+        let action = super::map_rail_key(key(KeyCode::Enter));
+        assert_eq!(action, Action::RailActivate);
+        super::apply(action, &mut app);
+        app.block_until_ready();
+
+        assert_eq!(
+            app.file(),
+            target,
+            "Enter on the focused related row must navigate to the resolved document"
+        );
+        assert!(
+            app.history().can_back(),
+            "the navigation must be recorded in history, same as a mouse click/Follow"
+        );
+    }
+
     #[test]
     fn apply_rail_click_at_scrolls_to_that_heading() {
         let mut app = make_app();
@@ -2387,9 +2453,11 @@ mod tests {
 
     #[test]
     fn apply_rail_click_at_metadata_section_is_a_noop() {
-        // Task 1 establishes the section but has no activation target for
-        // it yet (BE.7.G resolves `related:` as navigable) — a click there
-        // must not panic and must not move the body.
+        // `make_app()`'s fixture has no frontmatter at all, so the
+        // Metadata section is the empty-state row — even after BE.7.G
+        // makes `related:` rows navigable, a click on a section with no
+        // rows (or on a Plain non-`related` row) must still be a no-op:
+        // not every Metadata row is a `related:` row.
         let mut app = make_app();
         let scroll_before = app.scroll;
         super::apply(
