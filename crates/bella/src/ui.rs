@@ -63,8 +63,17 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
         // Auto-collapse (or the rail simply being off) must not leave
         // keyboard focus on an invisible target.
         app.rail_focused = false;
-    } else if !app.headings.is_empty() {
-        app.rail_selected = app.rail_selected.min(app.headings.len() - 1);
+    } else {
+        // Clamp against the FOCUSED section's own length (BE.7.F) — never
+        // `headings.len()` unconditionally, since the Metadata section has
+        // a different (possibly zero) row count. A section with zero rows
+        // lands selection at 0 rather than underflowing on `len() - 1`.
+        let len = app.rail_section_len(app.rail_section);
+        app.rail_selected = if len == 0 {
+            0
+        } else {
+            app.rail_selected.min(len - 1)
+        };
     }
 
     let (rail_area, body_area) = if rail_visible {
@@ -99,13 +108,83 @@ pub fn draw_reader(frame: &mut Frame, area: Rect, app: &mut App) -> u16 {
     body_area.height
 }
 
-/// Draw the TOC rail region: a bordered pane listing `app.headings`, one
-/// per row (indented by level, deepest levels clipped by the fixed
-/// [`RAIL_WIDTH`] the same way any long line is). The row under keyboard
-/// focus ([`App::rail_selected`], only meaningful while
-/// [`App::rail_focused`]) is highlighted so [`App::activate_rail_selection`]
-/// has a visible target — see BE.7.E task 2's keyboard-parity requirement.
-fn draw_rail(frame: &mut Frame, area: Rect, app: &App) {
+/// Floor on a rail section's on-screen height (BE.7.F): 2 rows, exactly
+/// enough for a bordered `Block`'s top+bottom border with zero content
+/// rows between them. Never asked to go below this except when the whole
+/// rail area itself is shorter than it.
+const MIN_SECTION_HEIGHT: u16 = 2;
+
+/// Split a rail area of `total_height` rows between the Contents and
+/// Metadata sections. **Policy**: Metadata is content-driven — its wanted
+/// height is its row count plus 2 border rows, floored at
+/// [`MIN_SECTION_HEIGHT`] so it always has a frame to draw into (including
+/// the empty-state line BE.7.F task 2 adds when there is no frontmatter at
+/// all) — and Contents/TOC takes whatever height is left over. When the
+/// rail is too short to give both sections a useful frame, Metadata is the
+/// one that degrades: below `2 * MIN_SECTION_HEIGHT` total rows, Contents
+/// (the pane every prior version of the rail already had) gets everything
+/// and Metadata is not drawn this frame. Returns `(contents_height,
+/// metadata_height)`; neither exceeds `total_height` and their sum never
+/// does either.
+fn rail_section_heights(total_height: u16, metadata_rows: usize) -> (u16, u16) {
+    if total_height == 0 {
+        return (0, 0);
+    }
+    if total_height <= MIN_SECTION_HEIGHT * 2 {
+        return (total_height, 0);
+    }
+    let wanted_metadata = (metadata_rows as u16).saturating_add(2);
+    let max_metadata = total_height - MIN_SECTION_HEIGHT;
+    let metadata_height = wanted_metadata.clamp(MIN_SECTION_HEIGHT, max_metadata);
+    let contents_height = total_height - metadata_height;
+    (contents_height, metadata_height)
+}
+
+/// Draw the rail: a stack of titled sections (BE.7.F) sharing the rail's
+/// vertical space per [`rail_section_heights`]. Writes
+/// [`App::rail_contents_area`] / [`App::rail_metadata_area`] so mouse
+/// clicks can be routed to the section that owns the row
+/// (`events::map_mouse`).
+fn draw_rail(frame: &mut Frame, area: Rect, app: &mut App) {
+    let metadata_rows = app.rail_section_len(crate::app::RailSection::Metadata);
+    let (contents_height, metadata_height) = rail_section_heights(area.height, metadata_rows);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(contents_height),
+            Constraint::Length(metadata_height),
+        ])
+        .split(area);
+    let contents_area = chunks[0];
+    let metadata_area = if metadata_height > 0 {
+        chunks[1]
+    } else {
+        Rect::default()
+    };
+
+    if contents_height > 0 {
+        draw_rail_contents(frame, contents_area, app);
+        app.rail_contents_area = contents_area;
+    } else {
+        app.rail_contents_area = Rect::default();
+    }
+    if metadata_height > 0 {
+        draw_rail_metadata(frame, metadata_area, app);
+        app.rail_metadata_area = metadata_area;
+    } else {
+        app.rail_metadata_area = Rect::default();
+    }
+}
+
+/// Draw the Contents (table-of-contents) section: a bordered pane listing
+/// `app.headings`, one per row (indented by level, deepest levels clipped
+/// by the fixed [`RAIL_WIDTH`] the same way any long line is). The row
+/// under keyboard focus ([`App::rail_selected`], only meaningful while
+/// [`App::rail_focused`] AND this section is the focused one) is
+/// highlighted so [`App::activate_rail_selection`] has a visible target —
+/// see BE.7.E task 2's keyboard-parity requirement.
+fn draw_rail_contents(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Contents")
@@ -113,6 +192,7 @@ fn draw_rail(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    let section_focused = app.rail_focused && app.rail_section == crate::app::RailSection::Contents;
     let lines: Vec<Line> = app
         .headings
         .iter()
@@ -120,7 +200,7 @@ fn draw_rail(frame: &mut Frame, area: Rect, app: &App) {
         .map(|(idx, h)| {
             let indent = "  ".repeat((h.level.saturating_sub(1)) as usize);
             let text = format!("{indent}{}", h.text);
-            let selected = app.rail_focused && idx == app.rail_selected;
+            let selected = section_focused && idx == app.rail_selected;
             let style = if selected {
                 Style::default()
                     .fg(app.theme.status_bg)
@@ -135,6 +215,18 @@ fn draw_rail(frame: &mut Frame, area: Rect, app: &App) {
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
+}
+
+/// Draw the Metadata section's frame. Established by BE.7.F task 1; the
+/// frontmatter content and its empty state are drawn here by task 2 — for
+/// now this section is always empty (`rail_section_len` returns 0), so it
+/// only ever renders its border/title.
+fn draw_rail_metadata(frame: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Metadata")
+        .style(Style::default().fg(app.theme.status_bg));
+    frame.render_widget(block, area);
 }
 
 /// Draw the directory browser: a bordered full-screen pane titled with the

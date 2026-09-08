@@ -18,4 +18,5 @@
 
 mod golden_draw;
 mod layout;
+mod rail_sections;
 mod render_async;
