@@ -23,10 +23,30 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 struct Cli {
     /// Markdown file or directory to open.  Omit to browse the current directory.
     file: Option<PathBuf>,
+
+    /// Print this binary's build provenance (git_sha, dirty, source_dir) as one JSON
+    /// line to stdout and exit immediately — before any terminal setup runs. This is
+    /// the cross-binary contract `toolchain-freshness` uses to query registered corpus
+    /// writers (mirrors `mev --build-stamp` / `bastion --build-stamp`); do not add,
+    /// rename, or drop a key from the emitted shape.
+    #[arg(long)]
+    build_stamp: bool,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Handle --build-stamp before any terminal setup: enable_raw_mode() +
+    // EnterAlternateScreen below would swallow this output into the alternate screen,
+    // wiped on restore with the exit code still reading success. Machine consumers
+    // (mev's toolchain-freshness check) need this on stdout, undisturbed.
+    if cli.build_stamp {
+        println!(
+            "{}",
+            serde_json::to_string(&bella::buildstamp::stamp_json())?
+        );
+        return Ok(());
+    }
 
     // --- terminal setup ---
     enable_raw_mode().context("enable raw mode")?;
@@ -113,6 +133,17 @@ mod tests {
     fn no_arg_parses_to_none() {
         let m = Cli::try_parse_from(["bella"]).expect("no arg must parse successfully");
         assert!(m.file.is_none(), "missing file arg must parse to None");
+    }
+
+    #[test]
+    fn build_stamp_flag_parses_standalone() {
+        let m = Cli::try_parse_from(["bella", "--build-stamp"])
+            .expect("--build-stamp must parse with no other argument");
+        assert!(m.build_stamp, "--build-stamp must set build_stamp true");
+        assert!(
+            m.file.is_none(),
+            "--build-stamp alone must leave file as None"
+        );
     }
 
     #[test]
