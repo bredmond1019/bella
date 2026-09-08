@@ -22,6 +22,7 @@ use bella_engine::markdown::{EditCtx, Rendered, render_with_edit};
 use bella_engine::theme::Theme;
 
 use bella_engine::links::TableExpansions;
+use bella_engine::{DocIndex, build_doc_index};
 
 /// A single render request sent to the worker thread.
 struct RenderRequest {
@@ -150,6 +151,137 @@ impl RenderWorker {
 /// i.e. is not stale.
 pub fn is_latest(result: &RenderResult, latest_requested_generation: u64) -> bool {
     result.generation == latest_requested_generation
+}
+
+/// Outcome of a background doc_id index build (BE.7.G task 2).
+///
+/// Two outcomes here, not three — [`DocIndex::resolve`]'s own three-way
+/// `Resolution` (resolved/unresolved/ambiguous) is about a single doc_id
+/// lookup *after* a successful build. This is about the build itself:
+/// either it produced an index (however empty), or it could not read the
+/// corpus root at all.
+#[derive(Debug)]
+pub enum DocIndexOutcome {
+    /// The build completed and produced an index (which may be empty).
+    Ready(DocIndex),
+    /// The corpus root could not be read (missing, not a directory,
+    /// permission denied, ...). Distinct from a build that simply found
+    /// nothing to index — [`build_doc_index`] itself never errors, so this
+    /// worker checks readability up front rather than reporting every
+    /// unreadable root as a legitimately empty corpus.
+    Failed(String),
+}
+
+/// One-shot background doc_id index build.
+///
+/// Unlike [`RenderWorker`], this is not a persistent request/response
+/// loop — `App::ensure_doc_index` (BE.7.G task 2) builds the index at most
+/// once per session, so a dedicated thread per build is simpler than a
+/// long-lived worker that will only ever receive a single request.
+pub struct DocIndexWorker {
+    result_rx: Receiver<DocIndexOutcome>,
+    _handle: std::thread::JoinHandle<()>,
+}
+
+impl DocIndexWorker {
+    /// Spawn the background build thread for `root` and return a handle to
+    /// it. Returns immediately; the walk happens entirely off this thread.
+    pub fn spawn(root: PathBuf) -> Self {
+        let (result_tx, result_rx) = mpsc::channel::<DocIndexOutcome>();
+
+        let handle = std::thread::Builder::new()
+            .name("bella-docindex-worker".to_string())
+            .spawn(move || {
+                // `build_doc_index` never errors (see its doc comment) —
+                // an unreadable root just yields an empty index, which is
+                // indistinguishable from a legitimately empty corpus. Check
+                // readability up front so a permissions failure gets its
+                // own `Failed` outcome instead.
+                let outcome = match std::fs::read_dir(&root) {
+                    Ok(_) => DocIndexOutcome::Ready(build_doc_index(&root)),
+                    Err(e) => DocIndexOutcome::Failed(format!("{}: {e}", root.display())),
+                };
+                // Receiver gone (App dropped mid-build): nothing to do.
+                let _ = result_tx.send(outcome);
+            })
+            .expect("spawn docindex worker thread");
+
+        Self {
+            result_rx,
+            _handle: handle,
+        }
+    }
+
+    /// Non-blocking poll for the build result. `None` while still in
+    /// flight (or once already drained).
+    pub fn try_recv(&mut self) -> Option<DocIndexOutcome> {
+        self.result_rx.try_recv().ok()
+    }
+
+    /// Blocking receive, used by tests that need deterministic waiting
+    /// rather than polling in a spin loop.
+    #[cfg(test)]
+    pub(crate) fn recv_blocking(&self) -> Result<DocIndexOutcome, RecvError> {
+        self.result_rx.recv()
+    }
+}
+
+#[cfg(test)]
+mod docindex_worker_tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    fn wait_for(worker: &DocIndexWorker, timeout: Duration) -> DocIndexOutcome {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match worker.result_rx.try_recv() {
+                Ok(outcome) => return outcome,
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(e) => panic!("doc index worker never delivered a result: {e}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_readable_root_builds_and_reports_ready() {
+        let root = crate::testsupport::unique_temp_dir("docindex-worker-ready");
+        std::fs::write(root.join("a.md"), "---\ndoc_id: a-doc\n---\nbody\n")
+            .expect("write fixture doc");
+
+        let worker = DocIndexWorker::spawn(root.clone());
+        match wait_for(&worker, Duration::from_secs(5)) {
+            DocIndexOutcome::Ready(index) => {
+                assert_eq!(index.len(), 1);
+            }
+            DocIndexOutcome::Failed(reason) => panic!("expected Ready, got Failed({reason})"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_unreadable_root_reports_failed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = crate::testsupport::unique_temp_dir("docindex-worker-unreadable");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o000))
+            .expect("strip read permission from fixture root");
+
+        let worker = DocIndexWorker::spawn(root.clone());
+        match wait_for(&worker, Duration::from_secs(5)) {
+            DocIndexOutcome::Failed(_) => {}
+            DocIndexOutcome::Ready(index) => {
+                panic!("expected Failed for an unreadable root, got Ready({index:?})")
+            }
+        }
+
+        // Restore permissions so the temp-dir cleanup below can actually
+        // remove it.
+        let _ = std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 /// The background thread body: receive requests, render synchronously

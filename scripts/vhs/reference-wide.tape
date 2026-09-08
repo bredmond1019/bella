@@ -59,7 +59,7 @@
 #   wide_browser_reveal_on, wide_browser_planning_symlink, wide_scroll_anchor_top,
 #   wide_reader_rail_on, wide_reader_rail_off, wide_reader_metadata_populated,
 #   wide_reader_metadata_empty, wide_browser_status_line_carries_a_message,
-#   wide_diagnostics_overlay_open
+#   wide_diagnostics_overlay_open, wide_reader_related_states
 #
 # Run from the repo root: vhs scripts/vhs/reference-wide.tape
 
@@ -298,5 +298,32 @@ Wait+Screen@30s /Messages/
 Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_diagnostics_overlay_open.png
 Type "m"
+Type "q"
+Sleep 500ms
+
+# --- related: rows (BE.7.G task 4): resolved, unresolved, ambiguous ---
+#
+# Opening the rail on a document with a non-empty `related:` list starts
+# the real, whole-fleet doc_id index build (BE.7.G task 2's background
+# worker): `resolve_corpus_root` walks up from ANY path under this fleet
+# checkout to the nearest `brain.toml`, which is the HQ root, not
+# core/bella alone — measured 42.73s / 42,683 files on this machine
+# (see crates/bella/src/app.rs::real_corpus_root_build_budget). The
+# Wait+Screen timeout below is set well past that measured number, not
+# this tape's usual 30s default, for exactly that reason.
+Type "target/release/bella scripts/vhs/fixtures/related_corpus/related_demo.md"
+Enter
+Wait+Screen@30s /Bella Related Demo/
+Type "t"
+# "(unresolved)" is RelatedRowState::Unresolved's own ASCII suffix (see
+# ui::metadata_row_display) — it can only be on screen once the
+# background doc_id index build has landed and every related: row in this
+# frame has been re-resolved together, so it also proves the Resolved and
+# Ambiguous rows beside it are final, not mid-build (the resolved marker
+# `→` and ambiguous marker `≠` are non-ASCII, which this repo's tapes
+# never wait on — see the ASCII-pattern note at the top of this file).
+Wait+Screen@120s /\(unresolved\)/
+Sleep 1500ms
+Screenshot planning/artifacts/screenshots/wide_reader_related_states.png
 Type "q"
 Sleep 500ms

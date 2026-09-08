@@ -15,6 +15,8 @@ pub enum LinkTarget {
     Anchor(String),
     /// Anchor in another local file.
     FileAnchor(PathBuf, String),
+    /// A `doc_id` reference (BE.7.G) resolved through the scoped doc_id index.
+    DocId(String),
 }
 
 #[derive(Clone, Debug)]

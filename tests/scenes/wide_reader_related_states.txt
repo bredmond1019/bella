@@ -1,0 +1,43 @@
+┌Contents──────────────┐
+│Bella Related Demo    │Bella Related Demo
+│  Body                │
+│                      │A single document whose  related:  frontmatter list carries three  doc_id s that
+│                      │resolve to three different outcomes against the real, whole-fleet doc_id index BE.7.G
+│                      │builds:
+│                      │
+│                      │• fx-res  — claimed by exactly one document ( related_resolved_target.md , this same
+│                      │  directory) — Resolved.
+│                      │• fx-mis  — claimed by no document anywhere in the corpus — Unresolved.
+│                      │• fx-amb  — claimed by two documents ( related_ambiguous_a.md  and
+│                      │  related_ambiguous_b.md , this same directory) — Ambiguous.
+│                      │
+│                      │Body
+│                      │
+│                      │This body exists only so the document isn’t a bare frontmatter block.
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+└──────────────────────┘
+┌Metadata──────────────┐
+│type: Reference       │
+│title: Bella Related …│
+│description: A fixtur…│
+│status: active        │
+│keywords: related, do…│
+│→ fx-res              │
+│✗ fx-mis (unresolved) │
+│≠ fx-amb (ambiguous)  │
+└──────────────────────┘
+ bella · related_demo.md · 17/17  j/k scroll · / search · [ ] history · q quit

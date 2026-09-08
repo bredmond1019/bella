@@ -1,0 +1,19 @@
+# Fixture corpus root for BE.7.G's related: resolution scene.
+#
+# WHY THIS FILE EXISTS. bella_engine::browser::resolve_corpus_root walks up
+# from the invoked path to the NEAREST ancestor containing `brain.toml`.
+# Without this file the nearest one is the HQ root, so opening any fixture
+# here builds a doc_id index over the whole fleet — measured 42,683 files in
+# 42.73s (crates/bella/src/app.rs::real_corpus_root_build_budget). That made
+# the `wide_reader_related_states` scene both slow and load-sensitive: its
+# 60s settle did not reliably outlast the walk on a busy machine, so the
+# scene captured rows still in the Building state and blessed a golden that
+# demonstrated none of the three outcomes it exists to show.
+#
+# With this file the index is scoped to these four documents, so the build
+# is effectively instantaneous and the scene deterministically reaches the
+# Resolved / Unresolved / Ambiguous states it is asserting.
+#
+# This is a FIXTURE root, not a real brain: it declares nothing and is read
+# only by resolve_corpus_root's ancestor walk, which cares that the file
+# exists, not what it contains.

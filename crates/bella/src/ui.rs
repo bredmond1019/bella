@@ -215,6 +215,15 @@ fn rail_section_heights(total_height: u16, metadata_rows: usize) -> (u16, u16) {
 /// clicks can be routed to the section that owns the row
 /// (`events::map_mouse`).
 fn draw_rail(frame: &mut Frame, area: Rect, app: &mut App) {
+    // BE.7.G task 3's "built lazily on first `related:` use": the rail is
+    // the one place that actually needs a resolution, and this runs once
+    // per drawn frame (never inside `load_file`) — `ensure_doc_index` is
+    // itself idempotent past the first call, so this only ever spawns the
+    // background build once per session, the moment a document with a
+    // non-empty `related:` list is actually about to be shown.
+    if app.frontmatter_has_related_entries() {
+        app.ensure_doc_index();
+    }
     let metadata_rows = app.rail_section_len(crate::app::RailSection::Metadata);
     let (contents_height, metadata_height) = rail_section_heights(area.height, metadata_rows);
 
@@ -286,16 +295,60 @@ fn draw_rail_contents(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, inner);
 }
 
+/// Render one [`MetadataRow`] as `(display text, base style)`, before any
+/// selection highlight is applied.
+///
+/// A [`MetadataRow::Plain`] row renders exactly as BE.7.F's original
+/// `key: value` line. A [`MetadataRow::Related`] row (BE.7.G task 3) gets
+/// a distinct leading marker AND a distinct color PER STATE — two
+/// independent signals, so the states stay distinguishable even in a
+/// theme or terminal where one of the two doesn't render (a colorless
+/// capture, a color-blind reader): resolved (`→`, green), unresolved
+/// (`✗`, yellow), ambiguous (`≠`, magenta), still building (`…`, cyan),
+/// and a failed index build (`!`, red).
+fn metadata_row_display(row: &crate::app::MetadataRow) -> (String, Style) {
+    use crate::app::{MetadataRow, RelatedRowState};
+    match row {
+        MetadataRow::Plain(key, value) => (
+            format!("{key}: {}", format_frontmatter_value(value)),
+            Style::default(),
+        ),
+        MetadataRow::Related { doc_id, state } => match state {
+            RelatedRowState::Resolved(_) => {
+                (format!("→ {doc_id}"), Style::default().fg(Color::Green))
+            }
+            RelatedRowState::Unresolved => (
+                format!("✗ {doc_id} (unresolved)"),
+                Style::default().fg(Color::Yellow),
+            ),
+            RelatedRowState::Ambiguous(_) => (
+                format!("≠ {doc_id} (ambiguous)"),
+                Style::default().fg(Color::Magenta),
+            ),
+            RelatedRowState::Building => (
+                format!("… {doc_id} (building)"),
+                Style::default().fg(Color::Cyan),
+            ),
+            RelatedRowState::Failed(_) => (
+                format!("! {doc_id} (index failed)"),
+                Style::default().fg(Color::Red),
+            ),
+        },
+    }
+}
+
 /// Draw the Metadata section: the current document's parsed frontmatter,
 /// one row per entry, in SOURCE order (never re-sorted — see
 /// `bella_engine::frontmatter`'s module doc, which names this pane as the
-/// reason the type is a `Vec` and not a map). A document with no
-/// frontmatter (or a fence with zero entries) renders
+/// reason the type is a `Vec` and not a map) — EXCEPT `related:`, which
+/// [`App::metadata_rows`] expands to one row per item so each `doc_id`
+/// reference is individually clickable/activatable (BE.7.G task 3). A
+/// document with no frontmatter (or a fence with zero entries) renders
 /// [`METADATA_EMPTY_STATE`] instead of an empty pane, so the pane is never
 /// indistinguishable from a broken one. The row under keyboard focus
-/// (mirrors [`draw_rail_contents`]'s highlight) is only ever a real entry
-/// row's index — [`App::rail_section_len`] floors at `1` so the empty
-/// state has a row to occupy, but `rail_selected == 0` on an empty section
+/// (mirrors [`draw_rail_contents`]'s highlight) is only ever a real row's
+/// index — [`App::rail_section_len`] floors at `1` so the empty state has
+/// a row to occupy, but `rail_selected == 0` on an empty section
 /// highlights the empty-state line itself, which is harmless (there is
 /// nothing to activate onto either way — see [`App::rail_click`]).
 fn draw_rail_metadata(frame: &mut Frame, area: Rect, app: &App) {
@@ -309,13 +362,9 @@ fn draw_rail_metadata(frame: &mut Frame, area: Rect, app: &App) {
     let section_focused = app.rail_focused && app.rail_section == crate::app::RailSection::Metadata;
     let inner_width = inner.width as usize;
 
-    let entries: &[(String, FrontmatterValue)] = app
-        .frontmatter
-        .as_ref()
-        .map(|f| f.entries.as_slice())
-        .unwrap_or(&[]);
+    let rows = app.metadata_rows();
 
-    let lines: Vec<Line> = if entries.is_empty() {
+    let lines: Vec<Line> = if rows.is_empty() {
         let style = if section_focused && app.rail_selected == 0 {
             Style::default()
                 .fg(app.theme.status_bg)
@@ -329,11 +378,10 @@ fn draw_rail_metadata(frame: &mut Frame, area: Rect, app: &App) {
             style,
         ))]
     } else {
-        entries
-            .iter()
+        rows.iter()
             .enumerate()
-            .map(|(idx, (key, value))| {
-                let text = format!("{key}: {}", format_frontmatter_value(value));
+            .map(|(idx, row)| {
+                let (text, base_style) = metadata_row_display(row);
                 let truncated = truncate_to_width(&text, inner_width);
                 let selected = section_focused && idx == app.rail_selected;
                 let style = if selected {
@@ -342,7 +390,7 @@ fn draw_rail_metadata(frame: &mut Frame, area: Rect, app: &App) {
                         .bg(app.theme.status_fg)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default()
+                    base_style
                 };
                 Line::from(Span::styled(truncated, style))
             })
@@ -1950,6 +1998,160 @@ mod tests {
         assert!(
             !body_start_rows.iter().any(|r| r.contains("Café")),
             "truncated rail content must never overflow into the body region"
+        );
+    }
+
+    // --- BE.7.G task 3: `related:` rows, three display states ---
+
+    /// Task 3 AC: "The three display states are visually distinct in the
+    /// rendered buffer, asserted against a golden buffer rather than by
+    /// eye." Builds a fixture doc with `related: [resolved-id,
+    /// unresolved-id, ambiguous-id]` and a real `DocIndex` (built once,
+    /// synchronously, over a temp corpus) that resolves the first to one
+    /// path, leaves the second unclaimed, and gives the third two
+    /// claimants — then asserts each rendered row carries its OWN distinct
+    /// marker glyph (never another state's), per
+    /// [`super::metadata_row_display`].
+    #[test]
+    fn metadata_pane_related_rows_render_resolved_unresolved_and_ambiguous_distinctly() {
+        let dir = crate::testsupport::unique_temp_dir("bella_ui_related_states");
+        std::fs::write(dir.join("target.md"), "---\ndoc_id: resolved-id\n---\n").unwrap();
+        std::fs::write(dir.join("dup-a.md"), "---\ndoc_id: ambiguous-id\n---\n").unwrap();
+        std::fs::write(dir.join("dup-b.md"), "---\ndoc_id: ambiguous-id\n---\n").unwrap();
+
+        let width: u16 = 120;
+        let height: u16 = 40;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let src = "---\nrelated: [resolved-id, unresolved-id, ambiguous-id]\n---\n\n# Heading\n";
+        let mut app = make_app(src, width, height);
+        app.rail_open = true;
+        app.doc_index_state = crate::app::DocIndexState::Ready(bella_engine::build_doc_index(&dir));
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rows = body_rows(&buf, 0, RAIL_WIDTH, height);
+        let full = rows.join("\n");
+
+        let resolved_row = rows
+            .iter()
+            .find(|r| r.contains("resolved-id"))
+            .unwrap_or_else(|| panic!("resolved-id row must render; rows:\n{full}"));
+        let unresolved_row = rows
+            .iter()
+            .find(|r| r.contains("unresolved-id"))
+            .unwrap_or_else(|| panic!("unresolved-id row must render; rows:\n{full}"));
+        let ambiguous_row = rows
+            .iter()
+            .find(|r| r.contains("ambiguous-id"))
+            .unwrap_or_else(|| panic!("ambiguous-id row must render; rows:\n{full}"));
+
+        assert!(
+            resolved_row.contains('→'),
+            "resolved row must carry the resolved marker, not another state's: {resolved_row:?}"
+        );
+        assert!(
+            !resolved_row.contains('✗') && !resolved_row.contains('≠'),
+            "resolved row must not carry another state's marker: {resolved_row:?}"
+        );
+        assert!(
+            unresolved_row.contains('✗'),
+            "unresolved row must carry the unresolved marker: {unresolved_row:?}"
+        );
+        assert!(
+            !unresolved_row.contains('→') && !unresolved_row.contains('≠'),
+            "unresolved row must not carry another state's marker: {unresolved_row:?}"
+        );
+        assert!(
+            ambiguous_row.contains('≠'),
+            "ambiguous row must carry the ambiguous marker: {ambiguous_row:?}"
+        );
+        assert!(
+            !ambiguous_row.contains('→') && !ambiguous_row.contains('✗'),
+            "ambiguous row must not carry another state's marker: {ambiguous_row:?}"
+        );
+        assert_ne!(
+            resolved_row, unresolved_row,
+            "resolved and unresolved rows must render differently"
+        );
+        assert_ne!(
+            unresolved_row, ambiguous_row,
+            "unresolved and ambiguous rows must render differently"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A related row while the index build is in flight (`Building`, the
+    /// default until `draw_rail` triggers it) must render its own marker
+    /// too, never blank and never one of the resolved/unresolved/ambiguous
+    /// markers.
+    #[test]
+    fn metadata_pane_related_row_renders_building_marker_before_the_index_lands() {
+        let width: u16 = 120;
+        let height: u16 = 40;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let src = "---\nrelated: [some-doc]\n---\n\n# Heading\n";
+        let mut app = make_app(src, width, height);
+        app.rail_open = true;
+        // `doc_index_state` starts `NotBuilt`; `draw_rail` triggers the
+        // build this very frame but the background worker cannot have
+        // landed a result before `terminal.draw` returns — so the row
+        // painted THIS frame must be `Building`, not a guess at the
+        // eventual outcome.
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rows = body_rows(&buf, 0, RAIL_WIDTH, height);
+        let full = rows.join("\n");
+        let row = rows
+            .iter()
+            .find(|r| r.contains("some-doc"))
+            .unwrap_or_else(|| panic!("some-doc row must render; rows:\n{full}"));
+        assert!(
+            row.contains('…'),
+            "an unresolved-yet index must render the Building marker: {row:?}"
+        );
+    }
+
+    #[test]
+    fn metadata_pane_related_row_renders_failed_marker_when_the_index_build_failed() {
+        let width: u16 = 120;
+        let height: u16 = 40;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let src = "---\nrelated: [some-doc]\n---\n\n# Heading\n";
+        let mut app = make_app(src, width, height);
+        app.rail_open = true;
+        app.doc_index_state = crate::app::DocIndexState::Failed("unreadable root".to_string());
+
+        terminal
+            .draw(|f| {
+                draw_reader(f, f.area(), &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rows = body_rows(&buf, 0, RAIL_WIDTH, height);
+        let full = rows.join("\n");
+        let row = rows
+            .iter()
+            .find(|r| r.contains("some-doc"))
+            .unwrap_or_else(|| panic!("some-doc row must render; rows:\n{full}"));
+        assert!(
+            row.contains('!'),
+            "a failed index build must render the Failed marker: {row:?}"
         );
     }
 

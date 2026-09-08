@@ -517,9 +517,29 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         Action::RailFocus => app.focus_rail(),
         Action::RailUnfocus => app.rail_focused = false,
         Action::RailMove(delta) => app.rail_move(delta),
-        Action::RailActivate => app.activate_rail_selection(),
+        Action::RailActivate => {
+            // Mirrors the `Follow`/`click_at` history-recording pattern
+            // above: `activate_rail_selection` returns `Some((prev_file,
+            // prev_anchor))` exactly when a `related:` row (BE.7.G task 3)
+            // resolved and navigated — Contents activation and a
+            // no-target Metadata row both return `None`.
+            if let Some((prev_path, prev_anchor)) = app.activate_rail_selection() {
+                app.history_mut()
+                    .push(HistoryEntry::new(prev_path, prev_anchor));
+                let cur = app.file().to_path_buf();
+                app.history_mut().push(HistoryEntry::new(cur, 0));
+            }
+        }
         Action::RailCycleSection => app.cycle_rail_section(),
-        Action::RailClickAt { section, row } => app.rail_click(section, row),
+        Action::RailClickAt { section, row } => {
+            // Same history-recording contract as `RailActivate` above.
+            if let Some((prev_path, prev_anchor)) = app.rail_click(section, row) {
+                app.history_mut()
+                    .push(HistoryEntry::new(prev_path, prev_anchor));
+                let cur = app.file().to_path_buf();
+                app.history_mut().push(HistoryEntry::new(cur, 0));
+            }
+        }
         // Browser actions (Block E, Task 4)
         Action::BrowserUp => {
             let vp = app.browser_area.height.max(1);
@@ -702,6 +722,18 @@ pub fn run_loop(
         // blocking the loop on the render itself.
         app.poll_render();
 
+        // Same contract for BE.7.G's background doc_id index build. Without
+        // this call the worker completes, parks its result on the channel,
+        // and nothing ever drains it — so every `related:` row stays in
+        // `DocIndexState::Building` for the life of the process and the
+        // Resolved / Unresolved / Ambiguous states are unreachable in the
+        // real binary. Every unit test hand-assigned `doc_index_state`, so
+        // the whole feature was green in the suite and dead on screen; the
+        // visual gate is what caught it. Drained here beside `poll_render`
+        // because this is the one place that runs on every tick regardless
+        // of whether a terminal event arrived.
+        app.poll_doc_index();
+
         if !event::poll(EVENT_POLL_TIMEOUT)? {
             // No terminal event within the timeout; loop back around to
             // redraw (picks up any render that just landed) and poll again.
@@ -758,6 +790,46 @@ pub fn run_loop(
 
 #[cfg(test)]
 mod tests {
+
+    /// BE.7.G, CALL-SITE GUARD added 2026-09-08. `poll_doc_index` shipped
+    /// with a doc comment claiming "Called every tick of `run_loop`
+    /// alongside `poll_render`" and NO production caller — the docs
+    /// asserted a call site that did not exist. The nine index tests all
+    /// hand-assigned `doc_index_state`, so the suite was green and the
+    /// feature was dead on screen; the visual gate caught it.
+    ///
+    /// A behavioural test cannot cover this — `run_loop` needs a real
+    /// terminal — so the call site is asserted textually.
+    ///
+    /// SCANS ONLY THE PRODUCTION HALF OF THIS FILE. The first version of
+    /// this guard searched the whole of `include_str!("events.rs")`, which
+    /// includes this test — and this test's own assertion strings contain
+    /// the literal `app.poll_doc_index();`, so it matched itself and passed
+    /// with the production call deleted. Verified by mutation: removing the
+    /// call from `run_loop` left both this guard and the behavioural test
+    /// green. Truncating at `#[cfg(test)]` is what makes the search
+    /// falsifiable.
+    #[test]
+    fn run_loop_drains_both_workers_every_tick() {
+        let whole = include_str!("events.rs");
+        let production = &whole[..whole
+            .find("#[cfg(test)]")
+            .expect("events.rs must have a test module marker to truncate at")];
+
+        assert!(
+            production.contains("app.poll_render();"),
+            "positive control: run_loop must drain the render worker in the \
+             PRODUCTION half of this file — if this fails, the truncation or \
+             the pattern is broken and the assertion below proves nothing"
+        );
+        assert!(
+            production.contains("app.poll_doc_index();"),
+            "run_loop must drain the doc_id index worker every tick. Without it \
+             the worker completes, its result is never applied, and every \
+             related: row stays Building for the life of the process."
+        );
+    }
+
     use std::path::PathBuf;
 
     use crossterm::event::{
@@ -2351,6 +2423,52 @@ mod tests {
         );
     }
 
+    /// Task 3 AC: "A related row is activatable from the KEYBOARD, not
+    /// only by click, using the rail focus and activation keys BE.7.E
+    /// established — asserted by a pure map_rail_key test with no
+    /// terminal." Drives the FULL keyboard path with no terminal
+    /// involved: `map_rail_key(Enter)` -> `Action::RailActivate` ->
+    /// `apply`, on a resolved `related:` row, and checks it lands on the
+    /// target document AND records history exactly like the mouse click
+    /// path (`click_at`/`Follow`) does.
+    #[test]
+    fn keyboard_enter_activates_a_resolved_related_row_and_records_history() {
+        use crate::app::DocIndexState;
+
+        let dir = crate::testsupport::unique_temp_dir("bella_events_related_keyboard");
+        let target = dir.join("target.md");
+        std::fs::write(&target, "---\ndoc_id: target-doc\n---\n# Target\n").unwrap();
+        let reader = dir.join("reader.md");
+        std::fs::write(&reader, "---\nrelated: [target-doc]\n---\n# Reader\n").unwrap();
+
+        let mut app = App::new(
+            std::fs::read_to_string(&reader).unwrap(),
+            reader.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+        app.doc_index_state = DocIndexState::Ready(bella_engine::build_doc_index(&dir));
+        app.rail_focused = true;
+        app.rail_section = RailSection::Metadata;
+        app.rail_selected = 0;
+
+        let action = super::map_rail_key(key(KeyCode::Enter));
+        assert_eq!(action, Action::RailActivate);
+        super::apply(action, &mut app);
+        app.block_until_ready();
+
+        assert_eq!(
+            app.file(),
+            target,
+            "Enter on the focused related row must navigate to the resolved document"
+        );
+        assert!(
+            app.history().can_back(),
+            "the navigation must be recorded in history, same as a mouse click/Follow"
+        );
+    }
+
     #[test]
     fn apply_rail_click_at_scrolls_to_that_heading() {
         let mut app = make_app();
@@ -2387,9 +2505,11 @@ mod tests {
 
     #[test]
     fn apply_rail_click_at_metadata_section_is_a_noop() {
-        // Task 1 establishes the section but has no activation target for
-        // it yet (BE.7.G resolves `related:` as navigable) — a click there
-        // must not panic and must not move the body.
+        // `make_app()`'s fixture has no frontmatter at all, so the
+        // Metadata section is the empty-state row — even after BE.7.G
+        // makes `related:` rows navigable, a click on a section with no
+        // rows (or on a Plain non-`related` row) must still be a no-op:
+        // not every Metadata row is a `related:` row.
         let mut app = make_app();
         let scroll_before = app.scroll;
         super::apply(
