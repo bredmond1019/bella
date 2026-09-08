@@ -58,7 +58,8 @@
 #   wide_browser_selection, wide_browser_nested, wide_browser_reveal_off,
 #   wide_browser_reveal_on, wide_browser_planning_symlink, wide_scroll_anchor_top,
 #   wide_reader_rail_on, wide_reader_rail_off, wide_reader_metadata_populated,
-#   wide_reader_metadata_empty
+#   wide_reader_metadata_empty, wide_browser_status_line_carries_a_message,
+#   wide_diagnostics_overlay_open
 #
 # Run from the repo root: vhs scripts/vhs/reference-wide.tape
 
@@ -217,11 +218,20 @@ Wait+Screen@30s /Contents/
 Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_reader_rail_on.png
 
-# Toggle back off. There is no equally unique "rail is closed" text to
-# Wait on — closed is the ABSENCE of "Contents" — so this relies on a
-# settle Sleep after the keypress, the same pattern already used by every
-# `Type "q"` quit sequence in this tape.
-Type "t"
+# Rail off (BE.7.K task 3, measured 2026-09-08): originally toggled back
+# closed on the SAME session with a fixed Sleep (no readiness guard,
+# because closed is the ABSENCE of "Contents" — nothing to Wait on). That
+# produced a deterministic blank capture across three consecutive re-runs
+# of this tape while re-capturing for this block, every other scene
+# eventually passing on retry — this one never did. Rail-off is just
+# bella's DEFAULT state, so a fresh launch (no toggle at all) is both a
+# readiness-guardable capture (reuse the same top-of-file pattern) AND a
+# more faithful "rail off" scene than a toggle-closed one.
+Type "q"
+Sleep 800ms
+Type "target/release/bella scripts/vhs/fixtures/demo.md"
+Enter
+Wait+Screen@30s /Bella Reference Demo/
 Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_reader_rail_off.png
 Type "q"
@@ -251,5 +261,42 @@ Type "t"
 Wait+Screen@30s /no frontmatter/
 Sleep 1500ms
 Screenshot planning/artifacts/screenshots/wide_reader_metadata_empty.png
+Type "q"
+Sleep 500ms
+
+# --- Diagnostics (BE.7.K task 3): walk-error drop reaches the message log ---
+#
+# Launching directly inside dropped_demo/ would show the drop count TWICE
+# at this width — once from `Browser.dropped_entries`'s own pre-existing
+# direct indicator, once more from the durable-log message this task adds
+# — which together run past this tape's 1200px window before "entries
+# dropped" is fully on screen (`Set Width` cannot fix this: VHS sizes the
+# pty once at session start, a later `Set Width` mid-tape does not resize
+# the running shell). Ascending back out to the clean parent directory
+# avoids the collision AND demonstrates the actual point of this block:
+# the message survives the keypress that moved browser.dropped_entries
+# back to 0, which a plain `status_message` could not have done.
+Type "target/release/bella scripts/vhs/fixtures/dropped_demo"
+Enter
+# "visible.md" is the fixture's one readable entry (with the `.md` suffix
+# that distinguishes it from reveal_demo's earlier bare "visible" dir
+# entry) — on screen once the initial listing paints.
+Wait+Screen@30s /visible\.md/
+Backspace
+# Now rooted at the clean parent (scripts/vhs/fixtures, dropped_entries
+# == 0 there), so "entries dropped" can only be the durable-log message —
+# proof the log outlived the ascend.
+Wait+Screen@30s /entries dropped/
+Sleep 1500ms
+Screenshot planning/artifacts/screenshots/wide_browser_status_line_carries_a_message.png
+
+Type "m"
+# "Messages" is the diagnostics overlay's own bordered title (see
+# ui::draw_diagnostics_overlay) — on screen only once the overlay is
+# toggled open by the keypress above.
+Wait+Screen@30s /Messages/
+Sleep 1500ms
+Screenshot planning/artifacts/screenshots/wide_diagnostics_overlay_open.png
+Type "m"
 Type "q"
 Sleep 500ms

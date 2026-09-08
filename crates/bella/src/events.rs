@@ -553,7 +553,7 @@ pub(crate) fn apply(action: Action, app: &mut App) {
             } else if let Some(file) = open_file
                 && let Err(msg) = app.open_from_browser(file)
             {
-                app.status_message = Some(msg);
+                app.set_status(msg, crate::messages::Severity::Error);
             }
         }
         Action::BrowserClickAt { row } => {
@@ -588,7 +588,7 @@ pub(crate) fn apply(action: Action, app: &mut App) {
             } else if let Some(file) = open_file
                 && let Err(msg) = app.open_from_browser(file)
             {
-                app.status_message = Some(msg);
+                app.set_status(msg, crate::messages::Severity::Error);
             }
         }
         Action::BrowserScroll(delta) => {

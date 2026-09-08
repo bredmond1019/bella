@@ -309,6 +309,41 @@ height = 10
 min_bytes = 150000
 tape = "scripts/vhs/reference-narrow.tape"
 
+# --- Diagnostics (BE.7.K task 3) ------------------------------------------
+#
+# Both scenes browse a committed fixture, dropped_demo/, holding one
+# readable file (visible.md) and one dangling symlink (broken_link) the
+# walker cannot resolve. That walk-error drop is routed into the durable
+# message log by `App::note_dropped_entries` — these two scenes are the
+# "browser status line carrying a message" and "diagnostics overlay open"
+# coverage BE.7.K task 3 owes.
+
+[[scene]]
+# target: scripts/vhs/fixtures/dropped_demo
+# No keys: the walk-error drop is logged at initial construction
+# (App::new_browser), so the message is already on the status line the
+# first frame — this scene is exactly that first frame.
+name = "wide_browser_status_line_carries_a_message"
+args = ["scripts/vhs/fixtures/dropped_demo"]
+keys = []
+width = 110
+height = 43
+min_bytes = 25000
+tape = "scripts/vhs/reference-wide.tape"
+
+[[scene]]
+# target: scripts/vhs/fixtures/dropped_demo
+# "m" opens the diagnostics overlay (BE.7.K task 2's ToggleDiagnostics
+# action) over the same dropped-entries frame above, so the overlay is
+# shown with real, non-empty content rather than "(no messages)".
+name = "wide_diagnostics_overlay_open"
+args = ["scripts/vhs/fixtures/dropped_demo"]
+keys = ["m"]
+width = 110
+height = 43
+min_bytes = 25000
+tape = "scripts/vhs/reference-wide.tape"
+
 # --- The image tier: bella's existing VHS tapes -------------------------
 #
 # output_dir is carried verbatim from the tapes' own `Screenshot` lines
