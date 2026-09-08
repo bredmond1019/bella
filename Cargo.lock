@@ -141,6 +141,7 @@ dependencies = [
  "ignore",
  "open",
  "ratatui",
+ "serde_json",
 ]
 
 [[package]]

@@ -8,6 +8,7 @@
 //! module compiled for both the bin and any integration tests.
 
 pub mod app;
+pub mod buildstamp;
 pub mod events;
 pub mod history;
 pub mod render_worker;
