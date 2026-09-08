@@ -176,6 +176,11 @@ pub struct App {
     /// message raised before a file load is still readable in the
     /// diagnostics overlay (task 2) after it happens.
     pub message_log: MessageLog,
+    /// Whether the diagnostics overlay (BE.7.K task 2) is currently open.
+    /// Opens from both Reader and Browser focus via the same key; drawing
+    /// is a pure function of this flag plus `message_log`, so toggling it
+    /// off and redrawing reproduces the exact pre-overlay frame.
+    pub diagnostics_open: bool,
     /// Back/forward navigation history stack (Task 6).
     ///
     /// Private (BE.7.E task 2): every external read/write goes through
@@ -321,6 +326,7 @@ impl App {
             search: None,
             status_message: None,
             message_log: MessageLog::default(),
+            diagnostics_open: false,
             history: History::new(),
             body_area: Rect::default(),
             rail_open: false,
@@ -379,6 +385,7 @@ impl App {
             search: None,
             status_message: None,
             message_log: MessageLog::default(),
+            diagnostics_open: false,
             history: History::new(),
             body_area: Rect::default(),
             rail_open: false,

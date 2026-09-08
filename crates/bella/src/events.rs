@@ -112,6 +112,10 @@ pub enum Action {
         section: RailSection,
         row: usize,
     },
+    /// Toggle the diagnostics overlay (BE.7.K task 2) open/closed. Bound to
+    /// the same key from both Reader and Browser focus so the operator has
+    /// one thing to remember regardless of mode.
+    ToggleDiagnostics,
 }
 
 /// Pure browser key→action mapper (unit-testable without a live terminal).
@@ -125,6 +129,10 @@ pub fn map_browser_key(key: KeyEvent) -> Action {
         KeyCode::Enter => Action::BrowserDescend,
         KeyCode::Backspace => Action::BrowserAscend,
         KeyCode::Char('r') => Action::BrowserToggleReveal,
+        // Diagnostics overlay (BE.7.K task 2): 'm' for "messages", the same
+        // key as reader focus (see `map_key`) so browser focus is no longer
+        // a mode with no way to ask what happened.
+        KeyCode::Char('m') => Action::ToggleDiagnostics,
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
         _ => Action::None,
@@ -165,6 +173,9 @@ pub fn map_key(key: KeyEvent, viewport_height: u16) -> Action {
         // used instead of this mapper once focused).
         KeyCode::Char('t') => Action::RailToggle,
         KeyCode::Char('T') => Action::RailFocus,
+        // Diagnostics overlay (BE.7.K task 2): opens from Reader focus too —
+        // see `map_browser_key` for the browser-focus binding.
+        KeyCode::Char('m') => Action::ToggleDiagnostics,
         // Return to browser (when the reader was entered via the browser).
         KeyCode::Backspace => Action::BrowserBack,
         KeyCode::Char('q') => Action::Quit,
@@ -596,6 +607,9 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         }
         Action::BrowserToggleReveal => {
             app.toggle_reveal();
+        }
+        Action::ToggleDiagnostics => {
+            app.diagnostics_open = !app.diagnostics_open;
         }
     }
 }
@@ -2540,5 +2554,36 @@ mod tests {
         // this must fall through to the (missing) body hit-test, not
         // RailClickAt.
         assert_eq!(super::map_mouse(ev, &app), Action::None);
+    }
+
+    // --- BE.7.K task 2: diagnostics overlay key + toggle ---
+
+    #[test]
+    fn map_key_m_toggles_diagnostics_from_reader_focus() {
+        assert_eq!(
+            map_key(key(KeyCode::Char('m')), 10),
+            Action::ToggleDiagnostics
+        );
+    }
+
+    #[test]
+    fn map_browser_key_m_toggles_diagnostics_from_browser_focus() {
+        assert_eq!(
+            map_browser_key(key(KeyCode::Char('m'))),
+            Action::ToggleDiagnostics
+        );
+    }
+
+    #[test]
+    fn apply_toggle_diagnostics_opens_and_closes() {
+        let mut app = make_app();
+        assert!(!app.diagnostics_open, "precondition: overlay starts closed");
+        super::apply(Action::ToggleDiagnostics, &mut app);
+        assert!(app.diagnostics_open, "first toggle must open the overlay");
+        super::apply(Action::ToggleDiagnostics, &mut app);
+        assert!(
+            !app.diagnostics_open,
+            "second toggle must close the overlay"
+        );
     }
 }
