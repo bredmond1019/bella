@@ -142,6 +142,7 @@ dependencies = [
  "open",
  "ratatui",
  "serde_json",
+ "unicode-width",
 ]
 
 [[package]]

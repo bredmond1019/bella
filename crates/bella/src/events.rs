@@ -8,7 +8,7 @@ use crossterm::event::{
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use std::time::{Duration, Instant};
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, RailSection};
 use crate::history::HistoryEntry;
 use crate::ui;
 use bella_engine::browser::BrowserEntryKind;
@@ -103,9 +103,13 @@ pub enum Action {
     RailMove(i32),
     /// Activate the rail's focused row — scroll the body to that heading.
     RailActivate,
-    /// Left-click on a rail row: `row` is the row index relative to the
-    /// rail's inner listing area (post-border).
+    /// Cycle keyboard focus between rail sections (BE.7.F).
+    RailCycleSection,
+    /// Left-click on a rail row: `section` is which rail section owns the
+    /// row, `row` is the row index relative to that section's own inner
+    /// listing area (post-border).
     RailClickAt {
+        section: RailSection,
         row: usize,
     },
 }
@@ -185,6 +189,10 @@ pub fn map_rail_key(key: KeyEvent) -> Action {
         KeyCode::Char('k') | KeyCode::Up => Action::RailMove(-1),
         KeyCode::Enter => Action::RailActivate,
         KeyCode::Esc => Action::RailUnfocus,
+        // Cycle keyboard focus between rail sections (BE.7.F) — Tab is
+        // unbound elsewhere in this mapper, unlike in `map_key` where it
+        // already drives the link focus ring.
+        KeyCode::Tab => Action::RailCycleSection,
         KeyCode::Char('t') => Action::RailToggle,
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
@@ -227,6 +235,22 @@ fn rail_row_at(rail_area: Rect, col: u16, row: u16) -> Option<usize> {
     Some((row - inner_y0) as usize)
 }
 
+/// Resolve a screen position to `(section, row)` against whichever rail
+/// section's own inner rect it falls in (BE.7.F) — `App::rail_contents_area`
+/// tried first, then `App::rail_metadata_area`. A position on a section's
+/// border/title, in the gap between sections, or outside the rail
+/// entirely is `None`: a no-op, never a panic, and never misattributed to
+/// the wrong section.
+fn rail_section_row_at(app: &App, col: u16, row: u16) -> Option<(RailSection, usize)> {
+    if let Some(r) = rail_row_at(app.rail_contents_area, col, row) {
+        return Some((RailSection::Contents, r));
+    }
+    if let Some(r) = rail_row_at(app.rail_metadata_area, col, row) {
+        return Some((RailSection::Metadata, r));
+    }
+    None
+}
+
 /// Pure mouse→action mapper (unit-testable without a live terminal).
 ///
 /// Only scroll-wheel kinds are mapped for now; button/drag/move kinds return
@@ -264,9 +288,9 @@ pub fn map_mouse(mouse: MouseEvent, app: &App) -> Action {
             // otherwise just fall through `body_pos` as an out-of-body
             // `Action::None`.
             if app.rail_visible
-                && let Some(row) = rail_row_at(app.rail_area, mouse.column, mouse.row)
+                && let Some((section, row)) = rail_section_row_at(app, mouse.column, mouse.row)
             {
-                return Action::RailClickAt { row };
+                return Action::RailClickAt { section, row };
             }
             if let Some((content_row, local_col)) = body_pos(
                 app.body_area,
@@ -483,7 +507,8 @@ pub(crate) fn apply(action: Action, app: &mut App) {
         Action::RailUnfocus => app.rail_focused = false,
         Action::RailMove(delta) => app.rail_move(delta),
         Action::RailActivate => app.activate_rail_selection(),
-        Action::RailClickAt { row } => app.jump_to_heading(row),
+        Action::RailCycleSection => app.cycle_rail_section(),
+        Action::RailClickAt { section, row } => app.rail_click(section, row),
         // Browser actions (Block E, Task 4)
         Action::BrowserUp => {
             let vp = app.browser_area.height.max(1);
@@ -726,7 +751,7 @@ mod tests {
     };
     use ratatui::layout::Rect;
 
-    use crate::app::{App, Mode};
+    use crate::app::{App, Mode, RailSection};
 
     use super::{Action, map_browser_key, map_key, map_rail_key, rail_row_at};
 
@@ -2257,6 +2282,11 @@ mod tests {
     }
 
     #[test]
+    fn map_rail_key_tab_cycles_section() {
+        assert_eq!(map_rail_key(key(KeyCode::Tab)), Action::RailCycleSection);
+    }
+
+    #[test]
     fn map_rail_key_ctrl_c_quits() {
         assert_eq!(map_rail_key(ctrl(KeyCode::Char('c'))), Action::Quit);
     }
@@ -2310,7 +2340,13 @@ mod tests {
     #[test]
     fn apply_rail_click_at_scrolls_to_that_heading() {
         let mut app = make_app();
-        super::apply(Action::RailClickAt { row: 7 }, &mut app);
+        super::apply(
+            Action::RailClickAt {
+                section: RailSection::Contents,
+                row: 7,
+            },
+            &mut app,
+        );
         let target_line = app.headings[7].line as u16;
         assert!(
             app.scroll <= target_line && target_line < app.scroll + app.viewport_height,
@@ -2322,10 +2358,61 @@ mod tests {
     fn apply_rail_click_at_out_of_range_is_a_noop_not_a_panic() {
         let mut app = make_app();
         let scroll_before = app.scroll;
-        super::apply(Action::RailClickAt { row: 999 }, &mut app);
+        super::apply(
+            Action::RailClickAt {
+                section: RailSection::Contents,
+                row: 999,
+            },
+            &mut app,
+        );
         assert_eq!(
             app.scroll, scroll_before,
             "a click past the end of the heading list must be a no-op"
+        );
+    }
+
+    #[test]
+    fn apply_rail_click_at_metadata_section_is_a_noop() {
+        // Task 1 establishes the section but has no activation target for
+        // it yet (BE.7.G resolves `related:` as navigable) — a click there
+        // must not panic and must not move the body.
+        let mut app = make_app();
+        let scroll_before = app.scroll;
+        super::apply(
+            Action::RailClickAt {
+                section: RailSection::Metadata,
+                row: 0,
+            },
+            &mut app,
+        );
+        assert_eq!(
+            app.scroll, scroll_before,
+            "a click on the Metadata section must be a no-op in this task"
+        );
+    }
+
+    #[test]
+    fn apply_rail_cycle_section_toggles_focus_and_reclamps_selection() {
+        let mut app = make_app();
+        app.rail_visible = true;
+        app.rail_focused = true;
+        app.rail_section = RailSection::Contents;
+        app.rail_selected = 5;
+        super::apply(Action::RailCycleSection, &mut app);
+        assert_eq!(
+            app.rail_section,
+            RailSection::Metadata,
+            "cycle must move focus to Metadata"
+        );
+        assert_eq!(
+            app.rail_selected, 0,
+            "Metadata is empty in this task, so selection must re-clamp to 0"
+        );
+        super::apply(Action::RailCycleSection, &mut app);
+        assert_eq!(
+            app.rail_section,
+            RailSection::Contents,
+            "cycling again must return focus to Contents"
         );
     }
 
@@ -2357,7 +2444,7 @@ mod tests {
     fn map_mouse_click_inside_rail_produces_rail_click_at() {
         let mut app = make_app();
         app.rail_visible = true;
-        app.rail_area = Rect {
+        app.rail_contents_area = Rect {
             x: 0,
             y: 0,
             width: 24,
@@ -2369,14 +2456,54 @@ mod tests {
             row: 3,
             modifiers: KeyModifiers::empty(),
         };
-        assert_eq!(super::map_mouse(ev, &app), Action::RailClickAt { row: 2 });
+        assert_eq!(
+            super::map_mouse(ev, &app),
+            Action::RailClickAt {
+                section: RailSection::Contents,
+                row: 2
+            }
+        );
+    }
+
+    #[test]
+    fn map_mouse_click_inside_rail_metadata_section_produces_rail_click_at() {
+        let mut app = make_app();
+        app.rail_visible = true;
+        // Contents sits above Metadata in the stack; Metadata's own rect
+        // is disjoint, so a click there must resolve to the Metadata
+        // section, not fall through to Contents or the body.
+        app.rail_contents_area = Rect {
+            x: 0,
+            y: 0,
+            width: 24,
+            height: 5,
+        };
+        app.rail_metadata_area = Rect {
+            x: 0,
+            y: 5,
+            width: 24,
+            height: 5,
+        };
+        let ev = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 6,
+            modifiers: KeyModifiers::empty(),
+        };
+        assert_eq!(
+            super::map_mouse(ev, &app),
+            Action::RailClickAt {
+                section: RailSection::Metadata,
+                row: 0
+            }
+        );
     }
 
     #[test]
     fn map_mouse_click_on_rail_border_is_not_a_rail_click() {
         let mut app = make_app();
         app.rail_visible = true;
-        app.rail_area = Rect {
+        app.rail_contents_area = Rect {
             x: 0,
             y: 0,
             width: 24,
@@ -2397,7 +2524,7 @@ mod tests {
     fn map_mouse_click_ignores_rail_when_not_visible() {
         let mut app = make_app();
         app.rail_visible = false;
-        app.rail_area = Rect {
+        app.rail_contents_area = Rect {
             x: 0,
             y: 0,
             width: 24,

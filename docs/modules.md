@@ -295,6 +295,7 @@ Central state container. 2183 lines — the largest app-crate file.
 | Type | Description |
 |---|---|
 | `Mode` | `Reader`, `Browser` |
+| `RailSection` | `Contents`, `Metadata` — which stacked rail section a `rail_selected` index/click resolves against (BE.7.F); `.next()` cycles between them |
 | `SearchState` | `query`, `matches: Vec<usize>` (display row indices), `current`, `input_mode` |
 | `App` | All viewer state — see field table below |
 
@@ -308,12 +309,16 @@ Central state container. 2183 lines — the largest app-crate file.
 | `scroll` | `usize` | Top visible display line |
 | `viewport_height` | `u16` | Body height (updated each frame) |
 | `width` | `u16` | Body region width — sole writer is `ui::draw_reader` (BE.7.E); `App::new`/`App::render` also set it directly for their own explicit-width requests. See [`architecture.md`](architecture.md) |
-| `headings` | `Vec<HeadingInfo>` | Heading metadata from the last render, backing the TOC rail |
+| `headings` | `Vec<HeadingInfo>` | Heading metadata from the last render, backing the rail's Contents section |
+| `frontmatter` | `Option<Frontmatter>` | Parsed frontmatter from the current document, backing the rail's Metadata section (BE.7.F); mirrored off `Rendered.frontmatter`, cleared on `back_to_browser` |
 | `rail_open` | `bool` | User's rail toggle preference (per-session, no persistence) |
 | `rail_visible` | `bool` | Whether the rail actually drew last frame; written only by `ui::draw_reader` — can be `false` even when `rail_open` is `true` if the terminal is too narrow (auto-collapse) |
 | `rail_area` | `Rect` | Rail viewport rectangle, mirrors `body_area`; `Rect::default()` when not visible |
+| `rail_contents_area` | `Rect` | Inner rect of the rail's Contents section on the last frame (BE.7.F); `Rect::default()` when not visible |
+| `rail_metadata_area` | `Rect` | Inner rect of the rail's Metadata section on the last frame (BE.7.F); `Rect::default()` when not visible or the section is too short to draw |
 | `rail_focused` | `bool` | Whether keyboard focus is on the rail rather than the body |
-| `rail_selected` | `usize` | Index into `headings` of the rail row under keyboard focus |
+| `rail_selected` | `usize` | Index into the *focused* rail section (`rail_section`) of the row under keyboard focus |
+| `rail_section` | `RailSection` | Which rail section (`Contents` or `Metadata`) currently has keyboard focus (BE.7.F) |
 | *(private)* `file` | `PathBuf` | Currently open file — read via `app.file()` (BE.7.E: single accessor, no direct field access outside `app.rs`) |
 | `focused_link` | `Option<usize>` | Tab-focused link index |
 | `hovered_link` | `Option<usize>` | Mouse-hovered link index |
@@ -341,11 +346,18 @@ Central state container. 2183 lines — the largest app-crate file.
 - `drag_origin` guards `selection_finish()` — set on Down, cleared by double-click, consumed by Up. Prevents double-calling finish on double-click sequences.
 - Checkbox toggles are visual-only; never written to disk.
 
-**TOC rail methods (BE.7.E):** `toggle_rail()` flips `rail_open` (and clears `rail_focused` on
-close); `focus_rail()` gives the rail keyboard focus, a no-op when `rail_visible` is `false`;
-`rail_move(delta)` moves `rail_selected` by `delta`, clamped, no wraparound; `activate_rail_selection()`
-jumps to the focused row; `jump_to_heading(idx)` scrolls the body so `headings[idx]` is at the top
-(a no-op, never a panic, on an out-of-range `idx`).
+**Rail methods (BE.7.E, extended BE.7.F):** `toggle_rail()` flips `rail_open` (and clears
+`rail_focused` on close); `focus_rail()` gives the rail keyboard focus, a no-op when
+`rail_visible` is `false`; `rail_section_len(section)` returns the row count of the given
+`RailSection` (`Contents` is `headings.len()`; `Metadata` is the frontmatter's entry count,
+floored at `1` so even a document with no frontmatter has a row for the empty-state line);
+`cycle_rail_section()` flips `rail_section` between `Contents`/`Metadata` and re-clamps
+`rail_selected` to the new section's length; `rail_move(delta)` moves `rail_selected` by `delta`
+within the focused section, clamped, no wraparound; `activate_rail_selection()` jumps to the
+focused row when `rail_section == Contents` (a no-op on `Metadata` — no target until BE.7.G
+resolves `related:` as navigable); `rail_click(section, row)` mirrors `activate_rail_selection`
+for a mouse click on a given section/row; `jump_to_heading(idx)` scrolls the body so
+`headings[idx]` is at the top (a no-op, never a panic, on an out-of-range `idx`).
 
 ---
 
@@ -376,12 +388,13 @@ Event loop, key/mouse mappers, and action dispatcher.
 | `BrowserClickAt{row}` | Mouse `Down` in browser |
 | `BrowserScroll(i32)` | Mouse scroll wheel in browser |
 | `BrowserBack` | `Backspace` in reader mode |
-| `RailToggle` | `t` — open/close the TOC rail |
+| `RailToggle` | `t` — open/close the rail |
 | `RailFocus` | `T` — give the rail keyboard focus (no-op if not visible) |
 | `RailUnfocus` | `Esc` while the rail is focused |
-| `RailMove(i32)` | `j/k`/arrows while the rail is focused — moves the selected heading, clamped, no wraparound |
-| `RailActivate` | `Enter` while the rail is focused — jumps the body to the selected heading |
-| `RailClickAt{row}` | Mouse click inside `rail_area` (not on the border) — jumps to that heading |
+| `RailCycleSection` | `Tab` while the rail is focused — cycles keyboard focus between the Contents and Metadata sections (BE.7.F) |
+| `RailMove(i32)` | `j/k`/arrows while the rail is focused — moves the selection within the focused section, clamped, no wraparound |
+| `RailActivate` | `Enter` while the rail is focused — jumps the body to the selected heading (Contents section only) |
+| `RailClickAt{section, row}` | Mouse click inside `rail_contents_area`/`rail_metadata_area` (not on the border) — jumps to that heading on Contents, no-op on Metadata (BE.7.F: `section` field added) |
 | `Quit` | `q`, `Ctrl-C` |
 
 **Key functions:**
@@ -389,7 +402,7 @@ Event loop, key/mouse mappers, and action dispatcher.
 | Function | What it does |
 |---|---|
 | `map_key(key, viewport_height) -> Action` | Reader key mapper (pure) |
-| `map_rail_key(key) -> Action` | Rail-focused key mapper (pure) — `j/k`/arrows move, `Enter` activates, `Esc` unfocuses, `t` still toggles |
+| `map_rail_key(key) -> Action` | Rail-focused key mapper (pure) — `j/k`/arrows move, `Tab` cycles section (BE.7.F), `Enter` activates, `Esc` unfocuses, `t` still toggles |
 | `map_browser_key(key) -> Action` | Browser key mapper (pure) |
 | `map_search_key(key) -> Action` | Search input mapper (pure) |
 | `map_mouse(mouse, app) -> Action` | Reader mouse mapper (pure) |
@@ -482,14 +495,18 @@ Ratatui draw functions. No state mutation — read-only access to App.
 | Function | What it does |
 |---|---|
 | `draw_reader(frame, area, app) -> u16` | Draw status line + content row (optional rail + body); return body height |
-| `draw_rail(frame, area, app)` | Draw the TOC heading list pane, highlighting the keyboard-focused row |
+| `draw_rail(frame, area, app)` | Draw the rail: splits `area` into a Contents section and a Metadata section via `rail_section_heights`, then calls `draw_rail_contents`/`draw_rail_metadata` for each (BE.7.F) |
+| `draw_rail_contents(frame, area, app)` | Draw the Contents section's heading list, highlighting the keyboard-focused row |
+| `draw_rail_metadata(frame, area, app)` | Draw the Metadata section: the current document's frontmatter, one row per entry in source order, or `METADATA_EMPTY_STATE` when there is none (BE.7.F) |
 | `draw_browser(frame, area, app)` | Draw bordered directory listing |
 | `rail_should_show(rail_open, content_width) -> bool` | Auto-collapse policy: `rail_open && content_width >= RAIL_WIDTH + MIN_BODY_WIDTH` (BE.7.E; `RAIL_WIDTH = 24`, `MIN_BODY_WIDTH = 20`) |
+| `rail_section_heights(total_height, metadata_rows) -> (u16, u16)` | Splits the rail's vertical space between Contents/Metadata: Metadata gets `metadata_rows + 2` (border rows) floored/capped to `[MIN_SECTION_HEIGHT, total_height - MIN_SECTION_HEIGHT]`; below `2 * MIN_SECTION_HEIGHT` total rows, Metadata is skipped and Contents takes everything (BE.7.F; `MIN_SECTION_HEIGHT = 2`) |
 
 `draw_reader` splits the content row into `rail_area` + `body_area` when `rail_should_show(...)` is
 true, writes the result to `App.rail_visible`/`App.rail_area`/`App.body_area`, and derives
 `App.width` from the resulting body width — see [`architecture.md`](architecture.md) for why this
-is the width field's single writer.
+is the width field's single writer. `draw_rail` further splits `rail_area` into
+`App.rail_contents_area`/`App.rail_metadata_area` (BE.7.F).
 
 **Overlay stack in `draw_reader` (later = higher z-order):**
 1. Search matches — Yellow bg

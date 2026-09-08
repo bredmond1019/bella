@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use bella_engine::{
-    CheckboxMap, LinkMap, Theme, body_pos,
+    CheckboxMap, Frontmatter, LinkMap, Theme, body_pos,
     links::{LinkTarget, TableExpansions, TableMap},
     markdown::{
         BlockInfo, HeadingInfo, Rendered, display_row_to_source_line, render_with_edit,
@@ -47,6 +47,35 @@ pub enum Mode {
     Reader,
     /// Navigating the directory browser.
     Browser,
+}
+
+/// Identifies one section of the rail (BE.7.F). The rail is a *stack* of
+/// titled sections sharing one keyboard-focus and one `rail_selected`
+/// index — `rail_selected` means "selected row within the section named
+/// here", never a flat index across every section combined, so adding a
+/// third section (BE.7.G) is additive rather than a renumbering of the
+/// first two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RailSection {
+    /// The table-of-contents pane (BE.7.E) — one row per heading.
+    Contents,
+    /// The frontmatter pane (BE.7.F) — one row per parsed frontmatter
+    /// entry, in source order. Populated by task 2; this task only
+    /// establishes the section and its (always-empty-for-now) length.
+    Metadata,
+}
+
+impl RailSection {
+    /// The section a cycle key moves focus to. Only two sections exist
+    /// today, so this is a toggle; a third section makes this an ordered
+    /// wraparound instead — the whole reason this lives on the enum
+    /// rather than as an inline `if` at the one call site.
+    fn next(self) -> Self {
+        match self {
+            RailSection::Contents => RailSection::Metadata,
+            RailSection::Metadata => RailSection::Contents,
+        }
+    }
 }
 
 /// Search state while a `/`-search is active or has matches.
@@ -92,6 +121,14 @@ pub struct App {
     pub checkbox_map: CheckboxMap,
     /// Heading metadata extracted from the last render.
     pub headings: Vec<HeadingInfo>,
+    /// Parsed frontmatter from the currently loaded document, if it has
+    /// any (BE.7.F task 2). Populated by [`Self::apply_rendered`] straight
+    /// off `Rendered.frontmatter` (BE.7.A) and cleared on
+    /// [`Self::load_file`]. Entries are in source order — see
+    /// `bella_engine::frontmatter`'s module doc for why that type is a
+    /// `Vec`, not a map — so [`crate::ui::draw_rail_metadata`] renders
+    /// this directly without re-sorting.
+    pub frontmatter: Option<Frontmatter>,
     /// Per-block source-range / display-range mapping from the last render.
     /// Kept so a resize can resolve the current top display row to a
     /// source-line anchor (via [`bella_engine::markdown::display_row_to_source_line`])
@@ -208,10 +245,27 @@ pub struct App {
     /// auto-collapsing clears it (see [`Self::set_rail_open`]) so a
     /// mouse-less session is never left with an invisible focus target.
     pub rail_focused: bool,
-    /// Index into `headings` of the rail row under keyboard focus.
-    /// Clamped to `headings.len().saturating_sub(1)` on every render, since
-    /// a re-render can shrink the heading list.
+    /// Index into the FOCUSED section (`rail_section`) of the rail row
+    /// under keyboard focus. Clamped to that section's own
+    /// `len().saturating_sub(1)` on every render (via
+    /// [`Self::rail_section_len`]), since a re-render can shrink either
+    /// section's row count.
     pub rail_selected: usize,
+    /// Which rail section currently has keyboard focus. Only meaningful
+    /// while [`Self::rail_focused`] is `true`; unaffected by the rail
+    /// being toggled open/closed so the operator's place is kept across a
+    /// close/reopen.
+    pub rail_section: RailSection,
+    /// Inner (post-border) rect of the rail's Contents section on the
+    /// last frame — `Rect::default()` when the rail is not visible.
+    /// Mirrors [`Self::rail_area`] but scoped to this one section, so
+    /// mouse clicks can be routed to the section that owns the row
+    /// (BE.7.F).
+    pub rail_contents_area: Rect,
+    /// Inner (post-border) rect of the rail's Metadata section on the
+    /// last frame — `Rect::default()` when the rail is not visible or the
+    /// section is too short to draw (see [`crate::ui::draw_rail`]).
+    pub rail_metadata_area: Rect,
 }
 
 impl App {
@@ -239,6 +293,7 @@ impl App {
             link_map: LinkMap::default(),
             checkbox_map: CheckboxMap::default(),
             headings: Vec::new(),
+            frontmatter: None,
             blocks: Vec::new(),
             scroll: 0,
             viewport_height,
@@ -270,6 +325,9 @@ impl App {
             corpus_root,
             rail_focused: false,
             rail_selected: 0,
+            rail_section: RailSection::Contents,
+            rail_contents_area: Rect::default(),
+            rail_metadata_area: Rect::default(),
         }
     }
 
@@ -292,6 +350,7 @@ impl App {
             link_map,
             checkbox_map,
             headings,
+            frontmatter: None,
             blocks: Vec::new(),
             scroll: 0,
             viewport_height,
@@ -323,6 +382,9 @@ impl App {
             corpus_root,
             rail_focused: false,
             rail_selected: 0,
+            rail_section: RailSection::Contents,
+            rail_contents_area: Rect::default(),
+            rail_metadata_area: Rect::default(),
         }
     }
 
@@ -455,31 +517,93 @@ impl App {
 
     /// Give keyboard focus to the rail. No-op when the rail is not
     /// currently visible (e.g. auto-collapsed) — there is nothing to focus.
+    /// Focus lands on whichever section was last focused (`rail_section`);
+    /// it does not reset to `Contents`, so re-opening the rail returns the
+    /// operator to where they left off.
     pub fn focus_rail(&mut self) {
         if self.rail_visible {
             self.rail_focused = true;
-            self.rail_selected = self
-                .rail_selected
-                .min(self.headings.len().saturating_sub(1));
+            self.clamp_rail_selected();
         }
     }
 
-    /// Move the rail's keyboard selection by `delta` rows, clamped to the
-    /// heading list (no wraparound). No-op when there are no headings.
+    /// Number of rows in `section` — what `rail_selected` is clamped
+    /// against and what [`crate::ui::draw_rail`] sizes the section's
+    /// on-screen height from. `Metadata`'s count is the parsed
+    /// frontmatter's entry count (BE.7.F task 2), floored at `1`: even a
+    /// document with no frontmatter at all (or a fence with zero entries)
+    /// must give the section one row so its empty state has somewhere to
+    /// draw — see [`crate::ui::draw_rail_metadata`]. That floor is what
+    /// keeps [`crate::ui::rail_section_heights`] from allocating the
+    /// section a zero-content frame purely because there is nothing to
+    /// render yet.
+    pub fn rail_section_len(&self, section: RailSection) -> usize {
+        match section {
+            RailSection::Contents => self.headings.len(),
+            RailSection::Metadata => self
+                .frontmatter
+                .as_ref()
+                .map(|f| f.entries.len())
+                .unwrap_or(0)
+                .max(1),
+        }
+    }
+
+    /// Clamp `rail_selected` to the currently focused section's length,
+    /// per the `is_empty` guard every rail-selection path needs (an
+    /// empty section must land selection at `0`, never underflow via
+    /// `len() - 1`).
+    fn clamp_rail_selected(&mut self) {
+        let len = self.rail_section_len(self.rail_section);
+        self.rail_selected = if len == 0 {
+            0
+        } else {
+            self.rail_selected.min(len - 1)
+        };
+    }
+
+    /// Cycle keyboard focus to the other rail section, re-clamping
+    /// `rail_selected` against the newly focused section's own length —
+    /// the two sections do not share an index space (see
+    /// [`RailSection`]'s doc comment), so a stale index from one section
+    /// must never be read against the other's row count.
+    pub fn cycle_rail_section(&mut self) {
+        self.rail_section = self.rail_section.next();
+        self.clamp_rail_selected();
+    }
+
+    /// Move the rail's keyboard selection by `delta` rows within the
+    /// FOCUSED section, clamped to that section's own length (no
+    /// wraparound). No-op when the focused section has no rows.
     pub fn rail_move(&mut self, delta: i32) {
-        if self.headings.is_empty() {
+        let len = self.rail_section_len(self.rail_section);
+        if len == 0 {
             return;
         }
-        let max = self.headings.len() - 1;
+        let max = len - 1;
         let cur = self.rail_selected as i32;
         self.rail_selected = (cur + delta).clamp(0, max as i32) as usize;
     }
 
-    /// Activate the rail's focused row: scroll the body to that heading's
-    /// display line, the same as clicking it (see [`Self::jump_to_heading`]).
+    /// Activate the rail's focused row. Only the Contents section has an
+    /// activation target today (scroll the body to the selected heading,
+    /// same as clicking it — see [`Self::jump_to_heading`]); Metadata rows
+    /// have nothing to activate onto until BE.7.G resolves `related:` as
+    /// navigable, so activating there is a no-op rather than a guess.
     pub fn activate_rail_selection(&mut self) {
-        if self.rail_focused {
+        if self.rail_focused && self.rail_section == RailSection::Contents {
             self.jump_to_heading(self.rail_selected);
+        }
+    }
+
+    /// Handle a click on row `row` of rail `section` (already resolved by
+    /// [`crate::events::map_mouse`] from screen coordinates against that
+    /// section's own rect). Contents click-to-jump mirrors keyboard
+    /// activation; Metadata has no click target yet (BE.7.G).
+    pub fn rail_click(&mut self, section: RailSection, row: usize) {
+        match section {
+            RailSection::Contents => self.jump_to_heading(row),
+            RailSection::Metadata => {}
         }
     }
 
@@ -614,6 +738,7 @@ impl App {
         self.link_map = rendered.link_map;
         self.checkbox_map = rendered.checkbox_map;
         self.headings = rendered.headings;
+        self.frontmatter = rendered.frontmatter;
         self.blocks = rendered.blocks;
         self.render_state = RenderState::Ready;
         // If `render()` resolved a source-line anchor for this generation
@@ -796,6 +921,7 @@ impl App {
         self.link_map = LinkMap::default();
         self.checkbox_map = CheckboxMap::default();
         self.headings = Vec::new();
+        self.frontmatter = None;
         self.scroll = 0;
         self.focused_link = None;
         self.hovered_link = None;
@@ -805,6 +931,13 @@ impl App {
         self.drag_origin = None;
         self.selection = None;
         self.last_click = None;
+        // Rail section focus resets on document switch (BE.7.F task 2) —
+        // a section focused on one document's metadata (or a `rail_selected`
+        // row from it) has no meaning against the next document's, so both
+        // reset here alongside `headings`/`frontmatter` rather than only on
+        // the next explicit toggle.
+        self.rail_section = RailSection::Contents;
+        self.rail_selected = 0;
         Ok(())
     }
 
@@ -1166,7 +1299,7 @@ mod tests {
 
     use bella_engine::Theme;
 
-    use super::{App, RenderState};
+    use super::{App, RailSection, RenderState};
     use crate::history::HistoryEntry;
 
     fn make_app(line_count: usize, viewport: u16) -> App {
@@ -3005,6 +3138,50 @@ mod tests {
     }
 
     #[test]
+    fn cycle_rail_section_toggles_and_reclamps_selection() {
+        let mut app = make_app(3, 5);
+        assert_eq!(
+            app.rail_section,
+            RailSection::Contents,
+            "precondition: Contents is the default focused section"
+        );
+        app.rail_selected = 2;
+        app.cycle_rail_section();
+        assert_eq!(app.rail_section, RailSection::Metadata);
+        assert_eq!(
+            app.rail_selected, 0,
+            "Metadata has no frontmatter here (length floored at 1, BE.7.F \
+             task 2), so the stale index (2) from Contents must re-clamp to \
+             0 rather than carry over"
+        );
+        app.cycle_rail_section();
+        assert_eq!(app.rail_section, RailSection::Contents);
+    }
+
+    #[test]
+    fn rail_click_on_contents_jumps_like_activation() {
+        let mut app = make_app(20, 5);
+        let target = &app.headings[2];
+        let target_line = target.line as u16;
+        app.rail_click(RailSection::Contents, 2);
+        assert!(
+            app.scroll <= target_line && target_line < app.scroll + app.viewport_height,
+            "a Contents click must scroll the clicked heading into view"
+        );
+    }
+
+    #[test]
+    fn rail_click_on_metadata_is_a_noop_in_this_task() {
+        let mut app = make_app(20, 5);
+        let scroll_before = app.scroll;
+        app.rail_click(RailSection::Metadata, 0);
+        assert_eq!(
+            app.scroll, scroll_before,
+            "Metadata has no activation target yet (BE.7.G)"
+        );
+    }
+
+    #[test]
     fn rail_move_clamps_without_wraparound() {
         let mut app = make_app(3, 5);
         assert_eq!(app.headings.len(), 3, "precondition: 3 headings");
@@ -3015,6 +3192,35 @@ mod tests {
         assert_eq!(app.rail_selected, 2, "must clamp at the last heading");
         app.rail_move(-1);
         assert_eq!(app.rail_selected, 1);
+    }
+
+    /// `rail_move` must clamp against the FOCUSED section's own length,
+    /// never `headings.len()` unconditionally — the two sections can have
+    /// different lengths, and Metadata's is always 0 in this task. Shown
+    /// capable of failing (recorded in the block's task notes): reverting
+    /// `rail_move` to clamp against `headings.len()` regardless of
+    /// `rail_section` makes this test move selection to `1` instead of
+    /// leaving it at `0`.
+    #[test]
+    fn rail_move_clamps_to_focused_section_not_headings_len() {
+        let mut app = make_app(3, 5);
+        assert_eq!(app.headings.len(), 3, "precondition: 3 headings");
+        app.rail_section = RailSection::Metadata;
+        assert_eq!(
+            app.rail_section_len(RailSection::Metadata),
+            1,
+            "precondition (BE.7.F task 2): Metadata has no frontmatter here, \
+             so its length is floored at 1 (the empty-state row), never 0 \
+             and never headings.len()"
+        );
+        app.rail_selected = 0;
+        app.rail_move(1);
+        assert_eq!(
+            app.rail_selected, 0,
+            "Metadata's 1-row (empty-state) length clamps rail_move's max to \
+             0, so this must stay a no-op — clamping against headings.len() \
+             (3) instead would incorrectly move selection to 1"
+        );
     }
 
     #[test]

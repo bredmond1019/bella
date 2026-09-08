@@ -11,6 +11,41 @@ timestamp: "2026-09-02T14:45:00Z"
 
 ---
 
+## [run: 2026-09-08] BE.7.F done
+
+**What:** Drove `BE.7.F` (metadata pane in the rail) through `/sdlc-flow`, 3/3 tasks passed, review
+PASS. Task 1 turned BE.7.E's single-pane rail into a stack of two titled sections (Contents,
+Metadata) with a Tab key to cycle keyboard focus, per-section clamping instead of `headings.len()`,
+and section-owning click routing (`RailClickAt` gained a `section` field). Task 2 wired the parsed
+frontmatter (`Rendered.frontmatter`, from BE.7.A) into the Metadata section: entries render in
+source order, `Scalar`/`List`/`Raw` values all rendered, character-boundary ellipsis truncation via
+a new `unicode-width`-backed helper, an explicit empty state for a document with no frontmatter, and
+a reset on `load_file`. Task 3 added the two owed scenes (metadata populated, metadata empty) to
+`celia.toml`/`reference-wide.tape`, re-blessed the text baselines, and re-captured the full
+wide+narrow VHS PNG set so celia's text and image tiers both pass.
+
+**Notable decisions:** Metadata's rail height is content-driven (row count + 2 border rows, floored
+at `MIN_SECTION_HEIGHT=2`, floored again at 1 content row so the empty state always has a frame);
+Contents takes the remainder. List frontmatter values render joined with `', '` on one row rather
+than one sub-row per item — the rail has no nested-list indentation model. Task 3 added a fixture
+(`metadata_demo.md`) and edited `reference-wide.tape`, neither declared in the task's `files[]`, to
+exercise the new scenes; three untouched scenes were re-captured byte-identical and got a PNG tEXt
+comment purely to advance their commit time past celia's freshness check.
+
+**Refs:** `planning/BE.7.F/sdlc/sdlc-flow-state.json`, `planning/BE.7.F/sdlc/worklog.md`.
+
+```
+b38e3aa docs: update docs for BE.7.F
+6f08d76 feat: add metadata pane scenes and re-point onto celia (BE.7.F task 3)
+8a658f8 feat: implement BE.7.F-task2
+1919111 feat: implement BE.7.F-task1
+```
+
+Next: `BE.7.K` (durable message log + diagnostics view) is now the next layout block in sequence,
+needing `F` (now Done).
+
+---
+
 ## [session: 2026-09-02] modeless-editor lane — eight blocks
 
 **What:** Drove the `modeless-editor` lane from `BE.7.M` to `BE.7.E` — eight blocks closed and
