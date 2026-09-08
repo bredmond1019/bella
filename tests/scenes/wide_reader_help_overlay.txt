@@ -1,0 +1,43 @@
+
+Bella Reference Demo
+
+A single document exercising every render feature bella supports, used to generate the reference screenshot
+set in┌ Help ───────────────────────────────────────────────────────────────────────────────────────────┐
+      │Browser                                                                                          │
+Headin│j            Move down                                                                           │
+      │↓            Move down                                                                           │
+H3 hea│k            Move up                                                                             │
+      │↑            Move up                                                                             │
+H4 hea│Enter        Open / descend into selection                                                       │
+      │Bksp         Go to parent directory                                                              │
+H5 hea│r            Toggle hidden / ignored entries                                                     │
+      │m            Toggle the diagnostics overlay                                                      │
+H6 hea│?            Toggle the help overlay                                                             │
+      │q            Quit                                                                                │
+Text s│Ctrl-c       Quit                                                                                │
+      │                                                                                                 │
+Plain │Reader                                                                                           │
+      │j            Scroll down                                                                         │
+│ A bl│↓            Scroll down                                                                         │
+      │k            Scroll up                                                                           │
+│ │ A │↑            Scroll up                                                                           │
+      │g            Jump to top                                                                         │
+Links │Home         Jump to top                                                                         │
+      │G            Jump to bottom                                                                      │
+Visit │End          Jump to bottom                                                                      │
+      │Tab          Focus next link                                                                     │
+Lists │BackTab      Focus previous link                                                                 │
+      │Esc          Clear link focus / cancel search                                                    │
+    • │Enter        Follow focused link                                                                 │
+• Anot│/            Start in-document search                                                            │
+      │n            Next search match                                                                   │
+1. Fir│N            Previous search match                                                               │
+  1. S│[            History back                                                                        │
+      │]            History forward                                                                     │
+Task l│t            Toggle the rail open/closed                                                         │
+      │T            Give the rail keyboard focus                                                        │
+• [ ] └─────────────────────────────────────────────────────────────────────────────────────────────────┘
+• [x] A checked task
+• [ ] Another unchecked task
+
+ bella · demo.md · 42/64  j/k scroll · / search · [ ] history · q quit
