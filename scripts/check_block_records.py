@@ -47,7 +47,20 @@ import os
 import re
 import sys
 
-ID_RE = re.compile(r"^[A-Z]{2,4}\.(?:\d+[A-Z]?|ticket|chore)\.[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Canonical form is `<PFX>.<phase|ticket|chore>.<name>`. Two legacy shapes are also accepted per
+# base-template/planning/decisions/D85-authoring-contract-rulings.md ruling (b): a bare letter
+# block id predating the phase-numbered convention (`SY.B`, `SY.N1` — measured 2026-09-07: 28 live
+# in bastion/bastion-web/synapse's state.json), and engine-rs's early `<N>-plan.<letter>` phase
+# spelling (`EN.1-plan.A` — 5 live). A fleet-wide rename was rejected as high-blast-radius for a
+# cosmetic mismatch; accept both shapes rather than reject ids the graph still carries.
+ID_RE = re.compile(
+    r"^[A-Z]{2,4}\."
+    r"(?:"
+    r"(?:\d+[A-Z]?|ticket|chore)\.[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"|\d+-plan\.[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"|[A-Za-z][A-Za-z0-9]?"
+    r")$"
+)
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
 DIGEST_RE = re.compile(r"^[a-z0-9]+:[0-9a-f]+$")
@@ -113,6 +126,19 @@ def is_planning_authoring_artifact(fpath):
 
 WORKFLOWS = {"none", "patch", "task", "run", "flow"}
 MODELS = {"sonnet", "gemini-pro", "gemini-flash", "either"}
+
+# Mirrors block.schema.json's origin.type enum exactly (BT.ticket.block-origin-remediation
+# -never-reached-the-schema) -- the 2026-09-08 fleet audit's 13 live values, plus `decision`
+# (added task 3, after a live check_block_records.py run against this repo's own
+# planning/blocks/ tree found 3 records already using it -- the audit's list was incomplete).
+# Kept as a WARNING, not a hard error, matching this checker's posture for other backfill-era
+# gaps (WARN_IF_MISSING above): existing records predate the expanded enum and an unrecognized
+# value here is debt to surface, not a block to fail outright.
+ORIGIN_TYPES = {
+    "backlog", "carryover", "capture", "mechanism", "remediation", "roadmap",
+    "known_issue", "operator", "finding", "deferred", "run", "defect",
+    "cross-repo", "message", "decision",
+}
 
 
 # --- brain.toml prefix resolution ---------------------------------------------------------
@@ -311,6 +337,12 @@ def check(path, planning_root="planning", planning_is_symlinked=True):
             # D64: an un-gateable criterion with no fixture is the failure the rule exists
             # to catch -- it reads as verified while nothing observes it.
             bad(f"acceptance_criteria[{i}] is gateable:false but names no `evidence`")
+
+    origin = b.get("origin")
+    if isinstance(origin, dict):
+        origin_type = origin.get("type")
+        if origin_type is not None and origin_type not in ORIGIN_TYPES:
+            warn(f"origin.type `{origin_type}` not one of {sorted(ORIGIN_TYPES)}")
 
     for i, e in enumerate(b.get("depends_on") or []):
         if not isinstance(e, dict):
