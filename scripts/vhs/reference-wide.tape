@@ -311,7 +311,7 @@ Sleep 500ms
 # (see crates/bella/src/app.rs::real_corpus_root_build_budget). The
 # Wait+Screen timeout below is set well past that measured number, not
 # this tape's usual 30s default, for exactly that reason.
-Type "target/release/bella scripts/vhs/fixtures/related_demo.md"
+Type "target/release/bella scripts/vhs/fixtures/related_corpus/related_demo.md"
 Enter
 Wait+Screen@30s /Bella Related Demo/
 Type "t"

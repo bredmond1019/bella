@@ -722,6 +722,18 @@ pub fn run_loop(
         // blocking the loop on the render itself.
         app.poll_render();
 
+        // Same contract for BE.7.G's background doc_id index build. Without
+        // this call the worker completes, parks its result on the channel,
+        // and nothing ever drains it — so every `related:` row stays in
+        // `DocIndexState::Building` for the life of the process and the
+        // Resolved / Unresolved / Ambiguous states are unreachable in the
+        // real binary. Every unit test hand-assigned `doc_index_state`, so
+        // the whole feature was green in the suite and dead on screen; the
+        // visual gate is what caught it. Drained here beside `poll_render`
+        // because this is the one place that runs on every tick regardless
+        // of whether a terminal event arrived.
+        app.poll_doc_index();
+
         if !event::poll(EVENT_POLL_TIMEOUT)? {
             // No terminal event within the timeout; loop back around to
             // redraw (picks up any render that just landed) and poll again.
@@ -778,6 +790,46 @@ pub fn run_loop(
 
 #[cfg(test)]
 mod tests {
+
+    /// BE.7.G, CALL-SITE GUARD added 2026-09-08. `poll_doc_index` shipped
+    /// with a doc comment claiming "Called every tick of `run_loop`
+    /// alongside `poll_render`" and NO production caller — the docs
+    /// asserted a call site that did not exist. The nine index tests all
+    /// hand-assigned `doc_index_state`, so the suite was green and the
+    /// feature was dead on screen; the visual gate caught it.
+    ///
+    /// A behavioural test cannot cover this — `run_loop` needs a real
+    /// terminal — so the call site is asserted textually.
+    ///
+    /// SCANS ONLY THE PRODUCTION HALF OF THIS FILE. The first version of
+    /// this guard searched the whole of `include_str!("events.rs")`, which
+    /// includes this test — and this test's own assertion strings contain
+    /// the literal `app.poll_doc_index();`, so it matched itself and passed
+    /// with the production call deleted. Verified by mutation: removing the
+    /// call from `run_loop` left both this guard and the behavioural test
+    /// green. Truncating at `#[cfg(test)]` is what makes the search
+    /// falsifiable.
+    #[test]
+    fn run_loop_drains_both_workers_every_tick() {
+        let whole = include_str!("events.rs");
+        let production = &whole[..whole
+            .find("#[cfg(test)]")
+            .expect("events.rs must have a test module marker to truncate at")];
+
+        assert!(
+            production.contains("app.poll_render();"),
+            "positive control: run_loop must drain the render worker in the \
+             PRODUCTION half of this file — if this fails, the truncation or \
+             the pattern is broken and the assertion below proves nothing"
+        );
+        assert!(
+            production.contains("app.poll_doc_index();"),
+            "run_loop must drain the doc_id index worker every tick. Without it \
+             the worker completes, its result is never applied, and every \
+             related: row stays Building for the life of the process."
+        );
+    }
+
     use std::path::PathBuf;
 
     use crossterm::event::{

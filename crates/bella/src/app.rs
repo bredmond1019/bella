@@ -3908,6 +3908,67 @@ mod tests {
         crate::testsupport::unique_temp_dir(&format!("bella_docindex_{label}"))
     }
 
+    /// BE.7.G task 2, REGRESSION GUARD added 2026-09-08 after the visual
+    /// gate caught that `poll_doc_index` had NO production caller: the
+    /// worker completed, parked its result on the channel, and nothing
+    /// drained it, so every `related:` row stayed `Building` forever in the
+    /// real binary. Every other test in this module hand-assigned
+    /// `doc_index_state = Ready(..)`, so the whole feature was green in the
+    /// suite and dead on screen.
+    ///
+    /// This test never assigns `doc_index_state`. It drives the real
+    /// `ensure_doc_index` -> worker -> `poll_doc_index` path and asserts the
+    /// state transitions out of `Building` on its own, which is the thing
+    /// the nine hand-assigning tests could not have caught.
+    #[test]
+    fn poll_doc_index_transitions_out_of_building_without_hand_assignment() {
+        use std::time::{Duration, Instant};
+
+        let dir = doc_index_tempdir("poll_transitions");
+        write_temp_file(
+            &dir,
+            "target.md",
+            "---\ndoc_id: poll-target\n---\n# Target\n",
+        );
+        let file = write_temp_file(
+            &dir,
+            "reader.md",
+            "---\nrelated: [poll-target]\n---\n# Reader\n",
+        );
+        let mut app = App::new(
+            std::fs::read_to_string(&file).unwrap(),
+            file.clone(),
+            80,
+            25,
+        );
+        app.block_until_ready();
+        app.corpus_root = dir.clone();
+
+        app.ensure_doc_index();
+        assert!(
+            matches!(app.doc_index_state, DocIndexState::Building),
+            "precondition: the build is in flight"
+        );
+
+        // Spin on the REAL poll, exactly as run_loop does each tick.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            if app.poll_doc_index() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        match &app.doc_index_state {
+            DocIndexState::Ready(_) => {}
+            other => panic!(
+                "poll_doc_index must drain the landed build and leave Ready; got {other:?}. \
+                 If this fails, the index worker's result is never applied and every \
+                 related: row shows (building) forever in the real binary."
+            ),
+        }
+    }
+
     #[test]
     fn ensure_doc_index_moves_to_building_immediately_without_blocking() {
         let dir = doc_index_tempdir("building_immediately");

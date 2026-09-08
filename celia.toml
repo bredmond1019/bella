@@ -371,9 +371,9 @@ tape = "scripts/vhs/reference-wide.tape"
 # matching scene) — a fixed sleep is the only tool available, so it must
 # outlast the real build rather than approximate it.
 [[scene]]
-# target: scripts/vhs/fixtures/related_demo.md
+# target: scripts/vhs/fixtures/related_corpus/related_demo.md
 name = "wide_reader_related_states"
-args = ["scripts/vhs/fixtures/related_demo.md"]
+args = ["scripts/vhs/fixtures/related_corpus/related_demo.md"]
 keys = ["t"]
 settle = 60.0
 width = 110
@@ -398,6 +398,23 @@ render_source_paths = [
   "crates/bella-engine/src/theme.rs",
   "crates/bella-engine/src/palette.rs",
 ]
+# CE.ticket.freshness-by-source-content (celia 9de43cb, wired here 2026-09-08):
+# freshness is now content-addressed, not time-addressed. celia records a hash
+# of the render_source_paths SET at capture time into the manifest below and
+# compares against that, instead of asking git whether the PNG's commit time is
+# newer than the source's.
+#
+# WHY THE CHANGE WAS NEEDED, since the old behaviour looked reasonable: a
+# re-capture producing BYTE-IDENTICAL output cannot be committed (git records no
+# path without a content change), so its commit time never advanced and the
+# scene stayed STALE forever. Measured in BE.7.K: 6 of 23 scenes permanently
+# stale after a ui.rs change that genuinely did not alter their rendering.
+# The predecessor design (filesystem mtime) failed the opposite way -- mtime is
+# not preserved across clone, so that gate could never go RED.
+#
+# COMMIT THIS FILE. It is the freshness record; without it every scene reports
+# as never-captured.
+capture_manifest_path = "tests/scenes/images/capture-manifest.toml"
 
 [image.tool]
 command = "vhs"
