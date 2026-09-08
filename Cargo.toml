@@ -3,6 +3,17 @@ members = ["crates/*"]
 exclude = ["reference"]
 resolver = "2"
 
+[workspace.dependencies]
+# CE.1.D: bella is celia's second consumer — see ../celia/planning/context.md.
+# No member crate consumes this yet (harness.json's `scenes`/`vhs-fresh`
+# checks invoke celia's CLI directly via `cargo run --manifest-path
+# ../celia/Cargo.toml -p celia-cli`, not this library), but the entry gives
+# the fleet's Cargo-dependency-graph tooling (push ordering, reverse-deps
+# install closure) a real edge to bella -> celia, matching bastion's own
+# `bella-engine = { path = "../bella/crates/bella-engine" }` pattern one
+# tier up.
+celia-core = { path = "../celia/crates/celia-core" }
+
 [profile.dev]
 # Keep panic/backtrace line numbers; drop full DWARF type descriptions (biggest link-time cost).
 debug = "line-tables-only"
