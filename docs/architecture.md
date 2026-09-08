@@ -155,11 +155,19 @@ Terminal positions use `(col, row)` — 0-indexed, top-left origin. The render a
 └─────────────────────────────┘
 ```
 
-The TOC rail (BE.7.E) is optional: `rail_area` is `Rect::default()` and the split collapses to the
+The rail (BE.7.E) is optional: `rail_area` is `Rect::default()` and the split collapses to the
 single-column layout above it whenever the rail is off (`App.rail_open == false`) or the terminal
 is too narrow to fit both the rail and a usable body — see `rail_should_show` in
 [`modules.md`](modules.md#uirs). `draw_reader` stores both `body_area` and `rail_area` in `App`
 after each frame so mouse events can convert screen coordinates to content positions.
+
+As of BE.7.F, the rail itself is a vertical stack of two titled sections — **Contents** (the TOC
+heading list) on top, **Metadata** (the document's parsed frontmatter) below — sharing one
+keyboard focus and one `rail_selected` index scoped to whichever section is focused. `Tab` cycles
+focus between them while the rail has keyboard focus. `App` records each section's inner rect
+separately (`rail_contents_area`, `rail_metadata_area`) alongside the outer `rail_area`, so mouse
+clicks route to the section under the cursor. See `RailSection` and `draw_rail` in
+[`modules.md`](modules.md#uirs).
 
 The conversion is:
 

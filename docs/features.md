@@ -41,8 +41,8 @@ Reader mode is active when a `.md` or `.mdx` file is open. The status line shows
 | `Enter` | Follow focused link | `Follow` → `App::follow_focused()` → resolves `LinkTarget`, dispatches on type (see Link Following below) |
 | `[` | History back | `HistoryBack` → `App::go_back()` → loads previous file at saved scroll position |
 | `]` | History forward | `HistoryForward` → `App::go_forward()` |
-| `t` | Toggle TOC rail | `RailToggle` → `App::toggle_rail()` → flips `rail_open` (auto-collapses below `RAIL_WIDTH + MIN_BODY_WIDTH` total columns — see `ui.rs` in [`modules.md`](modules.md)) |
-| `T` | Focus TOC rail | `RailFocus` → `App::focus_rail()` → no-op if the rail isn't currently visible |
+| `t` | Toggle rail | `RailToggle` → `App::toggle_rail()` → flips `rail_open` (auto-collapses below `RAIL_WIDTH + MIN_BODY_WIDTH` total columns — see `ui.rs` in [`modules.md`](modules.md)) |
+| `T` | Focus rail | `RailFocus` → `App::focus_rail()` → no-op if the rail isn't currently visible |
 | `/` | Start search | `SearchStart` → `app.search.input_mode = true`; status line shows `/` prompt |
 | `n` | Next search match | `SearchNext` → advance `search.current`; scroll to match line |
 | `N` | Previous search match | `SearchPrev` |
@@ -63,18 +63,21 @@ Triggered by `/`. Status line shows `/query [M/N]` where M is current match inde
 
 After committing, `n`/`N` cycle matches and `Esc` clears.
 
-### Keyboard — TOC Rail (focused)
+### Keyboard — Rail (focused)
 
 Triggered by `T` while the rail is visible; routed through `map_rail_key` instead of `map_key`
-(BE.7.E), the same pattern as search-input mode above.
+(BE.7.E), the same pattern as search-input mode above. As of BE.7.F the rail is a stack of two
+sections — **Contents** (headings) and **Metadata** (frontmatter) — sharing one keyboard focus;
+`Tab` cycles which section `j`/`k`/`Enter` act on.
 
 | Key | Action | What happens internally |
 |---|---|---|
-| `j` / `↓` | Move selection down | `RailMove(1)` → `App::rail_move(1)` |
-| `k` / `↑` | Move selection up | `RailMove(-1)` → `App::rail_move(-1)` |
-| `Enter` | Jump to selected heading | `RailActivate` → `App::activate_rail_selection()` → `jump_to_heading` |
+| `j` / `↓` | Move selection down within the focused section | `RailMove(1)` → `App::rail_move(1)` |
+| `k` / `↑` | Move selection up within the focused section | `RailMove(-1)` → `App::rail_move(-1)` |
+| `Tab` | Cycle focus between Contents and Metadata | `RailCycleSection` → `App::cycle_rail_section()` → flips `rail_section`, re-clamps `rail_selected` to the new section's length |
+| `Enter` | Jump to selected heading (Contents); no-op on Metadata | `RailActivate` → `App::activate_rail_selection()` → `jump_to_heading` |
 | `Esc` | Unfocus the rail | `RailUnfocus` → `app.rail_focused = false` (body keeps keyboard focus) |
-| `t` | Toggle TOC rail | `RailToggle` (still works while the rail has focus) |
+| `t` | Toggle rail | `RailToggle` (still works while the rail has focus) |
 
 ### Mouse — Reader Mode
 
@@ -88,7 +91,7 @@ Triggered by `T` while the rail is visible; routed through `map_rail_key` instea
 | Click checkbox | Toggle visual state | `App::click_at()` → `CheckboxMap::at()` hit → add/remove from `toggled_checkboxes`; glyph swap at draw time |
 | Click + drag | Select text | `DragStart` → `App::selection_start()`; `DragUpdate` → `App::selection_update()`; `DragEnd` → `App::selection_finish()` → `extract_text` → `copy_to_clipboard` via arboard |
 | Double-click | Select word | Two `Down` within 450 ms at same content position → `DoubleClickAt` → `App::double_click_word_select()` → `select_word_at` → `copy_to_clipboard` |
-| Click a heading in the TOC rail | Jump to that heading | `RailClickAt{row}` (hit-test via `rail_row_at`, excludes the border) → `App::jump_to_heading()` |
+| Click a row in the rail | Jump to that heading (Contents); no-op (Metadata) | `RailClickAt{section, row}` (hit-test via `rail_section_row_at`, excludes the border, resolves which section was clicked) → `App::rail_click()` |
 
 #### Link Following
 

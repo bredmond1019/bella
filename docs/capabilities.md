@@ -82,9 +82,10 @@ Everything you can do once a file is open.
 | Follow the focused link | `Enter` |
 | Follow a link by mouse | Click it; hovering highlights it first |
 | Go back / forward through visited files | `[` / `]` |
-| Toggle the table-of-contents rail | `t` — a heading outline pane on the left; auto-hides if the terminal is too narrow to fit both it and a usable body |
-| Navigate the TOC rail by keyboard | `T` to focus it, then `j`/`k`/arrows to move, `Enter` to jump, `Esc` to return focus to the body |
-| Jump to a heading by mouse | Click it in the TOC rail |
+| Toggle the rail | `t` — a left-hand pane stacking a Contents (heading outline) section over a Metadata (frontmatter) section; auto-hides if the terminal is too narrow to fit both it and a usable body |
+| Navigate the rail by keyboard | `T` to focus it, then `j`/`k`/arrows to move within the focused section, `Tab` to cycle between the Contents and Metadata sections, `Enter` to jump to a selected heading, `Esc` to return focus to the body |
+| Jump to a heading by mouse | Click it in the rail's Contents section |
+| Read a document's frontmatter | The rail's Metadata section lists the current document's frontmatter fields in source order, or an empty-state line when it has none; clicking or activating a Metadata row is currently a no-op |
 | Clear link focus or cancel a search | `Esc` |
 | Return to the file browser | `Backspace` |
 | Quit | `q` or `Ctrl-C` |
