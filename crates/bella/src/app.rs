@@ -1072,6 +1072,16 @@ impl App {
                 }
                 Some(prev)
             }
+            LinkTarget::DocId(_doc_id) => {
+                // BE.7.G task 1 only adds the `LinkTarget::DocId` variant so
+                // bella-engine's public surface is stable for task 2, which
+                // wires real resolution through the (lazily built, off-thread)
+                // doc_id index and navigates through this same history path.
+                // Not reachable yet: nothing constructs `LinkTarget::DocId`
+                // before task 3 wires the rail's related: rows into the link
+                // map.
+                None
+            }
         }
     }
 

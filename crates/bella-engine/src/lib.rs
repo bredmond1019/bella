@@ -2,6 +2,7 @@
 // Public surface for the bella app crate and integration tests.
 
 pub mod browser;
+pub mod docindex;
 pub mod frontmatter;
 pub mod geometry;
 pub mod links;
@@ -20,6 +21,7 @@ mod testsupport;
 
 // Re-export the stable public surface consumed by the bella app crate and
 // later blocks. Names match the Engine surface line in master-plan.md.
+pub use docindex::{DocIndex, Resolution as DocResolution, build_index as build_doc_index};
 pub use frontmatter::{Frontmatter, FrontmatterValue, parse as parse_frontmatter};
 pub use geometry::{body_pos, select_word_at};
 pub use links::{CheckboxMap, LinkMap, LinkTarget, TableMap};
